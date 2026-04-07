@@ -24,8 +24,8 @@ Aligned with Approved Quarter Plan:
 ### 2. Installation
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/subrep-q1.git
-cd subrep-q1
+git clone https://github.com/tarikuamisganaw/subrep.git
+cd subrep
 
 # Install dependencies
 pip install -r requirements.txt
