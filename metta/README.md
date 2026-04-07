@@ -12,7 +12,7 @@ Enable Hyperon compatibility by serializing certificates as MeTTa Atoms for logi
 - Atoms are successfully added to AtomSpace
 - Query returns correct skills for given weights
 - Certificate retrieval preserves numerical precision
-- No memory leaks during repeated add/query cycles
+
 
 
 
