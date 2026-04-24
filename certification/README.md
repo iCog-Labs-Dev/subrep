@@ -14,7 +14,7 @@ Ensure only skills that improve backed-up value (without unacceptable harm) are 
 | `cds_test.py` | Implements Cone-Dominant Subtask math (universal benefit) |
 | `pds_test.py` | Implements Pareto-Dominant Subtask math (acceptable trade-off) |
 | `gate.py` | Unified admission controller with logging |
-| `cone_utils.py` | Helper functions for weight cone operations |
+
 
 ## Validation
 Run `python tests/test_certification.py` to verify:
