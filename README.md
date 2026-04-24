@@ -42,23 +42,16 @@ source .venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-#Running Tests
+```
+
+### 3. Validation
+```bash
 
 #Run all tests:
 python -m pytest -v
 
 #Run a specific test file:
 python -m pytest tests/test_certification_gates.py -v
-
-```
-
-### 3. Validation
-```bash
-# Verify Environment Setup
-python tests/test_env.py
-
-# Verify Generator Output
-python tests/test_generator.py
 
 # Run Full Pipeline (Phase 5+)
 python main.py
