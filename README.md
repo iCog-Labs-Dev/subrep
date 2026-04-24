@@ -27,20 +27,31 @@ Aligned with Approved Quarter Plan:
 git clone https://github.com/iCog-Labs-Dev/subrep.git
 cd subrep
 
+
+#Create and activate a virtual environment
+python -m venv .venv
+
+#On Linux / macOS:
+source .venv/bin/activate
+
+
+#On Windows:
+.venv\Scripts\activate
+
+
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
-cp .env.example .env
 ```
 
 ### 3. Validation
 ```bash
-# Verify Environment Setup
-python tests/test_env.py
 
-# Verify Generator Output
-python tests/test_generator.py
+#Run all tests:
+python -m pytest -v
+
+#Run a specific test file:
+python -m pytest tests/test_certification_gates.py -v
 
 # Run Full Pipeline (Phase 5+)
 python main.py

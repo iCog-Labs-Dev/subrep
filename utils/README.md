@@ -8,7 +8,8 @@
 | `td_utils.py` | Computes Temporal Difference errors for payoff & motive heads|
 | `logger.py` | Standardizes logging format (console + file) | 
 | `config.py` | Loads `.env` variables (seed, paths, hyperparams) |
-| `rewards.py` | Helper functions for MO-LunarLander reward processing | 
+| `rewards.py` | Helper functions for MO-LunarLander reward processing |
+| `cone_utils.py` | Helper functions for weight cone operations | 
 
 
 ## Validation
