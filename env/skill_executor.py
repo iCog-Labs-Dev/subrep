@@ -50,6 +50,7 @@ class SkillExecutor:
         (total_payoff, motive_deltas, terminated)
         """
         obs, _ = self.env.reset()
+        initial_obs = np.array(obs, copy=True)
         total_payoff = 0.0
         motive_deltas = np.zeros(2, dtype=np.float32)
         discount = 1.0
@@ -95,6 +96,7 @@ class SkillExecutor:
 
         # Extra run metadata kept without changing public return tuple.
         self.last_run_info = {
+            "initial_obs": initial_obs,
             "steps": steps,
             "truncated": bool(truncated),
             "stop_reason": stop_reason,
