@@ -1,5 +1,7 @@
 import os
+import random
 import numpy as np
+import torch
 from env.skill_executor import SkillExecutor
 
 class DataCollector:
@@ -17,8 +19,15 @@ class DataCollector:
         self.seed = seed
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
-        # We seed numpy specifically for any custom randomness needed outside env
+        
+        # Robust seeding for full reproducibility
+        random.seed(seed)
         np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        os.environ['PYTHONHASHSEED'] = str(seed)
         
     def collect_episode(self, skill_id: str = None) -> dict:
         """
@@ -40,11 +49,11 @@ class DataCollector:
         }
         return record
 
-    def save_episode(self, record: dict, episode_idx: int) -> str:
+    def save_episode(self, record: dict, episode_idx: int, prefix: str = "random") -> str:
         """
-        Save one record to data/raw/episode_NNN.npz.
+        Save one record to data/raw/{prefix}_epNNN.npz.
         """
-        filename = f"episode_{episode_idx:03d}.npz"
+        filename = f"{prefix}_ep{episode_idx:03d}.npz"
         filepath = os.path.join(self.save_dir, filename)
         np.savez(
             filepath,
@@ -59,16 +68,17 @@ class DataCollector:
     def collect_n_episodes(
         self,
         n: int,
-        print_summary: bool = True
+        print_summary: bool = True,
+        skill_prefix: str = "random"
     ) -> list[dict]:
         """
-        Run N episodes, save each to disk, optionally print summary.
+        Run N episodes, save each to disk with prefix, optionally print summary.
         """
         records = []
         for i in range(1, n + 1):
-            skill_id = f"random_{i}"
+            skill_id = f"{skill_prefix}_{i}"
             record = self.collect_episode(skill_id=skill_id)
-            self.save_episode(record, i)
+            self.save_episode(record, i, prefix=skill_prefix)
             records.append(record)
             
         if print_summary:

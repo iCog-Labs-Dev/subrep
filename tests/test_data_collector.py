@@ -34,9 +34,9 @@ def test_saved_files_have_correct_keys(temp_data_dir):
     executor = SkillExecutor(env=env, policy_fn=policy, gamma=0.99, max_steps=10)
     collector = DataCollector(executor=executor, seed=42, save_dir=temp_data_dir)
     
-    collector.collect_n_episodes(1, print_summary=False)
+    collector.collect_n_episodes(1, print_summary=False, skill_prefix="test")
     
-    saved_file = os.path.join(temp_data_dir, "episode_001.npz")
+    saved_file = os.path.join(temp_data_dir, "test_ep001.npz")
     assert os.path.exists(saved_file)
     
     data = np.load(saved_file, allow_pickle=True)
@@ -92,3 +92,22 @@ def test_seed_produces_consistent_results(temp_data_dir):
     payoffs2 = [r['payoff'] for r in records2]
     
     assert np.allclose(payoffs1, payoffs2)
+
+def test_custom_prefix_prevents_overwriting(temp_data_dir):
+    """
+    Run 1 episode with prefix 'A'.
+    Run 1 episode with prefix 'B'.
+    Assert both files exist in the directory (proving 'B' didn't delete 'A').
+    """
+    env = SubRepEnv(seed=42)
+    policy = lambda obs: env.env.action_space.sample()
+    executor = SkillExecutor(env=env, policy_fn=policy, gamma=0.99, max_steps=10)
+    collector = DataCollector(executor=executor, seed=42, save_dir=temp_data_dir)
+    
+    # Run prefix A
+    collector.collect_n_episodes(1, print_summary=False, skill_prefix="A")
+    # Run prefix B
+    collector.collect_n_episodes(1, print_summary=False, skill_prefix="B")
+    
+    assert os.path.exists(os.path.join(temp_data_dir, "A_ep001.npz"))
+    assert os.path.exists(os.path.join(temp_data_dir, "B_ep001.npz"))
