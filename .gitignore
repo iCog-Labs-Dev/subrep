@@ -3,3 +3,9 @@
 __pycache__/
 *.pyc
 doc/
+# Generated dataset (run DataCollector locally to regenerate)
+data/raw/
+# Trained model weights (run train_generator locally to regenerate)
+models/
+# Generated training plots
+plots/
