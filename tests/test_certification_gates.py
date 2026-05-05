@@ -163,6 +163,16 @@ def test_validate_simplex_weights_invalid_negative():
     weights = np.array([1.5, -0.5])
     assert validate_simplex_weights(weights) is False
 
+def test_validate_simplex_weights_invalid_non_array():
+    """Non-array weights should fail validation."""
+    weights = [0.5, 0.5]
+    assert validate_simplex_weights(weights) is False
+
+def test_validate_simplex_weights_invalid_rank():
+    """Non-1D arrays should fail validation."""
+    weights = np.array([[0.5, 0.5]])
+    assert validate_simplex_weights(weights) is False
+
 def test_compute_support_function():
     """Support function for simplex should return max component."""
     u = np.array([0.3, 0.7, 0.5])
