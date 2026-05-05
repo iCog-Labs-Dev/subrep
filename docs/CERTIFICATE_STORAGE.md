@@ -129,16 +129,17 @@ Use one of the following command paths depending on where you run tests.
 
 From Windows terminal (PowerShell) using WSL Python:
 
-- `wsl bash -lc "cd /mnt/c/Users/lisan/Desktop/subrep && /home/lisan/subrep-hyperon-venv/bin/python -m pytest tests/test_certificate_storage.py -v"`
+- `wsl bash -lc "cd /mnt/c/<repo-path> && . .venv/bin/activate && python -m pytest tests/test_certificate_storage.py -v"`
 
 From an interactive WSL shell:
 
-- `cd /mnt/c/Users/lisan/Desktop/subrep`
-- `/home/lisan/subrep-hyperon-venv/bin/python -m pytest tests/test_certificate_storage.py -v`
+- `cd /mnt/c/<repo-path>`
+- `source .venv/bin/activate`
+- `python -m pytest tests/test_certificate_storage.py -v`
 
 Optional full suite in WSL Hyperon environment:
 
-- `/home/lisan/subrep-hyperon-venv/bin/python -m pytest tests/ -v`
+- `python -m pytest tests/ -v`
 
 ## Query Semantics
 
