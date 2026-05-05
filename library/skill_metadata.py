@@ -6,7 +6,7 @@ from typing import Callable, List, Optional
 @dataclass
 class Certificate:
     """ Python-side summary of a certification gate result. """
-    certificate_id: str
+    skill_id: str
     gate_type: str
     delta_r: float  
     delta_n: List[float] = field(default_factory=list)
@@ -24,7 +24,7 @@ class Certificate:
     def to_dict(self) -> dict:
         """ Convert to a JSON-safe dictionary. """
         return {
-            "certificate_id": self.certificate_id,
+            "skill_id": self.skill_id,
             "gate_type": self.gate_type,
             "delta_r": float(self.delta_r),
             "delta_n": [float(v) for v in self.delta_n],
@@ -36,7 +36,7 @@ class Certificate:
     def from_dict(cls, data: dict) -> Certificate:
         """Reconstruct a Certificate from a JSON-loaded dictionary."""
         return cls(
-            certificate_id=data["certificate_id"],
+            skill_id=data["skill_id"],
             gate_type=data["gate_type"],
             delta_r=float(data["delta_r"]),
             delta_n=[float(v) for v in data["delta_n"]],

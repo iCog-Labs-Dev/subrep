@@ -31,7 +31,7 @@ def make_cds_certificate(cert_id: str = "cert-cds-001"):
     Passes CDS because Δr + min(Δn) ≥ 0.
     """
     return Certificate(
-        certificate_id=cert_id,
+        skill_id=cert_id,
         gate_type="CDS",
         delta_r=0.5,
         delta_n=[0.3, 0.2],
@@ -48,7 +48,7 @@ def make_pds_certificate(cert_id: str = "cert-pds-001"):
     Passes PDS because Δr + min(Δn) ≥ -ε.
     """
     return Certificate(
-        certificate_id=cert_id,
+        skill_id=cert_id,
         gate_type="PDS",
         delta_r=0.5,
         delta_n=[0.8, -0.6],
@@ -91,7 +91,7 @@ def test_skill_entry_creation():
 def test_skill_entry_rejects_invalid_gate_type():
     """SkillEntry should reject gate types other than CDS/PDS."""
     cert = Certificate(
-        certificate_id="bad",
+        skill_id="bad",
         gate_type="CDS",   
         delta_r=0.5,
         delta_n=[0.1],
@@ -142,7 +142,7 @@ def test_skill_entry_to_dict_roundtrip():
 def test_certificate_rejects_invalid_gate_type():
     """Certificate should reject gate types other than CDS/PDS."""
     with pytest.raises(ValueError, match="gate_type"):
-        Certificate(certificate_id="x", gate_type="XYZ", delta_r=0.0)
+        Certificate(skill_id="x", gate_type="XYZ", delta_r=0.0)
 
 
 def test_certificate_to_dict_roundtrip():
@@ -151,7 +151,7 @@ def test_certificate_to_dict_roundtrip():
     d = cert.to_dict()
     restored = Certificate.from_dict(d)
 
-    assert restored.certificate_id == cert.certificate_id
+    assert restored.skill_id == cert.skill_id
     assert restored.gate_type == cert.gate_type
     assert np.isclose(restored.delta_r, cert.delta_r)
     assert restored.delta_n == cert.delta_n
@@ -192,13 +192,13 @@ def test_add_overwrites_existing_skill():
 def test_add_noncertified_skill_rejected():
     """With cert_store, skills with unknown certificates should be rejected."""
 
-    # Minimal mock: only needs has_certificate()
+    # Minimal mock: only needs contains()
     class MockCertStore:
         def __init__(self, known_ids):
             self._known = set(known_ids)
 
-        def has_certificate(self, cert_id):
-            return cert_id in self._known
+        def contains(self, skill_id):
+            return skill_id in self._known
 
     store = MockCertStore(known_ids={"cert-known"})
     lib = SkillLibrary(cert_store=store)
@@ -309,7 +309,7 @@ def test_query_by_weights_pds_rejected():
     # Δr=0.3, Δn=[0.8, -0.6], ε=0.1
     # score = 0.3 + 0.0*0.8 + 1.0*(-0.6) = -0.3 < -0.1 → Fail
     bad_cert = Certificate(
-        certificate_id="cert-hard-pds",
+        skill_id="cert-hard-pds",
         gate_type="PDS",
         delta_r=0.3,
         delta_n=[0.8, -0.6],
@@ -514,7 +514,7 @@ def test_certification_to_library_flow():
     skill_a_r, skill_a_n = 0.8, np.array([0.5, 0.3])
     assert cds_gate.admit(skill_a_r, skill_a_n) is True
     cert_a = Certificate(
-        certificate_id="cert-int-a",
+        skill_id="cert-int-a",
         gate_type="CDS",
         delta_r=skill_a_r,
         delta_n=skill_a_n.tolist(),
@@ -527,7 +527,7 @@ def test_certification_to_library_flow():
     assert cds_gate.admit(skill_b_r, skill_b_n) is False
     assert pds_gate.admit(skill_b_r, skill_b_n) is True
     cert_b = Certificate(
-        certificate_id="cert-int-b",
+        skill_id="cert-int-a",
         gate_type="PDS",
         delta_r=skill_b_r,
         delta_n=skill_b_n.tolist(),
