@@ -9,8 +9,9 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from .skill_metadata import Certificate, SkillEntry
+from .skill_metadata import SkillEntry
 from utils.cone_utils import validate_simplex_weights
+from certification.certificate_schema import Certificate
 
 
 class SkillLibrary:
