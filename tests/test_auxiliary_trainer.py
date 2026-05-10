@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from generator.mdn_auxiliary import MDNAuxiliaryModel
@@ -10,6 +11,7 @@ from generator.mdn_auxiliary_trainer import (
     MDNAuxiliaryTrainerConfig,
     build_auxiliary_record,
 )
+from generator.train_mdn_auxiliary import train_auxiliary_from_records
 
 
 def _baseline_stats() -> dict[str, object]:
@@ -110,3 +112,66 @@ def test_build_auxiliary_record_raises_for_ips_without_probabilities():
         assert "behavior_probability" in str(exc)
     else:
         raise AssertionError("Expected ValueError when IPS probabilities are missing")
+
+
+def test_build_auxiliary_record_preserves_behavior_probability_when_present():
+    record = build_auxiliary_record(
+        context=(0.1,) * 14,
+        skill_id=1,
+        payoff=1.2,
+        motives=(0.5, 0.2),
+        baseline_stats=_baseline_stats(),
+        motive_trajectory=[[(1.0, 0.0), (0.0, 1.0)]],
+        behavior_probability=np.array([[0.5, 0.5]], dtype=np.float32),
+        target_probability=np.array([[1.0, 1.0]], dtype=np.float32),
+        record_behavior_probability=0.5,
+        use_ips=True,
+    )
+
+    assert record.behavior_probability == 0.5
+
+
+def test_auxiliary_trainer_raises_when_ips_mode_enabled_without_probability_aware_dataset():
+    model = MDNAuxiliaryModel(context_dim=14, num_skills=16, num_motives=2)
+    trainer = MDNAuxiliaryTrainer(
+        model,
+        config=MDNAuxiliaryTrainerConfig(use_ips=True, batch_size=8, max_epochs=1),
+        device="cpu",
+    )
+
+    try:
+        trainer.train_records(_synthetic_records())
+    except ValueError as exc:
+        assert "train_probability_aware_records" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError when IPS mode is enabled without probability-aware dataset support")
+
+
+def test_probability_aware_auxiliary_training_path_runs(tmp_path: Path):
+    records = []
+    for index in range(20):
+        records.append(
+            build_auxiliary_record(
+                context=((0.1,) * 14) if index % 2 == 0 else ((0.9,) * 14),
+                skill_id=1 if index % 2 == 0 else 2,
+                payoff=1.7 if index % 2 == 0 else 1.1,
+                motives=(0.8, 0.4) if index % 2 == 0 else (0.3, 0.7),
+                baseline_stats=_baseline_stats(),
+                motive_trajectory=[[(1.0, 0.0), (0.0, 1.0)]],
+                behavior_probability=np.array([[0.5, 0.5]], dtype=np.float32),
+                target_probability=np.array([[1.0, 1.0]], dtype=np.float32),
+                record_behavior_probability=0.5,
+                use_ips=True,
+            )
+        )
+
+    result = train_auxiliary_from_records(
+        records,
+        checkpoint_path=str(tmp_path / "mdn_auxiliary_ips_best.pth"),
+        seed=0,
+        device="cpu",
+        use_ips=True,
+    )
+
+    assert Path(result["checkpoint_path"]).exists()
+    assert result["best_val_loss"] >= 0.0
