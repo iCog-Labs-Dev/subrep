@@ -12,6 +12,7 @@ from utils.mdn_selection import alpha_to_mean_weights
 def _make_record(
     *,
     context_value: float,
+    weights_used: tuple[float, float],
     selected_skill_id: str,
     actual_motives: tuple[float, float],
 ) -> MDNDecisionRecord:
@@ -35,7 +36,7 @@ def _make_record(
         context=(context_value,) * 14,
         alpha=(1.0, 1.0),
         support_values=(0.5, 0.5),
-        weights_used=(0.5, 0.5),
+        weights_used=weights_used,
         candidate_skills=candidates,
         selected_skill_id=selected_skill_id,
         selected_score=0.0,
@@ -57,7 +58,12 @@ def test_behavior_safety_dominant_records_increase_safety_weight():
     trainer = MDNTrainer(model, config=MDNTrainerConfig(learning_rate=5e-3), device="cpu")
 
     before = _mean_weights_for_context(model, 0.1)
-    record = _make_record(context_value=0.1, selected_skill_id="safe_skill", actual_motives=(0.9, 0.1))
+    record = _make_record(
+        context_value=0.1,
+        weights_used=(0.8, 0.2),
+        selected_skill_id="safe_skill",
+        actual_motives=(0.9, 0.1),
+    )
     for _ in range(30):
         trainer.training_step(record)
     after = _mean_weights_for_context(model, 0.1)
@@ -71,7 +77,12 @@ def test_behavior_fuel_dominant_records_increase_fuel_weight():
     trainer = MDNTrainer(model, config=MDNTrainerConfig(learning_rate=5e-3), device="cpu")
 
     before = _mean_weights_for_context(model, 0.2)
-    record = _make_record(context_value=0.2, selected_skill_id="fuel_skill", actual_motives=(0.1, 0.9))
+    record = _make_record(
+        context_value=0.2,
+        weights_used=(0.2, 0.8),
+        selected_skill_id="fuel_skill",
+        actual_motives=(0.1, 0.9),
+    )
     for _ in range(30):
         trainer.training_step(record)
     after = _mean_weights_for_context(model, 0.2)
@@ -84,8 +95,18 @@ def test_behavior_context_switched_training_learns_different_preferences():
     model = MotiveDecompositionNetwork()
     trainer = MDNTrainer(model, config=MDNTrainerConfig(learning_rate=5e-3), device="cpu")
 
-    safety_record = _make_record(context_value=0.1, selected_skill_id="safe_skill", actual_motives=(0.9, 0.1))
-    fuel_record = _make_record(context_value=0.2, selected_skill_id="fuel_skill", actual_motives=(0.1, 0.9))
+    safety_record = _make_record(
+        context_value=0.1,
+        weights_used=(0.8, 0.2),
+        selected_skill_id="safe_skill",
+        actual_motives=(0.9, 0.1),
+    )
+    fuel_record = _make_record(
+        context_value=0.2,
+        weights_used=(0.2, 0.8),
+        selected_skill_id="fuel_skill",
+        actual_motives=(0.1, 0.9),
+    )
 
     for _ in range(30):
         trainer.training_step(safety_record)
