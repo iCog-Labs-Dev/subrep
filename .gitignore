@@ -1,5 +1,6 @@
 .env
 .venv
+.venv_linux
 __pycache__/
 *.pyc
 doc/
@@ -9,3 +10,9 @@ data/raw/
 models/
 # Generated training plots
 plots/
+
+# Generated pipeline outputs (run demo/run_full_pipeline.py to regenerate)
+data/certificates.metta
+data/library.json
+
+
