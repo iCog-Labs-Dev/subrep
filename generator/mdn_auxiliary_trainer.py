@@ -73,7 +73,6 @@ class ProbabilityAwareAuxiliaryDataset(Dataset[tuple[torch.Tensor, torch.Tensor,
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         record = self.records[index]
         trajectory = np.asarray(record.motive_trajectory, dtype=np.float32)
-        target_probability = np.ones((trajectory.shape[0],), dtype=np.float32)
         behavior_probability = np.full((trajectory.shape[0],), float(record.behavior_probability), dtype=np.float32)
         return (
             torch.tensor(record.context, dtype=torch.float32),
@@ -81,7 +80,7 @@ class ProbabilityAwareAuxiliaryDataset(Dataset[tuple[torch.Tensor, torch.Tensor,
             torch.tensor(record.accept_label, dtype=torch.float32),
             torch.tensor(record.q_target, dtype=torch.float32),
             torch.tensor(behavior_probability, dtype=torch.float32),
-            torch.tensor(target_probability, dtype=torch.float32),
+            torch.ones((trajectory.shape[0],), dtype=torch.float32),
         )
 
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+import numpy as np
+
 from utils.mdn_logging import build_decision_record
 from utils.mdn_data_adapter import records_to_prepared_candidate_outcomes
 from utils.mdn_record_builder import (
@@ -16,6 +18,7 @@ from utils.mdn_reward import compute_advantage, compute_mdn_utility
 from utils.mdn_selection import alpha_to_mean_weights, select_best_candidate
 
 from generator.mdn import MotiveDecompositionNetwork
+from generator.mdn_auxiliary_trainer import AuxiliaryTrainingRecord, build_auxiliary_record
 from generator.mdn_trainer import MDNTrainer, MDNTrainerConfig, create_trainer_for_model
 from utils.mdn_contracts import MDNDecisionRecord
 
@@ -76,7 +79,13 @@ def build_records_from_prepared_candidate_outcomes(
         weights_used = alpha_to_mean_weights(alpha_np)
         selected_skill_id, selected_score = select_best_candidate(candidate_skills, weights_used)
 
-        selected_outcome = next(outcome for outcome in group if outcome.skill_id == selected_skill_id)
+        selected_outcome = None
+        for outcome in group:
+            if outcome.skill_id == selected_skill_id:
+                selected_outcome = outcome
+                break
+        if selected_outcome is None:
+            raise ValueError(f"Selected skill {selected_skill_id!r} was not found in grouped prepared outcomes")
         utility = compute_mdn_utility(
             actual_motives=selected_outcome.motives,
             weights_used=weights_used,
@@ -96,6 +105,38 @@ def build_records_from_prepared_candidate_outcomes(
             utility=utility,
         )
         records.append(record)
+    return records
+
+
+def build_auxiliary_records_from_prepared_candidate_outcomes(
+    *,
+    prepared_outcomes: Iterable[dict[str, Any] | PreparedCandidateOutcome],
+    baseline_stats: dict[str, Any],
+    gamma: float = 1.0,
+) -> list[AuxiliaryTrainingRecord]:
+    """Build auxiliary records from all proposals, including uncertified ones.
+
+    """
+    grouped = group_candidate_outcomes_by_context(prepared_outcomes)
+    if not grouped:
+        raise ValueError("prepared_outcomes must contain at least one candidate outcome")
+
+    records: list[AuxiliaryTrainingRecord] = []
+    for _, group in grouped.items():
+        for outcome in group:
+            records.append(
+                build_auxiliary_record(
+                    context=outcome.context,
+                    skill_id=int(str(outcome.skill_id).split("_")[-1]) if str(outcome.skill_id).split("_")[-1].isdigit() else hash(outcome.skill_id) % 100000,
+                    payoff=outcome.payoff,
+                    motives=outcome.motives,
+                    baseline_stats=baseline_stats,
+                    gate_type=outcome.gate_type,
+                    epsilon=outcome.epsilon,
+                    motive_trajectory=np.asarray([outcome.motives], dtype=np.float32),
+                    gamma=gamma,
+                )
+            )
     return records
 
 
