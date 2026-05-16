@@ -9,6 +9,7 @@ from typing import Any, Iterable, Optional
 import numpy as np
 import torch
 from torch import nn
+from torch.nn.utils import clip_grad_norm_
 
 from generator.mdn import MotiveDecompositionNetwork
 from utils.mdn_contracts import MDNDecisionRecord, validate_decision_record
@@ -83,6 +84,7 @@ class MDNTrainer:
         )
         loss = compute_mdn_policy_loss(log_prob, advantage)
         loss.backward()
+        clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
 
         self.running_baseline = utility if self.running_baseline is None else 0.9 * self.running_baseline + 0.1 * utility

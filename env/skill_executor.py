@@ -59,6 +59,7 @@ class SkillExecutor:
         truncated = False
         final_reward = np.zeros(2, dtype=np.float32)
         stop_reason = "unknown"
+        behavior_probability = None
 
         while True:
             if self.max_steps is not None and steps >= self.max_steps:
@@ -66,7 +67,8 @@ class SkillExecutor:
                 break
 
             # Query action from caller-provided policy.
-            action = self.policy_fn(obs)
+            action_output = self.policy_fn(obs)
+            action, behavior_probability = self._parse_policy_output(action_output)
             obs, reward_vec, terminated, truncated, _ = self.env.step(action)
             reward_vec = np.asarray(reward_vec, dtype=np.float32)
 
@@ -103,6 +105,25 @@ class SkillExecutor:
             "final_reward": final_reward.copy(),
             "gamma": float(self.gamma),
             "max_steps": self.max_steps,
+            "behavior_probability": behavior_probability,
         }
 
         return float(total_payoff), motive_deltas, bool(terminated)
+
+    @staticmethod
+    def _parse_policy_output(action_output):
+        """Allow policies to optionally return the chosen-action probability.
+        """
+        if isinstance(action_output, tuple):
+            if len(action_output) != 2:
+                raise ValueError("policy_fn tuple output must be (action, behavior_probability)")
+            action, behavior_probability = action_output
+            if behavior_probability is None:
+                return action, None
+            behavior_probability = float(behavior_probability)
+            if not np.isfinite(behavior_probability) or behavior_probability <= 0.0 or behavior_probability > 1.0:
+                raise ValueError(
+                    f"behavior_probability must be finite and lie in (0, 1], got {behavior_probability}"
+                )
+            return action, behavior_probability
+        return action_output, None

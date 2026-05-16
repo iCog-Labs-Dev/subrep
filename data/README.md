@@ -15,6 +15,7 @@ data/
 | motives     | (2,)  | float32 | [Safety_delta, Fuel_delta]           |
 | skill_id    | ()    | str     | Policy identifier                    |
 | terminated  | ()    | bool    | True if episode ended naturally      |
+| behavior_probability | ()    | float32 | Optional probability assigned by behavior policy |
 
 ## Usage Example
 ```python
@@ -25,10 +26,13 @@ payoff   = float(data['payoff'])
 motives  = data['motives']   # shape (2,)
 skill_id = str(data['skill_id'])
 terminated = bool(data['terminated'])
+behavior_probability = float(data['behavior_probability']) if 'behavior_probability' in data else None
 ```
 
 ## Notes
 - ALL episodes are collected (certified and uncertified) for unbiased training
+- `behavior_probability` is optional and appears only when the behavior policy
+  exposes the probability of the selected action/skill at collection time
 - Use seed parameter in DataCollector for reproducibility
 
 ---

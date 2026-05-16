@@ -4,7 +4,11 @@ from pathlib import Path
 
 import torch
 
-from generator.train_mdn import build_records_from_prepared_candidate_outcomes, train_mdn_from_prepared_outcomes
+from generator.train_mdn import (
+    build_auxiliary_records_from_prepared_candidate_outcomes,
+    build_records_from_prepared_candidate_outcomes,
+    train_mdn_from_prepared_outcomes,
+)
 from utils.mdn_record_builder import PreparedCandidateOutcome
 
 
@@ -49,3 +53,12 @@ def test_train_mdn_from_prepared_outcomes_runs_and_saves_checkpoint(tmp_path: Pa
     assert checkpoint_path.exists()
     assert "loss" in metrics
     assert torch.isfinite(torch.tensor(metrics["loss"]))
+
+
+def test_build_auxiliary_records_from_prepared_candidate_outcomes_includes_all_candidates():
+    records = build_auxiliary_records_from_prepared_candidate_outcomes(
+        prepared_outcomes=_prepared_outcomes(),
+        baseline_stats=_baseline_stats(),
+    )
+
+    assert len(records) == len(_prepared_outcomes())

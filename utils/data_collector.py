@@ -8,6 +8,10 @@ class DataCollector:
     """
     Collects rollout outcomes (obs, payoff, motives, skill_id, terminated)
     and saves them to disk as .npz files for unbiased generator training.
+
+    When available, also records `behavior_probability`, which is the
+    probability that the behavior policy assigned to the selected skill/action
+    at collection time. This field is required for future true IPS support.
     """
     def __init__(
         self,
@@ -47,6 +51,9 @@ class DataCollector:
             'skill_id': skill_id if skill_id is not None else "unknown",
             'terminated': bool(terminated)
         }
+        behavior_probability = self.executor.last_run_info.get("behavior_probability")
+        if behavior_probability is not None:
+            record['behavior_probability'] = float(behavior_probability)
         return record
 
     def save_episode(self, record: dict, episode_idx: int, prefix: str = "random") -> str:
@@ -61,7 +68,8 @@ class DataCollector:
             payoff=record['payoff'],
             motives=record['motives'],
             skill_id=record['skill_id'],
-            terminated=record['terminated']
+            terminated=record['terminated'],
+            **({"behavior_probability": record["behavior_probability"]} if "behavior_probability" in record else {})
         )
         return filepath
 
