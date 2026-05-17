@@ -20,6 +20,7 @@ from utils.cone_utils import (
     compute_worst_case_motive,
     normalize_weights,
 )
+from utils.weight_set_store import WeightSet
 
 # ============================================================================
 # CDS Gate Tests
@@ -240,3 +241,29 @@ def test_full_certification_flow():
     skill4_r, skill4_n = 0.5, np.array([0.8, -0.7])
     assert cds_gate.admit(skill4_r, skill4_n) is False
     assert pds_gate.admit(skill4_r, skill4_n) is False
+
+
+def test_cds_uses_weight_set_when_provided():
+    gate = CDSGate()
+    weight_set = WeightSet()
+    weight_set.add_vertex(np.array([1.0, 0.0], dtype=np.float32))
+
+    delta_r = 0.0
+    delta_n = np.array([0.5, -1.0], dtype=np.float32)
+
+    # Simplex fallback would fail because min(delta_n) = -1.0.
+    assert gate.admit(delta_r, delta_n) is False
+    # Weight-set evaluation only considers the stored vertex [1, 0], so score = 0.5.
+    assert gate.admit(delta_r, delta_n, weight_set=weight_set) is True
+
+
+def test_pds_uses_weight_set_when_provided():
+    gate = PDSGate(epsilon=0.1)
+    weight_set = WeightSet()
+    weight_set.add_vertex(np.array([1.0, 0.0], dtype=np.float32))
+
+    delta_r = 0.0
+    delta_n = np.array([0.05, -0.8], dtype=np.float32)
+
+    assert gate.admit(delta_r, delta_n) is False
+    assert gate.admit(delta_r, delta_n, weight_set=weight_set) is True
