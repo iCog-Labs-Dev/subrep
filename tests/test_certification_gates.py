@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from certification.gate import AdmissionGate
 from certification.cds_test import CDSGate
+from certification.cvar_test import CVaRGate
 from certification.pds_test import PDSGate
 from utils.cone_utils import (  
     validate_simplex_weights,
@@ -267,3 +268,31 @@ def test_pds_uses_weight_set_when_provided():
 
     assert gate.admit(delta_r, delta_n) is False
     assert gate.admit(delta_r, delta_n, weight_set=weight_set) is True
+
+
+def test_cvar_gate_admits_obviously_safe_skill():
+    gate = CVaRGate(confidence=0.1, n_samples=500)
+    alpha = np.array([2.0, 2.0], dtype=np.float32)
+
+    assert gate.admit(delta_r=1.0, delta_n=np.array([0.5, 0.5], dtype=np.float32), mdn_alpha=alpha) is True
+
+
+def test_cvar_gate_rejects_obviously_harmful_skill():
+    gate = CVaRGate(confidence=0.1, n_samples=500)
+    alpha = np.array([2.0, 2.0], dtype=np.float32)
+
+    assert gate.admit(delta_r=-2.0, delta_n=np.array([-2.0, -2.0], dtype=np.float32), mdn_alpha=alpha) is False
+
+
+def test_cvar_gate_uses_dirichlet_distribution():
+    gate = CVaRGate(confidence=0.1, n_samples=1000)
+    delta_n = np.array([1.0, -1.0], dtype=np.float32)
+
+    alpha_heavy_0 = np.array([100.0, 1.0], dtype=np.float32)
+    alpha_heavy_1 = np.array([1.0, 100.0], dtype=np.float32)
+
+    result_0 = gate.admit(delta_r=0.0, delta_n=delta_n, mdn_alpha=alpha_heavy_0)
+    result_1 = gate.admit(delta_r=0.0, delta_n=delta_n, mdn_alpha=alpha_heavy_1)
+
+    assert result_0 is True
+    assert result_1 is False

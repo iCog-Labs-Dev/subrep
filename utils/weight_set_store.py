@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+
+import json
 
 import numpy as np
 
@@ -81,3 +84,30 @@ class WeightSetStore:
 
     def total_vertex_count(self) -> int:
         return sum(len(weight_set.vertices) for weight_set in self._store.values())
+
+    def save(self, path: str | Path) -> None:
+        """Persist the current `W_x` store to JSON."""
+        file_path = Path(path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "num_objectives": self.num_objectives,
+            "contexts": {
+                ",".join(map(str, key)): [vertex.tolist() for vertex in weight_set.vertices]
+                for key, weight_set in self._store.items()
+            },
+        }
+        file_path.write_text(json.dumps(data), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str | Path) -> "WeightSetStore":
+        """Restore a `WeightSetStore` from JSON persistence."""
+        file_path = Path(path)
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+        store = cls(num_objectives=int(data["num_objectives"]))
+        for key_str, vertices_list in data["contexts"].items():
+            key = tuple(float(value) for value in key_str.split(",") if value != "")
+            weight_set = WeightSet()
+            for vertex in vertices_list:
+                weight_set.add_vertex(np.asarray(vertex, dtype=np.float32))
+            store._store[key] = weight_set
+        return store
