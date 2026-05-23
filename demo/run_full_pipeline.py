@@ -145,7 +145,7 @@ def run_pipeline() -> dict:
             gamma=GAMMA,
             max_steps=MAX_STEPS,
         )
-        payoff, motives, terminated = executor.run_episode()
+        payoff, motives, terminated = executor.run_episode(initial_obs=obs)
         episode_length = executor.last_run_info.get("steps", MAX_STEPS)
 
         # CERTIFY — compute improvements and run CDS/PDS gates

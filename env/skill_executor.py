@@ -44,12 +44,18 @@ class SkillExecutor:
         self.payoff_fn = payoff_fn or (lambda reward_vec: float(np.sum(reward_vec)))
         self.last_run_info = None         # Holds diagnostics from the most recent run for downstream debugging.
 
-    def run_episode(self):
+    def run_episode(self, initial_obs: Optional[np.ndarray] = None):
         """
-        Run one rollout from reset and return:
-        (total_payoff, motive_deltas, terminated)
+        Run one rollout and return (total_payoff, motive_deltas, terminated).
+        Args:
+            initial_obs: If provided, skip env.reset() and start from this state.
         """
-        obs, _ = self.env.reset()
+        if initial_obs is not None:
+            # Use provided observation instead of resetting.
+            obs = np.array(initial_obs, copy=True)
+        else:
+            obs, _ = self.env.reset()
+
         initial_obs = np.array(obs, copy=True)
         total_payoff = 0.0
         motive_deltas = np.zeros(2, dtype=np.float32)

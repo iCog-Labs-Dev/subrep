@@ -7,6 +7,13 @@
 ## Goal
 Learn to predict skill outcomes from state inputs to enable certification without full execution every time.
 
+## Quickstart
+To reproduce or update the trained model (`models/generator.pt`):
+
+1. **Collect Data:** `python -m data_collector.collect` (outputs to `data/raw/`)
+2. **Train:** `python -m generator.train_generator` (outputs to `models/`)
+
+
 
 ## Key Files
 | File | Purpose |

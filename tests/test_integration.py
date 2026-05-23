@@ -116,37 +116,77 @@ def test_real_execution_to_certification():
 
 def test_safety_rejection_logic():
     """
-    Critical Test: A skill that fails CDS must NOT enter the SkillLibrary.
-
-    Strategy: Build a certificate for a clearly failing skill (large negative
-    delta_r). Add it to an isolated CertificateStore. Wire SkillLibrary to that
-    store. Try to add the skill WITHOUT first calling cert_store.add(). The
-    library must reject it (returns False) and remain empty.
+    Critical Test: A skill must pass BOTH the Store check and the Math check.
+    
+    1. Rejection due to missing certificate in Store (Identity check).
+    2. Rejection due to failing math (Chain of Safety check).
     """
     cert_store = CertificateStore()
     library = SkillLibrary(cert_store=cert_store)
-
-    # Build a certificate for a clearly bad skill (delta_r + min(delta_n) < 0).
-    failing_cert = _make_cert(
-        skill_id="bad_skill_001",
-        delta_r=-10.0,
-        delta_n=(-5.0, -5.0),
-        # Margin must be >= 0 for the Certificate schema, but we didn't
-        # add this cert to the store, so library will reject via contains().
-        margin=0.001,  # small positive to pass schema validation
-    )
-
-    # Do NOT call cert_store.add(failing_cert) — the library should reject it.
-    initial_count = library.count()
     env = SubRepEnv(seed=SEED)
     policy = _random_policy(env)
 
-    result = library.add_skill("bad_skill_001", failing_cert, policy)
-
-    assert result is False, "Library must reject a skill with no certificate in store"
-    assert library.count() == initial_count, (
-        f"Library count must remain {initial_count}, got {library.count()}"
+    # --- Scenario A: Identity-based rejection (Not in store) ---
+    # Even if math passes schema, library rejects if ID is unknown.
+    failing_cert_a = _make_cert(
+        skill_id="bad_id_001",
+        delta_r=10.0,
+        delta_n=(5.0, 5.0),
+        margin=15.0
     )
+    assert library.add_skill("bad_id_001", failing_cert_a, policy) is False, \
+        "Library must reject a skill with no certificate in store"
+
+    # --- Scenario B: Mathematics-based rejection (In store, but bad math) ---
+    # We purposefully 'smear' a bad cert into the store (simulating a compromise).
+    failing_cert_b = _make_cert(
+        skill_id="bad_math_001",
+        delta_r=-10.0,
+        delta_n=(-5.0, -5.0),
+        margin=0.1 # Fake positive margin
+    )
+    cert_store.add(failing_cert_b) # Forced injection into store
+    
+    # The library must still reject it because our internal verify(math) fails.
+    assert cert_store.contains("bad_math_001") is True
+    result = library.add_skill("bad_math_001", failing_cert_b, policy)
+    
+    assert result is False, "Library must reject a skill with failing math, even if in Store"
+    assert library.count() == 0, "No bad skill should enter the library"
+
+
+def test_pds_admits_within_epsilon():
+    """
+    Verify PDS epsilon logic: admits skills that fall within (Δr + min(Δn) + epsilon >= 0)
+    even if they fail the strict CDS test (Δr + min(Δn) < 0).
+    """
+    cert_store = CertificateStore()
+    library = SkillLibrary(cert_store=cert_store)
+    env = SubRepEnv(seed=SEED)
+    policy = _random_policy(env)
+
+    # CDS formula: Δr + min(Δn) >= 0
+    # PDS formula: Δr + min(Δn) >= -epsilon
+    
+    eps = 2.0
+    cert = _make_cert(
+        skill_id="pds_boundary_skill",
+        delta_r=10.0,
+        delta_n=(-11.0, -11.0),
+        margin=1.0, # 10 - 11 + 2.0 = 1.0 (Passing margin for PDS)
+        gate_type="PDS",
+        epsilon=eps
+    )
+    
+    cert_store.add(cert)
+    success = library.add_skill("pds_boundary_skill", cert, policy)
+    
+    assert success is True, "PDS must admit skills within the epsilon budget"
+    entry = library.get_skill("pds_boundary_skill")
+    assert entry is not None
+    assert entry.gate_type == "PDS"
+    assert entry.epsilon == eps
+    assert library.count() == 1
 
 
 def test_meTTA_to_python_handoff():

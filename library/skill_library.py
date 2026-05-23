@@ -12,6 +12,8 @@ import numpy as np
 from .skill_metadata import SkillEntry
 from utils.cone_utils import validate_simplex_weights
 from certification.certificate_schema import Certificate
+from certification.cds_test import CDSGate
+from certification.pds_test import PDSGate
 
 
 class SkillLibrary:
@@ -25,9 +27,24 @@ class SkillLibrary:
     def add_skill(self, skill_id: str, certificate: Certificate, policy: Callable) -> bool:
         """ Add a certified skill to the library. """
 
+        # 1. Certificate Store Check (Identity & Existence)
         if self.cert_store is not None:
             if not self.cert_store.contains(certificate.skill_id):
                 return False
+
+        # 2. Mathematical Check (The "Chain of Safety")
+        # We re-verify the certificate's math at the library entry point.
+        if certificate.gate_type == "CDS":
+            gate = CDSGate()
+        elif certificate.gate_type == "PDS":
+            gate = PDSGate(epsilon=certificate.epsilon)
+        else:
+            return False
+
+        # Ensure delta_n is numpy-ready for the gate
+        delta_n_vec = np.asarray(certificate.delta_n, dtype=np.float64)
+        if not gate.admit(certificate.delta_r, delta_n_vec):
+            return False
 
         entry = SkillEntry(
             skill_id=skill_id,

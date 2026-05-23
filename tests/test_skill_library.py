@@ -351,7 +351,15 @@ def test_query_by_weights_pds_rejected():
         episode_length=200,
         version="0.1.0",
     )
-    lib.add_skill("hard-pds", bad_cert, make_dummy_policy())
+    # We must bypass add_skill here because our new Chain of Safety correctly 
+    # rejects this mathematically failing certificate before it enters the library!
+    # We inject it directly into _skills to test query_by_weights in isolation.
+    lib._skills["hard-pds"] = SkillEntry(
+        skill_id="hard-pds",
+        gate_type="PDS",
+        certificate=bad_cert,
+        policy=make_dummy_policy()
+    )
 
     # w=[0.0, 1.0] → should reject
     assert len(lib.query_by_weights([0.0, 1.0])) == 0
