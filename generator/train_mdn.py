@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Iterable, Optional
 
 import numpy as np
@@ -14,13 +13,13 @@ from utils.mdn_record_builder import (
     build_candidate_skill_records,
     group_candidate_outcomes_by_context,
 )
-from utils.mdn_reward import compute_advantage, compute_mdn_utility
+from utils.mdn_reward import compute_mdn_utility
 from utils.mdn_selection import alpha_to_mean_weights, select_best_candidate
 from utils.weight_set_store import WeightSetStore
 
 from generator.mdn import MotiveDecompositionNetwork
 from generator.mdn_auxiliary_trainer import AuxiliaryTrainingRecord, build_auxiliary_record
-from generator.mdn_trainer import MDNTrainer, MDNTrainerConfig, create_trainer_for_model
+from generator.mdn_trainer import create_trainer_for_model
 from utils.mdn_contracts import MDNDecisionRecord
 
 
@@ -127,23 +126,49 @@ def build_auxiliary_records_from_prepared_candidate_outcomes(
 
     records: list[AuxiliaryTrainingRecord] = []
     for _, group in grouped.items():
-        for outcome in group:
-            weight_set = None
-            if weight_store is not None:
-                context_array = np.asarray(outcome.context, dtype=np.float32)
-                weight_set = weight_store.get_weight_set(context_array)
+        weight_set = None
+        if weight_store is not None:
+            context_array = np.asarray(group[0].context, dtype=np.float32)
+            weight_set = weight_store.get_weight_set(context_array)
+
+        candidate_skill_records = build_candidate_skill_records(
+            skill_outcomes=group,
+            baseline_stats=baseline_stats,
+            weight_store=weight_store,
+        )
+        certified = [c for c in candidate_skill_records if c.is_certified]
+        certified_delta_r = tuple(float(c.delta_r) for c in certified)
+        certified_delta_n = tuple(
+            tuple(float(v) for v in c.delta_n) for c in certified
+        )
+
+        for outcome, candidate in zip(group, candidate_skill_records):
+            selected_index = None
+            for idx, c in enumerate(certified):
+                if c.skill_id == candidate.skill_id:
+                    selected_index = idx
+                    break
+
+            numeric_id = (
+                int(str(outcome.skill_id).split("_")[-1])
+                if str(outcome.skill_id).split("_")[-1].isdigit()
+                else hash(outcome.skill_id) % 100000
+            )
             records.append(
                 build_auxiliary_record(
                     context=outcome.context,
-                    skill_id=int(str(outcome.skill_id).split("_")[-1]) if str(outcome.skill_id).split("_")[-1].isdigit() else hash(outcome.skill_id) % 100000,
+                    skill_id=numeric_id,
                     payoff=outcome.payoff,
                     motives=outcome.motives,
-                    baseline_stats=baseline_stats,
+                    accept_label=candidate.is_certified,
                     gate_type=outcome.gate_type,
                     epsilon=outcome.epsilon,
                     motive_trajectory=np.asarray([outcome.motives], dtype=np.float32),
                     gamma=gamma,
                     weight_set=weight_set,
+                    all_candidate_delta_r=certified_delta_r if certified else None,
+                    all_candidate_delta_n=certified_delta_n if certified else None,
+                    selected_candidate_index=selected_index,
                 )
             )
     return records

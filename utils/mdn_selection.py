@@ -75,3 +75,27 @@ def select_best_candidate(candidates: tuple[CandidateSkillRecord, ...] | list[Ca
             best_score = candidate_score
 
     return best_candidate.skill_id, best_score
+
+
+def softmax_selection_probabilities(
+    candidates: tuple[CandidateSkillRecord, ...] | list[CandidateSkillRecord],
+    weights: np.ndarray,
+) -> dict[str, float]:
+    """Compute softmax selection probability over certified candidates.
+    """
+    certified = [c for c in candidates if c.is_certified]
+    if not certified:
+        raise ValueError("softmax_selection_probabilities requires at least one certified candidate")
+
+    weights = np.asarray(weights, dtype=np.float32).reshape(-1)
+    if not np.all(np.isfinite(weights)):
+        raise ValueError("weights must contain only finite values")
+
+    scores = np.array(
+        [float(c.delta_r) + float(np.dot(weights, np.asarray(c.delta_n, dtype=np.float32))) for c in certified],
+        dtype=np.float32,
+    )
+    scores -= np.max(scores)
+    exp_scores = np.exp(scores)
+    probs = exp_scores / np.sum(exp_scores)
+    return {c.skill_id: float(p) for c, p in zip(certified, probs)}
