@@ -62,17 +62,9 @@ def main() -> None:
     # Set up the environment
     env = SubRepEnv(seed=args.seed)
 
-    # Random baseline pilot — mimics the untrained behavior we want the
-    # generator to learn to beat.
-    policy_fn = lambda obs: env.env.action_space.sample()
-
-    # Set up the executor (no gamma/max_steps needed for raw data collection)
-    executor = SkillExecutor(
-        env=env,
-        policy_fn=policy_fn,
-        gamma=0.99,
-        max_steps=500,
-    )
+    # The Team Lead added a trained RLPilot checkpoint. We use it here so the 
+    # collected baseline data consists of meaningful flights instead of random crashes.
+    executor = SkillExecutor.from_pilot_checkpoint(env=env)
 
     # Wire up the DataCollector backed by utils/data_collector.py
     collector = DataCollector(
@@ -81,7 +73,7 @@ def main() -> None:
         save_dir=args.save_dir,
     )
 
-    print(f"[Collect] Running {args.episodes} episodes with a random pilot...")
+    print(f"[Collect] Running {args.episodes} episodes with the trained RL pilot...")
     collector.collect_n_episodes(
         n=args.episodes,
         print_summary=True,

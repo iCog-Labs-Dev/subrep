@@ -7,7 +7,8 @@ doc/
 # Generated dataset (run DataCollector locally to regenerate)
 data/raw/
 # Trained model weights (run train_generator locally to regenerate)
-models/
+models/*
+!models/pilot_ppo.pt
 # Generated training plots
 plots/
 

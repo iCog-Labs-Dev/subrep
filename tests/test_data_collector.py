@@ -111,3 +111,21 @@ def test_custom_prefix_prevents_overwriting(temp_data_dir):
     
     assert os.path.exists(os.path.join(temp_data_dir, "A_ep001.npz"))
     assert os.path.exists(os.path.join(temp_data_dir, "B_ep001.npz"))
+
+
+def test_collector_persists_behavior_probability_when_policy_provides_it(temp_data_dir):
+    env = SubRepEnv(seed=42)
+    sampled_action = env.env.action_space.sample()
+    policy = lambda obs: (sampled_action, 0.25)
+    executor = SkillExecutor(env=env, policy_fn=policy, gamma=0.99, max_steps=10)
+    collector = DataCollector(executor=executor, seed=42, save_dir=temp_data_dir)
+
+    record = collector.collect_episode(skill_id="prob_skill")
+    assert "behavior_probability" in record
+    assert np.isclose(record["behavior_probability"], 0.25)
+
+    collector.save_episode(record, 1, prefix="prob")
+    saved_file = os.path.join(temp_data_dir, "prob_ep001.npz")
+    data = np.load(saved_file, allow_pickle=True)
+    assert "behavior_probability" in data
+    assert np.isclose(float(data["behavior_probability"]), 0.25)

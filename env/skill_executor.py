@@ -44,6 +44,43 @@ class SkillExecutor:
         self.payoff_fn = payoff_fn or (lambda reward_vec: float(np.sum(reward_vec)))
         self.last_run_info = None         # Holds diagnostics from the most recent run for downstream debugging.
 
+    @classmethod
+    def from_pilot_checkpoint(
+        cls,
+        env,
+        checkpoint_path: str = "models/pilot_ppo.pt",
+        gamma: float = 0.99,
+        max_steps: Optional[int] = None,
+        payoff_fn: Optional[Callable[[np.ndarray], float]] = None,
+        deterministic: bool = True,
+        map_location: str = "cpu",
+    ) -> "SkillExecutor":
+        """Create an executor backed by a saved RLPilot checkpoint."""
+        from pilot.rl_pilot import RLPilot
+
+        pilot = RLPilot.load(checkpoint_path, map_location=map_location)
+
+        def policy_fn(obs):
+            # SkillExecutor already supports arbitrary policy callables. This
+            # adapter keeps that contract intact while replacing random action
+            # sampling with the trained PPO pilot for certification rollouts.
+            return pilot.predict(
+                obs,
+                deterministic=deterministic,
+                return_probability=True,
+            )
+
+        executor = cls(
+            env=env,
+            policy_fn=policy_fn,
+            gamma=gamma,
+            max_steps=max_steps,
+            payoff_fn=payoff_fn,
+        )
+        executor.pilot = pilot
+        executor.pilot_checkpoint_path = checkpoint_path
+        return executor
+
     def run_episode(self, initial_obs: Optional[np.ndarray] = None):
         """
         Run one rollout and return (total_payoff, motive_deltas, terminated).
@@ -65,6 +102,7 @@ class SkillExecutor:
         truncated = False
         final_reward = np.zeros(2, dtype=np.float32)
         stop_reason = "unknown"
+        behavior_probability = None
 
         while True:
             if self.max_steps is not None and steps >= self.max_steps:
@@ -72,7 +110,8 @@ class SkillExecutor:
                 break
 
             # Query action from caller-provided policy.
-            action = self.policy_fn(obs)
+            action_output = self.policy_fn(obs)
+            action, behavior_probability = self._parse_policy_output(action_output)
             obs, reward_vec, terminated, truncated, _ = self.env.step(action)
             reward_vec = np.asarray(reward_vec, dtype=np.float32)
 
@@ -109,6 +148,25 @@ class SkillExecutor:
             "final_reward": final_reward.copy(),
             "gamma": float(self.gamma),
             "max_steps": self.max_steps,
+            "behavior_probability": behavior_probability,
         }
 
         return float(total_payoff), motive_deltas, bool(terminated)
+
+    @staticmethod
+    def _parse_policy_output(action_output):
+        """Allow policies to optionally return the chosen-action probability.
+        """
+        if isinstance(action_output, tuple):
+            if len(action_output) != 2:
+                raise ValueError("policy_fn tuple output must be (action, behavior_probability)")
+            action, behavior_probability = action_output
+            if behavior_probability is None:
+                return action, None
+            behavior_probability = float(behavior_probability)
+            if not np.isfinite(behavior_probability) or behavior_probability <= 0.0 or behavior_probability > 1.0:
+                raise ValueError(
+                    f"behavior_probability must be finite and lie in (0, 1], got {behavior_probability}"
+                )
+            return action, behavior_probability
+        return action_output, None

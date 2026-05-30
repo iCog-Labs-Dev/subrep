@@ -137,11 +137,9 @@ def run_pipeline() -> dict:
                     found_promising_state = True
 
         # EXECUTE — run one episode
-        # TODO: Replace this random pilot with a Trained RL Policy
-        policy_fn = lambda o: env.env.action_space.sample()
-        executor = SkillExecutor(
+        # Use the trained RL Policy provided by the team lead.
+        executor = SkillExecutor.from_pilot_checkpoint(
             env=env,
-            policy_fn=policy_fn,
             gamma=GAMMA,
             max_steps=MAX_STEPS,
         )

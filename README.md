@@ -78,12 +78,20 @@ python -m generator.train_generator
 python -m demo.run_full_pipeline
 ```
 
+### 5. PPO Pilot Reproducibility
+```bash
+# Regenerate the committed PPO pilot checkpoint:
+python -m pilot.train_pilot --seed 7 --output models/pilot_ppo.pt
 
+# Validate the checkpoint without retraining:
+python -m pytest tests/test_pilot_performance.py -v
+```
 ## Project Structure
 | Folder | Description| 
 | :--- | :---|
 | `env/` | MO-LunarLander wrapper & vector reward handling| 
 | `generator/` | 2-head MLP skill generator (PyTorch)| 
+| `pilot/` | PPO pilot policy, training entry point, and checkpoint utilities|
 | `certification/` | CDS/PDS admission gate logic|
 | `metta/` | PyMeTTa bridge & certificate schema| 
 | `utils/` | TD error computation, logging, helpers| 
