@@ -137,6 +137,26 @@ def test_build_auxiliary_record_preserves_behavior_probability_when_present():
     assert record.selected_candidate_index == 0
 
 
+def test_build_auxiliary_record_keeps_discounted_target_for_probability_aware_ips():
+    record = build_auxiliary_record(
+        context=(0.1,) * 8,
+        skill_id=1,
+        payoff=1.2,
+        motives=(0.5, 0.2),
+        baseline_stats=_baseline_stats(),
+        motive_trajectory=[[(1.0, 0.0), (0.0, 1.0)]],
+        behavior_probability=np.array([[0.5, 0.5]], dtype=np.float32),
+        target_probability=np.array([[1.0, 1.0]], dtype=np.float32),
+        record_behavior_probability=0.5,
+        use_ips=True,
+        all_candidate_delta_r=(0.4, 0.2),
+        all_candidate_delta_n=((0.8, 0.1), (0.1, 0.8)),
+        selected_candidate_index=0,
+    )
+
+    assert np.allclose(record.q_target, (1.0, 1.0))
+
+
 def test_auxiliary_trainer_raises_when_ips_mode_enabled_without_probability_aware_dataset():
     model = MotiveDecompositionNetwork(input_dim=14, num_skills=16, num_objectives=2)
     trainer = MDNAuxiliaryTrainer(

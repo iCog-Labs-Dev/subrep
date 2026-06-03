@@ -410,6 +410,9 @@ def build_auxiliary_record(
         else:
             raise ValueError(f"gate_type must be 'CDS' or 'PDS', got {gate_type!r}")
 
+    if use_ips and use_doubly_robust:
+        raise ValueError("use_ips and use_doubly_robust cannot both be True")
+
     if motive_trajectory is None:
         q_target = np.asarray(motives, dtype=np.float32).reshape(-1)
     elif use_doubly_robust:
@@ -421,12 +424,11 @@ def build_auxiliary_record(
             gamma=gamma,
         )
     elif use_ips:
-        q_target = ips_weighted_return(
-            np.asarray(motive_trajectory, dtype=np.float32),
-            behavior_probability=behavior_probability,
-            target_probability=target_probability,
-            gamma=gamma,
-        )
+        if behavior_probability is None or target_probability is None:
+            raise ValueError("IPS return requires behavior_probability and target_probability")
+        # Probability-aware records keep the plain discounted target.
+        # The trainer applies the IPS ratio as a sample weight to avoid double weighting.
+        q_target = discounted_motive_return(np.asarray(motive_trajectory, dtype=np.float32), gamma=gamma)
     else:
         q_target = discounted_motive_return(np.asarray(motive_trajectory, dtype=np.float32), gamma=gamma)
 
