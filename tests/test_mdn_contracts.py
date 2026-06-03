@@ -144,7 +144,7 @@ def test_mdn_decision_record_rejects_selected_skill_not_in_candidates():
         )
 
 
-def test_mdn_decision_record_rejects_support_out_of_range():
+def test_mdn_decision_record_rejects_negative_support_values():
     candidates = (
         CandidateSkillRecord(
             skill_id="skill_a",
@@ -156,9 +156,9 @@ def test_mdn_decision_record_rejects_support_out_of_range():
     )
     with pytest.raises(ValueError, match="support_values"):
         MDNDecisionRecord(
-            context=(0.1,) * 14,
+            context=(0.1,) * 8,
             alpha=(2.0, 3.0),
-            support_values=(1.2, 0.3),
+            support_values=(-0.1, 0.3),
             weights_used=(0.4, 0.6),
             candidate_skills=candidates,
             selected_skill_id="skill_a",

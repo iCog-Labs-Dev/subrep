@@ -22,6 +22,7 @@ def build_decision_record(
 ) -> MDNDecisionRecord:
     """Construct and validate an MDNDecisionRecord from runtime values."""
     record = MDNDecisionRecord(
+        schema_version="1.0",
         context=context,
         alpha=alpha,
         support_values=support_values,
@@ -41,6 +42,7 @@ def serialize_decision_record(record: MDNDecisionRecord) -> dict[str, Any]:
     """Convert an MDN decision record into a serialization-ready dictionary."""
     validate_decision_record(record)
     return {
+        "schema_version": record.schema_version,
         "context": list(record.context),
         "alpha": list(record.alpha),
         "support_values": list(record.support_values),

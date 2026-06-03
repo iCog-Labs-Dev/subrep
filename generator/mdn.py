@@ -11,7 +11,7 @@ class MotiveDecompositionNetwork(nn.Module):
     """
     def __init__(
         self,
-        input_dim: int = 14,
+        input_dim: int = 8,
         num_objectives: int = 2,
         hidden_dim: int = 64,
         num_hidden_layers: int = 2,
@@ -59,7 +59,7 @@ class MotiveDecompositionNetwork(nn.Module):
         self.gate_head = nn.Linear(hidden_dim, 1)
         self.motive_head = nn.Linear(hidden_dim, num_objectives)
         self.softplus = nn.Softplus()
-        self.support_activation = nn.Sigmoid()
+        self.support_activation = nn.Softplus()
 
         self._initialize_weights()
 

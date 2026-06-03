@@ -12,6 +12,7 @@ from certification.cds_test import CDSGate
 from certification.pds_test import PDSGate
 from utils.mdn_contracts import CandidateSkillRecord, MDNDecisionRecord
 from utils.mdn_logging import build_decision_record
+from utils.weight_set_store import WeightSet, WeightSetStore
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,7 @@ def build_candidate_skill_record(
     metadata: Optional[dict[str, Any]] = None,
     baseline_id: str | None = None,
     epsilon: float | None = None,
+    weight_set: WeightSet | None = None,
 ) -> CandidateSkillRecord:
     """Build a certified-candidate record from baseline-relative improvements."""
     calculator = ImprovementCalculator(baseline_stats)
@@ -83,15 +85,15 @@ def build_candidate_skill_record(
     if gate_type_normalized == "CDS":
         gate = CDSGate()
         effective_epsilon = 0.0
-        admission_margin = gate.get_admission_margin(delta_r, delta_n)
+        admission_margin = gate.get_admission_margin(delta_r, delta_n, weight_set=weight_set)
     elif gate_type_normalized == "PDS":
         gate = PDSGate(epsilon=0.1 if epsilon is None else float(epsilon))
         effective_epsilon = gate.get_epsilon()
-        admission_margin = gate.get_admission_margin(delta_r, delta_n)
+        admission_margin = gate.get_admission_margin(delta_r, delta_n, weight_set=weight_set)
     else:
         raise ValueError(f"gate_type must be 'CDS' or 'PDS', got {gate_type!r}")
 
-    is_certified = gate.admit(delta_r, delta_n)
+    is_certified = gate.admit(delta_r, delta_n, weight_set=weight_set)
     return CandidateSkillRecord(
         skill_id=skill_id,
         delta_r=delta_r,
@@ -112,11 +114,16 @@ def build_candidate_skill_records(
     gate_type: str = "CDS",
     baseline_id: str | None = None,
     epsilon: float | None = None,
+    weight_store: WeightSetStore | None = None,
 ) -> tuple[CandidateSkillRecord, ...]:
     """Build a tuple of candidate records from iterable skill outcome payloads."""
     records = []
     for outcome in skill_outcomes:
         prepared = _coerce_prepared_candidate_outcome(outcome, default_gate_type=gate_type, default_epsilon=epsilon)
+        weight_set = None
+        if weight_store is not None:
+            context_array = np.asarray(prepared.context, dtype=np.float32)
+            weight_set = weight_store._store.get(weight_store._context_key(context_array))
         records.append(
             build_candidate_skill_record(
                 skill_id=prepared.skill_id,
@@ -127,6 +134,7 @@ def build_candidate_skill_records(
                 metadata=prepared.metadata,
                 baseline_id=baseline_id,
                 epsilon=prepared.epsilon,
+                weight_set=weight_set,
             )
         )
     return tuple(records)

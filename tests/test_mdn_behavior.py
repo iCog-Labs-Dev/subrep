@@ -33,7 +33,7 @@ def _make_record(
         ),
     )
     return MDNDecisionRecord(
-        context=(context_value,) * 14,
+        context=(context_value,) * 8,
         alpha=(1.0, 1.0),
         support_values=(0.5, 0.5),
         weights_used=weights_used,
@@ -48,7 +48,7 @@ def _make_record(
 
 def _mean_weights_for_context(model: MotiveDecompositionNetwork, context_value: float) -> np.ndarray:
     with torch.no_grad():
-        alpha, _ = model(torch.tensor((context_value,) * 14, dtype=torch.float32))
+        alpha, _ = model(torch.tensor((context_value,) * 8, dtype=torch.float32))
     return alpha_to_mean_weights(alpha.detach().cpu().numpy())
 
 

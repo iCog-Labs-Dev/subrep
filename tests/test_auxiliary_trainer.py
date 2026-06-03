@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import pytest
 
 from generator.mdn import MotiveDecompositionNetwork
 from generator.mdn_auxiliary_trainer import (
@@ -116,7 +117,7 @@ def test_build_auxiliary_record_raises_for_ips_without_probabilities():
 
 def test_build_auxiliary_record_preserves_behavior_probability_when_present():
     record = build_auxiliary_record(
-        context=(0.1,) * 14,
+        context=(0.1,) * 8,
         skill_id=1,
         payoff=1.2,
         motives=(0.5, 0.2),
@@ -126,9 +127,34 @@ def test_build_auxiliary_record_preserves_behavior_probability_when_present():
         target_probability=np.array([[1.0, 1.0]], dtype=np.float32),
         record_behavior_probability=0.5,
         use_ips=True,
+        all_candidate_delta_r=(0.4, 0.2),
+        all_candidate_delta_n=((0.8, 0.1), (0.1, 0.8)),
+        selected_candidate_index=0,
     )
 
     assert record.behavior_probability == 0.5
+    assert record.candidate_delta_r == (0.4, 0.2)
+    assert record.selected_candidate_index == 0
+
+
+def test_build_auxiliary_record_keeps_discounted_target_for_probability_aware_ips():
+    record = build_auxiliary_record(
+        context=(0.1,) * 8,
+        skill_id=1,
+        payoff=1.2,
+        motives=(0.5, 0.2),
+        baseline_stats=_baseline_stats(),
+        motive_trajectory=[[(1.0, 0.0), (0.0, 1.0)]],
+        behavior_probability=np.array([[0.5, 0.5]], dtype=np.float32),
+        target_probability=np.array([[1.0, 1.0]], dtype=np.float32),
+        record_behavior_probability=0.5,
+        use_ips=True,
+        all_candidate_delta_r=(0.4, 0.2),
+        all_candidate_delta_n=((0.8, 0.1), (0.1, 0.8)),
+        selected_candidate_index=0,
+    )
+
+    assert np.allclose(record.q_target, (1.0, 1.0))
 
 
 def test_auxiliary_trainer_raises_when_ips_mode_enabled_without_probability_aware_dataset():
@@ -152,7 +178,7 @@ def test_probability_aware_auxiliary_training_path_runs(tmp_path: Path):
     for index in range(20):
         records.append(
             build_auxiliary_record(
-                context=((0.1,) * 14) if index % 2 == 0 else ((0.9,) * 14),
+                context=((0.1,) * 8) if index % 2 == 0 else ((0.9,) * 8),
                 skill_id=1 if index % 2 == 0 else 2,
                 payoff=1.7 if index % 2 == 0 else 1.1,
                 motives=(0.8, 0.4) if index % 2 == 0 else (0.3, 0.7),
@@ -162,6 +188,9 @@ def test_probability_aware_auxiliary_training_path_runs(tmp_path: Path):
                 target_probability=np.array([[1.0, 1.0]], dtype=np.float32),
                 record_behavior_probability=0.5,
                 use_ips=True,
+                all_candidate_delta_r=(0.4, 0.2),
+                all_candidate_delta_n=((0.8, 0.1), (0.1, 0.8)),
+                selected_candidate_index=0,
             )
         )
 
@@ -175,3 +204,76 @@ def test_probability_aware_auxiliary_training_path_runs(tmp_path: Path):
 
     assert Path(result["checkpoint_path"]).exists()
     assert result["best_val_loss"] >= 0.0
+
+
+def test_probability_aware_path_recomputes_softmax_target_probability_from_candidate_scores():
+    model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer = MDNAuxiliaryTrainer(
+        model,
+        config=MDNAuxiliaryTrainerConfig(use_ips=True, max_epochs=1, batch_size=1),
+        device="cpu",
+    )
+
+    probability = trainer._compute_softmax_target_probability(
+        selected_index=0,
+        candidate_delta_r=(0.4, 0.2),
+        candidate_delta_n=((0.8, 0.1), (0.1, 0.8)),
+        weights=np.array([0.9, 0.1], dtype=np.float32),
+    )
+
+    assert 0.5 < probability < 1.0
+
+
+def test_probability_aware_training_requires_candidate_score_fields():
+    model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer = MDNAuxiliaryTrainer(
+        model,
+        config=MDNAuxiliaryTrainerConfig(use_ips=True, max_epochs=1, batch_size=1),
+        device="cpu",
+    )
+
+    record = build_auxiliary_record(
+        context=(0.1,) * 8,
+        skill_id=1,
+        payoff=1.2,
+        motives=(0.5, 0.2),
+        baseline_stats=_baseline_stats(),
+        motive_trajectory=[[(1.0, 0.0), (0.0, 1.0)]],
+        behavior_probability=np.array([[0.5, 0.5]], dtype=np.float32),
+        target_probability=np.array([[1.0, 1.0]], dtype=np.float32),
+        record_behavior_probability=0.5,
+        use_ips=True,
+    )
+
+    with pytest.raises(ValueError, match="candidate_delta_r"):
+        trainer.train_probability_aware_records([record])
+
+
+def test_probability_aware_loss_weights_q_loss_instead_of_scaling_target():
+    model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer = MDNAuxiliaryTrainer(model, config=MDNAuxiliaryTrainerConfig(), device="cpu")
+
+    gate_logits = torch.tensor([0.0], dtype=torch.float32)
+    q_hat = torch.tensor([[0.0, 0.0]], dtype=torch.float32)
+    accept_label = torch.tensor([1.0], dtype=torch.float32)
+    q_target = torch.tensor([[1.0, 2.0]], dtype=torch.float32)
+
+    weighted_total_loss, _, weighted_q_loss = trainer._compute_losses(
+        gate_logits,
+        q_hat,
+        accept_label,
+        q_target,
+        q_loss_weight=3.0,
+    )
+    unweighted_total_loss, _, unweighted_q_loss = trainer._compute_losses(
+        gate_logits,
+        q_hat,
+        accept_label,
+        q_target,
+        q_loss_weight=1.0,
+    )
+
+    assert torch.isclose(weighted_q_loss, unweighted_q_loss)
+    expected_delta = trainer.config.lambda_q * 2.0 * unweighted_q_loss
+    actual_delta = weighted_total_loss - unweighted_total_loss
+    assert torch.isclose(actual_delta, expected_delta)

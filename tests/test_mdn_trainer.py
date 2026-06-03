@@ -28,7 +28,7 @@ def _decision_record() -> MDNDecisionRecord:
         ),
     )
     return MDNDecisionRecord(
-        context=(0.1,) * 14,
+        context=(0.1,) * 8,
         alpha=(2.0, 3.0),
         support_values=(0.7, 0.3),
         weights_used=(0.4, 0.6),
@@ -70,7 +70,7 @@ def test_trainer_requires_actual_motives_for_offline_training():
     model = MotiveDecompositionNetwork()
     trainer = MDNTrainer(model, config=MDNTrainerConfig(), device="cpu")
     record = MDNDecisionRecord(
-        context=(0.1,) * 14,
+        context=(0.1,) * 8,
         alpha=(2.0, 3.0),
         support_values=(0.7, 0.3),
         weights_used=(0.4, 0.6),
@@ -99,7 +99,7 @@ def test_trainer_uses_recorded_weights_without_resampling_selector_alignment():
     model = MotiveDecompositionNetwork()
     trainer = MDNTrainer(model, config=MDNTrainerConfig(strict_validation=False), device="cpu")
     record = MDNDecisionRecord(
-        context=(0.1,) * 14,
+        context=(0.1,) * 8,
         alpha=(2.0, 3.0),
         support_values=(0.7, 0.3),
         weights_used=(0.95, 0.05),
@@ -157,7 +157,7 @@ def test_trainer_strict_validation_catches_selected_skill_mismatch():
     model = MotiveDecompositionNetwork()
     trainer = MDNTrainer(model, config=MDNTrainerConfig(strict_validation=True), device="cpu")
     record = MDNDecisionRecord(
-        context=(0.1,) * 14,
+        context=(0.1,) * 8,
         alpha=(2.0, 3.0),
         support_values=(0.7, 0.3),
         weights_used=(0.95, 0.05),
@@ -202,3 +202,25 @@ def test_trainer_checkpoint_round_trip(tmp_path: Path):
     restored_trainer = MDNTrainer.from_checkpoint(checkpoint_path, model=restored_model, device="cpu")
 
     assert restored_trainer.running_baseline is not None
+
+
+def test_trainer_callback_receives_metrics_for_step_and_batch():
+    class Callback:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, dict[str, float]]] = []
+
+        def on_step(self, step: int, metrics: dict[str, float]) -> None:
+            self.calls.append((step, metrics))
+
+    torch.manual_seed(0)
+    callback = Callback()
+    model = MotiveDecompositionNetwork()
+    trainer = MDNTrainer(model, config=MDNTrainerConfig(), device="cpu", callback=callback)
+
+    trainer.training_step(_decision_record())
+    trainer.train_records([_decision_record()])
+
+    assert len(callback.calls) == 2
+    assert callback.calls[0][0] == 1
+    assert callback.calls[1][0] == 2
+    assert "loss" in callback.calls[0][1]

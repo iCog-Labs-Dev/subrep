@@ -10,7 +10,7 @@ def test_mdn_single_input_shape():
     """Single context inputs should preserve unbatched output shapes."""
     torch.manual_seed(0)
     model = MotiveDecompositionNetwork()
-    context = torch.randn(14)
+    context = torch.randn(8)
 
     weight_params, support_values = model(context)
 
@@ -22,7 +22,7 @@ def test_mdn_batched_input_shape():
     """Batched context inputs should preserve the batch dimension."""
     torch.manual_seed(0)
     model = MotiveDecompositionNetwork()
-    context = torch.randn(5, 14)
+    context = torch.randn(5, 8)
 
     weight_params, support_values = model(context)
 
@@ -34,30 +34,29 @@ def test_mdn_dirichlet_alpha_parameters_are_strictly_positive():
     """Dirichlet alpha parameters must always be strictly positive."""
     torch.manual_seed(0)
     model = MotiveDecompositionNetwork()
-    context = torch.randn(5, 14)
+    context = torch.randn(5, 8)
 
     weight_params, _ = model(context)
 
     assert torch.all(weight_params > 0)
 
 
-def test_mdn_support_values_are_bounded():
-    """Support geometry outputs should stay in the closed unit interval."""
+def test_mdn_support_values_are_non_negative():
+    """Support values should be non-negative under the current support-function contract."""
     torch.manual_seed(0)
     model = MotiveDecompositionNetwork()
-    context = torch.randn(5, 14)
+    context = torch.randn(5, 8)
 
     _, support_values = model(context)
 
     assert torch.all(support_values >= 0)
-    assert torch.all(support_values <= 1)
 
 
 def test_mdn_outputs_are_finite():
     """Both heads should produce finite tensors without NaN or Inf values."""
     torch.manual_seed(0)
     model = MotiveDecompositionNetwork()
-    context = torch.randn(5, 14)
+    context = torch.randn(5, 8)
 
     weight_params, support_values = model(context)
 
@@ -65,11 +64,12 @@ def test_mdn_outputs_are_finite():
     assert torch.isfinite(support_values).all()
 
 
-def test_mdn_gradient_flow_reaches_parameters_and_input():
-    """A simple scalar loss should backpropagate through both heads and input."""
+def test_mdn_synthetic_gradient_flow_reaches_parameters_and_input():
+    """A synthetic combined loss should backpropagate through both heads and input.
+    """
     torch.manual_seed(0)
     model = MotiveDecompositionNetwork()
-    context = torch.randn(5, 14, requires_grad=True)
+    context = torch.randn(5, 8, requires_grad=True)
 
     weight_params, support_values = model(context)
     loss = weight_params.sum() + support_values.sum()
@@ -82,9 +82,9 @@ def test_mdn_gradient_flow_reaches_parameters_and_input():
 def test_mdn_rejects_invalid_input_dimension():
     """Model should raise a clear error when the feature dimension is wrong."""
     model = MotiveDecompositionNetwork()
-    context = torch.randn(13)
+    context = torch.randn(7)
 
-    with pytest.raises(ValueError, match=r"Expected single context shape \(14,\)"):
+    with pytest.raises(ValueError, match=r"Expected single context shape \(8,\)"):
         model(context)
 
 

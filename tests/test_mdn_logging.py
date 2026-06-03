@@ -19,7 +19,7 @@ def _candidate(skill_id: str, certified: bool = True) -> CandidateSkillRecord:
 
 def test_build_decision_record_returns_valid_record():
     record = build_decision_record(
-        context=(0.1,) * 14,
+        context=(0.1,) * 8,
         alpha=(2.0, 3.0),
         support_values=(0.7, 0.3),
         weights_used=(0.4, 0.6),
@@ -33,12 +33,13 @@ def test_build_decision_record_returns_valid_record():
 
     assert record.selected_skill_id == "skill_a"
     assert record.utility == 0.9
+    assert record.schema_version == "1.0"
 
 
 def test_build_decision_record_rejects_invalid_payload():
     with pytest.raises(ValueError, match="selected_skill_id"):
         build_decision_record(
-            context=(0.1,) * 14,
+            context=(0.1,) * 8,
             alpha=(2.0, 3.0),
             support_values=(0.7, 0.3),
             weights_used=(0.4, 0.6),
@@ -58,7 +59,7 @@ def test_serialize_candidate_skill_preserves_core_fields():
 
 def test_serialize_decision_record_preserves_nested_fields():
     record = build_decision_record(
-        context=(0.1,) * 14,
+        context=(0.1,) * 8,
         alpha=(2.0, 3.0),
         support_values=(0.7, 0.3),
         weights_used=(0.4, 0.6),
@@ -72,5 +73,6 @@ def test_serialize_decision_record_preserves_nested_fields():
     payload = serialize_decision_record(record)
 
     assert payload["selected_skill_id"] == "skill_a"
+    assert payload["schema_version"] == "1.0"
     assert payload["candidate_skills"][0]["skill_id"] == "skill_a"
     assert payload["actual_motives"] == [0.8, 0.1]

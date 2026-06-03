@@ -85,8 +85,11 @@ class MDNDecisionRecord:
     actual_payoff: float | None = None
     actual_motives: tuple[float, float] | None = None
     utility: float | None = None
+    schema_version: str = "1.0"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.schema_version, str) or not self.schema_version.strip():
+            raise ValueError("schema_version must be a non-empty string")
         context = _as_finite_vector(self.context, field_name="context")
         alpha = _as_finite_vector(self.alpha, field_name="alpha")
         support_values = _as_finite_vector(self.support_values, field_name="support_values")
@@ -100,8 +103,8 @@ class MDNDecisionRecord:
             raise ValueError("weights_used length must match alpha length")
         if any(value <= 0.0 for value in alpha):
             raise ValueError(f"alpha must be strictly positive, got {alpha}")
-        if any(value < 0.0 or value > 1.0 for value in support_values):
-            raise ValueError(f"support_values must lie in [0, 1], got {support_values}")
+        if any(value < 0.0 for value in support_values):
+            raise ValueError(f"support_values must be non-negative, got {support_values}")
 
         weights_array = np.asarray(weights_used, dtype=float)
         if not validate_simplex_weights(weights_array):

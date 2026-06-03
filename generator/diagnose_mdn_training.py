@@ -44,7 +44,7 @@ def make_record(context_value: float, weights_used: tuple[float, float], selecte
         ),
     )
     return MDNDecisionRecord(
-        context=(context_value,) * 14,
+        context=(context_value,) * 8,
         alpha=(1.0, 1.0),
         support_values=(0.5, 0.5),
         weights_used=weights_used,
@@ -132,7 +132,7 @@ def check_synthetic_learning_direction(epochs: int, seed: int, lr: float, num_re
     records = make_synthetic_records(num_records)
     train_records, validation_records = split_records(records)
 
-    initial_weights = alpha_to_mean_weights(model(torch.tensor((0.1,) * 14, dtype=torch.float32))[0].detach().cpu().numpy())
+    initial_weights = alpha_to_mean_weights(model(torch.tensor((0.1,) * 8, dtype=torch.float32))[0].detach().cpu().numpy())
     target = np.array([0.8, 0.2], dtype=np.float32)
     initial_distance = float(np.linalg.norm(initial_weights - target))
 
@@ -144,7 +144,7 @@ def check_synthetic_learning_direction(epochs: int, seed: int, lr: float, num_re
         train_history.append(train_metrics)
         validation_history.append(validation_metrics)
 
-    final_weights = alpha_to_mean_weights(model(torch.tensor((0.1,) * 14, dtype=torch.float32))[0].detach().cpu().numpy())
+    final_weights = alpha_to_mean_weights(model(torch.tensor((0.1,) * 8, dtype=torch.float32))[0].detach().cpu().numpy())
     final_distance = float(np.linalg.norm(final_weights - target))
     passed = bool(final_weights[0] > initial_weights[0] or final_distance < initial_distance)
 
@@ -176,7 +176,7 @@ def check_checkpoint_round_trip(keep_checkpoint: bool, seed: int, lr: float) -> 
         checkpoint_path = Path(temp_dir) / "mdn_diag_checkpoint.pth"
         trainer.save_checkpoint(checkpoint_path)
         restored = MDNTrainer.from_checkpoint(checkpoint_path, model=MotiveDecompositionNetwork(), device="cpu")
-        context = torch.tensor((0.1,) * 14, dtype=torch.float32)
+        context = torch.tensor((0.1,) * 8, dtype=torch.float32)
         trainer.model.eval()
         restored.model.eval()
         with torch.no_grad():

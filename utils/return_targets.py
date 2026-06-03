@@ -30,11 +30,15 @@ def discounted_motive_return(motives: np.ndarray, gamma: float = 1.0) -> np.ndar
     return np.sum(motives * discounts[None, :, None], axis=1).astype(np.float32)
 
 
+DEFAULT_IPS_CLIP_VALUE = 10.0
+
+
 def ips_weighted_return(
     motives: np.ndarray,
     behavior_probability: Optional[np.ndarray] = None,
     target_probability: Optional[np.ndarray] = None,
     gamma: float = 1.0,
+    clip_value: float | None = None,
 ) -> np.ndarray:
     """Compute an IPS-weighted discounted motive return.
 
@@ -67,6 +71,11 @@ def ips_weighted_return(
 
     discounts = np.power(gamma, np.arange(motives.shape[1], dtype=np.float32))
     importance_weights = target_probability / behavior_probability
+    if clip_value is not None:
+        clip_value = float(clip_value)
+        if clip_value <= 0.0 or not np.isfinite(clip_value):
+            raise ValueError(f"clip_value must be positive and finite when provided, got {clip_value}")
+        importance_weights = np.minimum(importance_weights, clip_value)
     return np.sum(motives * importance_weights[:, :, None] * discounts[None, :, None], axis=1).astype(np.float32)
 
 
@@ -88,6 +97,7 @@ def doubly_robust_return(
         behavior_probability=behavior_probability,
         target_probability=target_probability,
         gamma=gamma,
+        clip_value=None,
     )
     q_model_estimate = np.asarray(q_model_estimate, dtype=np.float32)
     if q_model_estimate.shape != ips_target.shape:
