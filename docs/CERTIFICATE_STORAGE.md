@@ -17,6 +17,7 @@ Implemented modules:
 Tests:
 
 - `tests/test_certificate_storage.py`
+- `tests/test_certificate_mdn_audit_storage.py`
 
 ## Certificate Schema
 
@@ -37,11 +38,45 @@ Fields:
 - `environment: str`
 - `episode_length: int` (`> 0`)
 - `version: str`
+- `weight_region_type: str` (`FULL_SIMPLEX` or `MDN_WX`)
+- `certification_context: Optional[vector<float>]`
+- `mdn_alpha: Optional[vector<float>]`
+- `wx_support_directions: Optional[matrix<float>]`
+- `wx_support_values: Optional[vector<float>]`
+
+`FULL_SIMPLEX` certificates are the backward-compatible default. Their MDN
+audit fields are all Python `None` at runtime and serialize as MeTTa `Nil`.
+
+`MDN_WX` certificates record the evidence used when certification was issued
+under contextual MDN/W_x gating:
+
+- the context vector used during certification
+- the certification-time MDN alpha vector
+- the support directions used to replay the W_x gate term
+- the support values for those directions
+
+The stored MDN/W_x metadata is audit and replay evidence. Runtime skill
+selection can still use the current MDN output for the current context; old
+certificate metadata should not be treated as a live routing decision.
+
+Validation rules:
+
+- `FULL_SIMPLEX` certificates must have all MDN audit fields set to `None`.
+- `MDN_WX` certificates must have all MDN audit fields present.
+- `certification_context` must be finite and non-empty.
+- `mdn_alpha` must be finite, positive, and non-empty.
+- `wx_support_directions` must be finite and two-dimensional.
+- `wx_support_values` must be finite, non-negative, and match the number of
+  support direction rows.
+- Support values are support-function values, not weight vectors, so they do
+  not need to sum to 1.
 
 Methods:
 
 - `to_dict() -> dict`
 - `from_dict(data: dict) -> Certificate`
+- `is_mdn_certificate(cert) -> bool`
+- `validate_mdn_certificate(cert) -> None`
 
 ## MeTTA Atom Format
 
@@ -61,16 +96,65 @@ Canonical expression shape:
   (baseline_id "idle_policy")
   (environment "MO-LunarLander-v0")
   (episode_length 120)
-  (version "subrep-q1-v0.1"))
+  (version "subrep-q1-v0.1")
+  (weight_region_type "FULL_SIMPLEX")
+  (certification_context Nil)
+  (mdn_alpha Nil)
+  (wx_support_directions Nil)
+  (wx_support_values Nil))
 ```
 
 Note: `delta_n` is fixed to 2D in this phase for MO-LunarLander compatibility.
 The paper's broader formulation uses an `m`-dimensional motive vector.
 
+Contextual MDN/W_x example:
+
+```metta
+(Certificate
+  (skill_id "landing_skill_mdn")
+  (gate_type "CDS")
+  (delta_r 0.5)
+  (delta_n (vec 0.2 -0.1))
+  (admission_margin 0.4)
+  (epsilon 0.0)
+  (timestamp "2025-01-15T10:30:00")
+  (seed 42)
+  (gamma 0.99)
+  (baseline_id "idle_policy")
+  (environment "MO-LunarLander-v0")
+  (episode_length 120)
+  (version "subrep-q1-v0.1")
+  (weight_region_type "MDN_WX")
+  (certification_context (vec 0.1 0.2 0.3))
+  (mdn_alpha (vec 1.5 2.0))
+  (wx_support_directions (list (vec 0.0 0.3)))
+  (wx_support_values (vec 0.09)))
+```
+
+Backward compatibility:
+
+- Old certificates that do not contain MDN audit fields load as `FULL_SIMPLEX`.
+- Missing optional audit fields become Python `None`, not the MeTTa symbol
+  `Nil`, after parsing.
+- Extra unknown fields still fail validation to avoid silent schema drift.
+
+MeTTa/Python conversion rules:
+
+- Python `None` serializes as `Nil`.
+- MeTTa `Nil` deserializes as Python `None`.
+- Python `[0.8, 0.2]` serializes as `(vec 0.8 0.2)`.
+- MeTTa `(vec 0.8 0.2)` deserializes as Python `[0.8, 0.2]`.
+- Python `[[1, 0], [0, 1]]` serializes as
+  `(list (vec 1.0 0.0) (vec 0.0 1.0))`.
+- MeTTa `(list (vec 1 0) (vec 0 1))` deserializes as
+  Python `[[1.0, 0.0], [0.0, 1.0]]`.
+
 `metta_bridge.py` (Hyperon-backed) provides:
 
 - `cert_to_atom(cert)`
 - `atom_to_cert(atom)`
+- `python_to_metta_value(value)`
+- `metta_to_python_value(value)`
 - deterministic serializer/parser for this certificate format
 
 The parser is intentionally narrow and supports only this emitted schema.
@@ -169,6 +253,11 @@ cert = Certificate(
     environment="MO-LunarLander-v0",
     episode_length=120,
     version="subrep-q1-v0.1",
+    weight_region_type="FULL_SIMPLEX",
+    certification_context=None,
+    mdn_alpha=None,
+    wx_support_directions=None,
+    wx_support_values=None,
 )
 
 store = CertificateStore()
