@@ -64,6 +64,11 @@ def _make_certificate(
         environment=ENV_NAME,
         episode_length=episode_length,
         version=VERSION,
+        weight_region_type="FULL_SIMPLEX",
+        certification_context=None,
+        mdn_alpha=None,
+        wx_support_directions=None,
+        wx_support_values=None,
     )
 
 

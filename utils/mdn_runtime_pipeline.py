@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -29,6 +29,61 @@ class CertificationResult:
     admission_margin: float
     delta_r: float
     delta_n: tuple[float, ...]
+    weight_region_type: str = "FULL_SIMPLEX"
+    certification_context: tuple[float, ...] | None = None
+    mdn_alpha: tuple[float, ...] | None = None
+    wx_support_directions: tuple[tuple[float, ...], ...] | None = None
+    wx_support_values: tuple[float, ...] | None = None
+
+
+def certification_result_to_certificate_kwargs(
+    result: CertificationResult,
+    *,
+    timestamp: str,
+    seed: int,
+    gamma: float,
+    baseline_id: str,
+    environment: str,
+    episode_length: int,
+    version: str,
+    epsilon: float | None = None,
+) -> dict[str, object]:
+    """Build Certificate constructor kwargs without dropping runtime audit fields."""
+    if not result.is_certified:
+        raise ValueError("Only certified runtime results can be converted to certificates")
+
+    gate_type = result.gate_type.strip().upper()
+    if gate_type == "CDS":
+        certificate_epsilon = 0.0 if epsilon is None else float(epsilon)
+        if certificate_epsilon != 0.0:
+            raise ValueError("CDS certificates must use epsilon == 0.0")
+    elif gate_type == "PDS":
+        if epsilon is None:
+            raise ValueError("PDS certificate conversion requires epsilon")
+        certificate_epsilon = float(epsilon)
+    else:
+        raise ValueError(f"Unsupported certificate gate_type: {result.gate_type!r}")
+
+    return {
+        "skill_id": result.skill_id,
+        "gate_type": gate_type,
+        "delta_r": float(result.delta_r),
+        "delta_n": tuple(float(v) for v in result.delta_n),
+        "admission_margin": float(result.admission_margin),
+        "epsilon": certificate_epsilon,
+        "timestamp": timestamp,
+        "seed": seed,
+        "gamma": gamma,
+        "baseline_id": baseline_id,
+        "environment": environment,
+        "episode_length": episode_length,
+        "version": version,
+        "weight_region_type": result.weight_region_type,
+        "certification_context": result.certification_context,
+        "mdn_alpha": result.mdn_alpha,
+        "wx_support_directions": result.wx_support_directions,
+        "wx_support_values": result.wx_support_values,
+    }
 
 
 @dataclass
@@ -99,6 +154,7 @@ class RuntimeCertificationPipeline:
 
         weight_set = self.weight_store.get_weight_set(context)
         is_certified = self._run_gate_tests(delta_r, delta_n, context, weight_set)
+        audit_fields = self._build_audit_fields(context, weight_set, delta_n)
 
         if is_certified and weights_used is not None:
             self.weight_store.observe_certified_weight(context, weights_used)
@@ -113,6 +169,7 @@ class RuntimeCertificationPipeline:
             admission_margin=self._compute_admission_margin(delta_r, delta_n, context, weight_set),
             delta_r=float(delta_r),
             delta_n=tuple(float(v) for v in delta_n),
+            **audit_fields,
         )
 
         self._certified_skills[permanence_key] = result
@@ -148,6 +205,11 @@ class RuntimeCertificationPipeline:
                 context,
                 weight_set,
             )
+            audit_fields = self._build_audit_fields(
+                context,
+                weight_set,
+                np.array(candidate.delta_n),
+            )
 
             if is_certified and weights_used is not None:
                 self.weight_store.observe_certified_weight(context, weights_used)
@@ -159,9 +221,15 @@ class RuntimeCertificationPipeline:
                     is_certified=True,
                     gate_type=self.config.gate_type,
                     was_already_certified=False,
-                    admission_margin=candidate.admission_margin,
+                    admission_margin=self._compute_admission_margin(
+                        candidate.delta_r,
+                        np.array(candidate.delta_n),
+                        context,
+                        weight_set,
+                    ),
                     delta_r=candidate.delta_r,
                     delta_n=candidate.delta_n,
+                    **audit_fields,
                 )
                 self._certified_skills[permanence_key] = result
 
@@ -255,6 +323,49 @@ class RuntimeCertificationPipeline:
 
         return result
 
+    def _build_audit_fields(
+        self,
+        context: np.ndarray,
+        weight_set: Optional[WeightSet],
+        delta_n: np.ndarray,
+    ) -> dict[str, object]:
+        """Return certificate audit fields for the active certification region."""
+        gate_type = self.config.gate_type.upper()
+        uses_mdn_distribution = gate_type == "CVAR" or bool(self.config.use_cvar)
+        uses_contextual_weight_set = weight_set is not None and not weight_set.is_empty()
+
+        if not uses_mdn_distribution and not uses_contextual_weight_set:
+            return {
+                "weight_region_type": "FULL_SIMPLEX",
+                "certification_context": None,
+                "mdn_alpha": None,
+                "wx_support_directions": None,
+                "wx_support_values": None,
+            }
+
+        torch = __import__("torch")
+        context_array = np.asarray(context, dtype=np.float32).reshape(-1)
+        context_tensor = torch.tensor(
+            context_array,
+            dtype=torch.float32,
+            device=self.model.device if hasattr(self.model, "device") else "cpu",
+        )
+        with torch.no_grad():
+            alpha, _ = self.model.forward_inference(context_tensor)
+
+        support_directions, support_values = _gate_support_evidence(delta_n, weight_set)
+
+        return {
+            "weight_region_type": "MDN_WX",
+            "certification_context": tuple(float(v) for v in context_array),
+            "mdn_alpha": tuple(float(v) for v in alpha.detach().cpu().numpy().reshape(-1)),
+            "wx_support_directions": tuple(
+                tuple(float(v) for v in row)
+                for row in support_directions
+            ),
+            "wx_support_values": tuple(float(v) for v in support_values),
+        }
+
     def _compute_admission_margin(
         self,
         delta_r: float,
@@ -287,3 +398,41 @@ class RuntimeCertificationPipeline:
             ).get_cvar(delta_r, delta_n, mdn_alpha=alpha_np)
 
         raise ValueError(f"Unknown gate_type: {gate_type}")
+
+
+def _gate_support_evidence(
+    delta_n: np.ndarray,
+    weight_set: Optional[WeightSet],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return replayable support evidence for the CDS/PDS W_x gate term.
+
+    CDS/PDS use min_w w^T delta_n. To keep stored support values non-negative,
+    store h_W(max(delta_n) - delta_n); replay recovers the gate term as
+    max(delta_n) - support_value.
+    """
+    delta = np.asarray(delta_n, dtype=np.float32).reshape(-1)
+    if delta.ndim != 1 or len(delta) == 0:
+        raise ValueError(f"delta_n must be a non-empty 1D vector, got {delta.shape}")
+    if not np.all(np.isfinite(delta)):
+        raise ValueError("delta_n must contain only finite values")
+
+    support_direction = float(np.max(delta)) - delta
+    if weight_set is None or weight_set.is_empty():
+        support_value = float(np.max(support_direction))
+    else:
+        vertices = weight_set.get_vertices_array()
+        if vertices is None:
+            support_value = float(np.max(support_direction))
+        else:
+            support_value = float(np.max(vertices @ support_direction))
+
+    if support_value < 0.0:
+        if np.isclose(support_value, 0.0):
+            support_value = 0.0
+        else:
+            raise ValueError("gate support evidence must be non-negative")
+
+    return (
+        support_direction.reshape(1, -1).astype(np.float32),
+        np.asarray([support_value], dtype=np.float32),
+    )
