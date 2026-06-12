@@ -94,12 +94,35 @@ def test_mdn_decision_record_accepts_valid_values():
         candidate_skills=candidates,
         selected_skill_id="skill_a",
         selected_score=0.55,
+        behavior_probability=0.75,
         actual_payoff=1.2,
         actual_motives=(0.8, 0.1),
         utility=0.9,
     )
 
     validate_decision_record(record)
+
+
+def test_mdn_decision_record_rejects_invalid_behavior_probability():
+    candidates = (
+        CandidateSkillRecord(
+            skill_id="skill_a",
+            delta_r=0.5,
+            delta_n=(0.2, -0.1),
+            is_certified=True,
+            gate_type="CDS",
+        ),
+    )
+    with pytest.raises(ValueError, match="behavior_probability"):
+        MDNDecisionRecord(
+            context=(0.1,) * 8,
+            alpha=(2.0, 3.0),
+            support_values=(0.7, 0.3),
+            weights_used=(0.4, 0.6),
+            candidate_skills=candidates,
+            selected_skill_id="skill_a",
+            behavior_probability=0.0,
+        )
 
 
 def test_mdn_decision_record_rejects_invalid_weights():

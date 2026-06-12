@@ -196,7 +196,20 @@ class RuntimeCertificationPipeline:
             permanence_key = (context_key, candidate.skill_id)
 
             if permanence_key in self._certified_skills:
-                updated_records.append(candidate)
+                stored = self._certified_skills[permanence_key]
+                updated_records.append(
+                    CandidateSkillRecord(
+                        skill_id=candidate.skill_id,
+                        delta_r=stored.delta_r,
+                        delta_n=stored.delta_n,
+                        is_certified=stored.is_certified,
+                        gate_type=stored.gate_type,
+                        metadata=dict(candidate.metadata),
+                        admission_margin=stored.admission_margin,
+                        epsilon=candidate.epsilon,
+                        baseline_id=candidate.baseline_id,
+                    )
+                )
                 continue
 
             is_certified = self._run_gate_tests(
@@ -232,6 +245,20 @@ class RuntimeCertificationPipeline:
                     **audit_fields,
                 )
                 self._certified_skills[permanence_key] = result
+                updated_records.append(
+                    CandidateSkillRecord(
+                        skill_id=candidate.skill_id,
+                        delta_r=candidate.delta_r,
+                        delta_n=candidate.delta_n,
+                        is_certified=True,
+                        gate_type=result.gate_type,
+                        metadata=dict(candidate.metadata),
+                        admission_margin=result.admission_margin,
+                        epsilon=candidate.epsilon,
+                        baseline_id=candidate.baseline_id,
+                    )
+                )
+                continue
 
             updated_records.append(candidate)
 

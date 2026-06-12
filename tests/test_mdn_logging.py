@@ -26,6 +26,7 @@ def test_build_decision_record_returns_valid_record():
         candidate_skills=(_candidate("skill_a"), _candidate("skill_b", certified=False)),
         selected_skill_id="skill_a",
         selected_score=0.55,
+        behavior_probability=0.8,
         actual_payoff=1.2,
         actual_motives=(0.8, 0.1),
         utility=0.9,
@@ -34,6 +35,7 @@ def test_build_decision_record_returns_valid_record():
     assert record.selected_skill_id == "skill_a"
     assert record.utility == 0.9
     assert record.schema_version == "1.0"
+    assert record.behavior_probability == 0.8
 
 
 def test_build_decision_record_rejects_invalid_payload():
@@ -66,6 +68,7 @@ def test_serialize_decision_record_preserves_nested_fields():
         candidate_skills=(_candidate("skill_a"),),
         selected_skill_id="skill_a",
         selected_score=0.55,
+        behavior_probability=0.8,
         actual_payoff=1.2,
         actual_motives=(0.8, 0.1),
         utility=0.9,
@@ -76,3 +79,4 @@ def test_serialize_decision_record_preserves_nested_fields():
     assert payload["schema_version"] == "1.0"
     assert payload["candidate_skills"][0]["skill_id"] == "skill_a"
     assert payload["actual_motives"] == [0.8, 0.1]
+    assert payload["behavior_probability"] == 0.8

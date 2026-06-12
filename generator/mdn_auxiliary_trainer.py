@@ -248,6 +248,39 @@ class MDNAuxiliaryTrainer:
             "gate_accuracy": total_correct / n,
         }
 
+    def online_step(self, record: AuxiliaryTrainingRecord) -> dict[str, float]:
+        """Run one online gradient step on a single auxiliary training record.
+        """
+        if self.config.use_ips:
+            if record.behavior_probability is None:
+                raise ValueError("online_step with use_ips=True requires behavior_probability")
+            if record.candidate_delta_r is None:
+                raise ValueError("online_step with use_ips=True requires candidate_delta_r")
+            if record.candidate_delta_n is None:
+                raise ValueError("online_step with use_ips=True requires candidate_delta_n")
+            if record.selected_candidate_index is None:
+                raise ValueError("online_step with use_ips=True requires selected_candidate_index")
+            return self._run_probability_aware_epoch([record], training=True)
+
+        self.model.train()
+        self.optimizer.zero_grad(set_to_none=True)
+        ctx = torch.tensor(record.context, dtype=torch.float32, device=self.device).unsqueeze(0)
+        sid = torch.tensor([record.skill_id], dtype=torch.long, device=self.device)
+        label = torch.tensor([record.accept_label], dtype=torch.float32, device=self.device)
+        q_tgt = torch.tensor(record.q_target, dtype=torch.float32, device=self.device).unsqueeze(0)
+        gate_logits, q_hat = self.model.forward_auxiliary(ctx, sid)
+        total_loss, gate_loss, q_loss = self._compute_losses(gate_logits, q_hat, label, q_tgt)
+        total_loss.backward()
+        clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
+        self.optimizer.step()
+        pred = (torch.sigmoid(gate_logits) >= 0.5).float()
+        return {
+            "loss": float(total_loss.item()),
+            "gate_loss": float(gate_loss.item()),
+            "q_loss": float(q_loss.item()),
+            "gate_accuracy": float((pred == label).float().mean().item()),
+        }
+
     def train_records(self, records: Iterable[AuxiliaryTrainingRecord]) -> dict[str, Any]:
         if self.config.use_ips:
             raise ValueError(

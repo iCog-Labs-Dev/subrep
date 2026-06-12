@@ -7,6 +7,7 @@ import pytest
 
 from certification.certificate_schema import Certificate
 from generator.mdn import MotiveDecompositionNetwork
+from utils.mdn_contracts import CandidateSkillRecord
 from utils.mdn_runtime_pipeline import (
     CertificationResult,
     RuntimeCertificationPipeline,
@@ -211,3 +212,71 @@ def test_runtime_pipeline_save_and_load_store(tmp_path):
 
     loaded_store = WeightSetStore.load(saved_path)
     assert loaded_store.context_count() == store.context_count()
+
+
+def test_certify_candidate_skills_returns_newly_certified_record():
+    model = MotiveDecompositionNetwork(input_dim=8, num_objectives=2)
+    store = WeightSetStore(num_objectives=2)
+    config = RuntimePipelineConfig(gate_type="CDS", train_support_after_certify=False)
+    pipeline = RuntimeCertificationPipeline(model=model, weight_store=store, config=config)
+
+    context = np.array([0.1] * 8, dtype=np.float32)
+    candidates = [
+        CandidateSkillRecord(
+            skill_id="skill_a",
+            delta_r=0.7,
+            delta_n=(0.3, 0.2),
+            is_certified=False,
+            gate_type="CDS",
+            admission_margin=0.9,
+            epsilon=0.0,
+        )
+    ]
+
+    updated = pipeline.certify_candidate_skills(
+        context=context,
+        candidate_skills=candidates,
+        baseline_stats=_baseline_stats(),
+        weights_used=np.array([0.5, 0.5], dtype=np.float32),
+    )
+
+    assert len(updated) == 1
+    assert updated[0].is_certified is True
+
+
+def test_certify_candidate_skills_returns_certified_record_from_permanence_cache():
+    model = MotiveDecompositionNetwork(input_dim=8, num_objectives=2)
+    store = WeightSetStore(num_objectives=2)
+    config = RuntimePipelineConfig(gate_type="CDS", train_support_after_certify=False)
+    pipeline = RuntimeCertificationPipeline(model=model, weight_store=store, config=config)
+
+    context = np.array([0.1] * 8, dtype=np.float32)
+    pipeline.certify_skill(
+        context=context,
+        skill_id="skill_a",
+        skill_payoff=1.7,
+        skill_motives=np.array([0.8, 0.4], dtype=np.float32),
+        baseline_stats=_baseline_stats(),
+        weights_used=np.array([0.5, 0.5], dtype=np.float32),
+    )
+
+    stale_candidate = CandidateSkillRecord(
+        skill_id="skill_a",
+        delta_r=-1.0,
+        delta_n=(-1.0, -1.0),
+        is_certified=False,
+        gate_type="CDS",
+        admission_margin=-2.0,
+        epsilon=0.0,
+    )
+
+    updated = pipeline.certify_candidate_skills(
+        context=context,
+        candidate_skills=[stale_candidate],
+        baseline_stats=_baseline_stats(),
+        weights_used=np.array([0.5, 0.5], dtype=np.float32),
+    )
+
+    assert len(updated) == 1
+    assert updated[0].is_certified is True
+    assert updated[0].delta_r != stale_candidate.delta_r

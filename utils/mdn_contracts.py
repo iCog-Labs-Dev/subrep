@@ -82,6 +82,7 @@ class MDNDecisionRecord:
     candidate_skills: tuple[CandidateSkillRecord, ...]
     selected_skill_id: str
     selected_score: float | None = None
+    behavior_probability: float | None = None
     actual_payoff: float | None = None
     actual_motives: tuple[float, float] | None = None
     utility: float | None = None
@@ -133,6 +134,18 @@ class MDNDecisionRecord:
             if not isfinite(score):
                 raise ValueError(f"selected_score must be finite, got {self.selected_score}")
             object.__setattr__(self, "selected_score", score)
+
+        if self.behavior_probability is not None:
+            behavior_probability = float(self.behavior_probability)
+            if (
+                not isfinite(behavior_probability)
+                or behavior_probability <= 0.0
+                or behavior_probability > 1.0
+            ):
+                raise ValueError(
+                    "behavior_probability must be finite and lie in (0, 1]"
+                )
+            object.__setattr__(self, "behavior_probability", behavior_probability)
 
         if self.actual_payoff is not None:
             payoff = float(self.actual_payoff)
