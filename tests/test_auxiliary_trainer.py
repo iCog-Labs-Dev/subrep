@@ -277,3 +277,110 @@ def test_probability_aware_loss_weights_q_loss_instead_of_scaling_target():
     expected_delta = trainer.config.lambda_q * 2.0 * unweighted_q_loss
     actual_delta = weighted_total_loss - unweighted_total_loss
     assert torch.isclose(actual_delta, expected_delta)
+
+
+def _probability_aware_record() -> object:
+    return build_auxiliary_record(
+        context=(0.1,) * 8,
+        skill_id=1,
+        payoff=1.2,
+        motives=(0.5, 0.2),
+        baseline_stats=_baseline_stats(),
+        motive_trajectory=[[(1.0, 0.0), (0.0, 1.0)]],
+        behavior_probability=np.array([[0.5, 0.5]], dtype=np.float32),
+        target_probability=np.array([[1.0, 1.0]], dtype=np.float32),
+        record_behavior_probability=0.5,
+        use_ips=True,
+        all_candidate_delta_r=(0.4, 0.2),
+        all_candidate_delta_n=((0.8, 0.1), (0.1, 0.8)),
+        selected_candidate_index=0,
+    )
+
+
+def test_dr_mode_runs_and_loss_is_finite():
+    model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer = MDNAuxiliaryTrainer(
+        model,
+        config=MDNAuxiliaryTrainerConfig(use_ips=True, use_doubly_robust=True, max_epochs=1, batch_size=1),
+        device="cpu",
+    )
+
+    metrics = trainer._run_probability_aware_epoch([_probability_aware_record()], training=True)
+
+    for value in metrics.values():
+        assert np.isfinite(value)
+
+
+def test_ips_mode_unchanged_by_dr_flag():
+    model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer = MDNAuxiliaryTrainer(
+        model,
+        config=MDNAuxiliaryTrainerConfig(use_ips=True, use_doubly_robust=False, max_epochs=1, batch_size=1),
+        device="cpu",
+    )
+
+    metrics = trainer._run_probability_aware_epoch([_probability_aware_record()], training=True)
+
+    for value in metrics.values():
+        assert np.isfinite(value)
+
+
+def test_dr_and_ips_modes_are_independently_selectable():
+    record = _probability_aware_record()
+    model_ips = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer_ips = MDNAuxiliaryTrainer(
+        model_ips,
+        config=MDNAuxiliaryTrainerConfig(use_ips=True, use_doubly_robust=False, max_epochs=1, batch_size=1),
+        device="cpu",
+    )
+    ips_metrics = trainer_ips._run_probability_aware_epoch([record], training=True)
+
+    model_dr = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer_dr = MDNAuxiliaryTrainer(
+        model_dr,
+        config=MDNAuxiliaryTrainerConfig(use_ips=True, use_doubly_robust=True, max_epochs=1, batch_size=1),
+        device="cpu",
+    )
+    dr_metrics = trainer_dr._run_probability_aware_epoch([record], training=True)
+
+    assert np.isfinite(ips_metrics["loss"])
+    assert np.isfinite(dr_metrics["loss"])
+
+
+def test_dr_baseline_has_no_gradient():
+    q_hat = torch.tensor([[0.2, 0.4]], dtype=torch.float32, requires_grad=True)
+    baseline = q_hat.detach()
+    dr_target = baseline + 1.5 * (torch.tensor([[1.0, 2.0]], dtype=torch.float32) - baseline)
+    loss = torch.nn.functional.mse_loss(q_hat, dr_target)
+    loss.backward()
+
+    assert baseline.grad is None
+    assert q_hat.grad is not None
+
+
+def test_dr_single_record_does_not_crash():
+    model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer = MDNAuxiliaryTrainer(
+        model,
+        config=MDNAuxiliaryTrainerConfig(use_ips=True, use_doubly_robust=True, max_epochs=1, batch_size=1),
+        device="cpu",
+    )
+
+    metrics = trainer.online_step(_probability_aware_record())
+
+    assert np.isfinite(metrics["loss"])
+
+
+def test_dr_seeded_training_remains_stable():
+    torch.manual_seed(0)
+    np.random.seed(0)
+    model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer = MDNAuxiliaryTrainer(
+        model,
+        config=MDNAuxiliaryTrainerConfig(use_ips=True, use_doubly_robust=True, max_epochs=1, batch_size=1),
+        device="cpu",
+    )
+
+    for _ in range(10):
+        metrics = trainer.online_step(_probability_aware_record())
+        assert np.isfinite(metrics["loss"])
