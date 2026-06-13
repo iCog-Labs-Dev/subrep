@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 from generator.mdn import MotiveDecompositionNetwork
+from generator.mdn_auxiliary_replay import AuxiliaryReplayBuffer, AuxiliaryReplayEntry
 from generator.mdn_auxiliary_trainer import AuxiliaryTrainingRecord, MDNAuxiliaryTrainer
 from generator.mdn_runtime_selector import MDNRuntimeSelector
 from generator.mdn_trainer import MDNTrainer
@@ -47,6 +48,7 @@ class MDNOnlineRunner:
         store_path: Optional[str] = None,
         save_every_n_steps: int = 10,
         auxiliary_trainer: Optional[MDNAuxiliaryTrainer] = None,
+        auxiliary_replay_buffer: Optional[AuxiliaryReplayBuffer] = None,
         device: Optional[str] = None,
         certificate_store: Optional[Any] = None,
         certificate_metadata: Optional[dict[str, Any]] = None,
@@ -58,6 +60,7 @@ class MDNOnlineRunner:
         self.certification_pipeline = certification_pipeline
         self.policy_trainer = policy_trainer
         self.auxiliary_trainer = auxiliary_trainer
+        self.auxiliary_replay_buffer = auxiliary_replay_buffer
         self.baseline_stats = dict(baseline_stats)
         self.checkpoint_path = checkpoint_path
         self.store_path = store_path or certification_pipeline.config.store_path
@@ -121,6 +124,18 @@ class MDNOnlineRunner:
             payoff_weight=self.policy_trainer.config.payoff_weight if payoff_weight is None else float(payoff_weight),
         )
         policy_metrics = self.policy_trainer.training_step(record)
+
+        if self.auxiliary_replay_buffer is not None:
+            self.auxiliary_replay_buffer.append(
+                self._build_aux_replay_entry(
+                    context=context,
+                    candidates=certified_candidates,
+                    selected_skill_id=selection.selected_skill_id,
+                    behavior_probability=selection.behavior_probability,
+                    actual_payoff=float(outcome["actual_payoff"]),
+                    actual_motives=tuple(float(v) for v in outcome["actual_motives"]),
+                )
+            )
 
         auxiliary_metrics: dict[str, float] | None = None
         if self.auxiliary_trainer is not None:
@@ -217,6 +232,30 @@ class MDNOnlineRunner:
             selected_candidate_index=selected_idx,
         )
 
+    def _build_aux_replay_entry(
+        self,
+        *,
+        context: np.ndarray,
+        candidates: list[CandidateSkillRecord],
+        selected_skill_id: str,
+        behavior_probability: float,
+        actual_payoff: float,
+        actual_motives: tuple[float, ...],
+    ) -> AuxiliaryReplayEntry:
+        selected_idx = next(i for i, candidate in enumerate(candidates) if candidate.skill_id == selected_skill_id)
+        return AuxiliaryReplayEntry(
+            context=tuple(float(v) for v in context),
+            selected_skill_id=selected_skill_id,
+            selected_candidate_index=selected_idx,
+            behavior_probability=float(behavior_probability),
+            actual_payoff=float(actual_payoff),
+            actual_motives=tuple(float(v) for v in actual_motives),
+            candidate_skill_ids=tuple(candidate.skill_id for candidate in candidates),
+            candidate_accept_labels=tuple(float(candidate.is_certified) for candidate in candidates),
+            candidate_delta_r=tuple(float(candidate.delta_r) for candidate in candidates),
+            candidate_delta_n=tuple(tuple(float(v) for v in candidate.delta_n) for candidate in candidates),
+        )
+
     def save(self) -> None:
         """Persist policy checkpoint and weight store."""
         self.policy_trainer.save_checkpoint(self.checkpoint_path)
@@ -239,6 +278,7 @@ class MDNOnlineRunner:
         store_path: Optional[str] = None,
         save_every_n_steps: int = 10,
         auxiliary_trainer: Optional[MDNAuxiliaryTrainer] = None,
+        auxiliary_replay_buffer: Optional[AuxiliaryReplayBuffer] = None,
         device: Optional[str] = None,
         certificate_store: Optional[Any] = None,
         certificate_metadata: Optional[dict[str, Any]] = None,
@@ -253,6 +293,7 @@ class MDNOnlineRunner:
             store_path=store_path,
             save_every_n_steps=save_every_n_steps,
             auxiliary_trainer=auxiliary_trainer,
+            auxiliary_replay_buffer=auxiliary_replay_buffer,
             device=device,
             certificate_store=certificate_store,
             certificate_metadata=certificate_metadata,

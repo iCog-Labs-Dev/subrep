@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from generator.mdn import MotiveDecompositionNetwork
+from generator.mdn_auxiliary_replay import AuxiliaryReplayBuffer
 from generator.mdn_auxiliary_trainer import MDNAuxiliaryTrainer, MDNAuxiliaryTrainerConfig
 from generator.mdn_online_runner import MDNOnlineRunner, StepResult
 from generator.mdn_trainer import MDNTrainer
@@ -224,3 +225,77 @@ def test_auxiliary_metrics_none_without_trainer(tmp_path):
         execute_skill=_execute_skill,
     )
     assert result.auxiliary_metrics is None
+
+
+def test_replay_entry_added_when_buffer_is_wired(tmp_path):
+    replay = AuxiliaryReplayBuffer(capacity=10)
+    model = MotiveDecompositionNetwork(input_dim=8, num_objectives=2)
+    store = WeightSetStore(num_objectives=2)
+    pipeline = RuntimeCertificationPipeline(
+        model=model,
+        weight_store=store,
+        config=RuntimePipelineConfig(
+            gate_type="CDS",
+            train_support_after_certify=False,
+            store_path=str(tmp_path / "weight_store.json"),
+        ),
+    )
+    trainer = MDNTrainer(model=model, device="cpu")
+    runner = MDNOnlineRunner(
+        model=model,
+        certification_pipeline=pipeline,
+        policy_trainer=trainer,
+        auxiliary_replay_buffer=replay,
+        baseline_stats=_baseline_stats(),
+        checkpoint_path=str(tmp_path / "mdn_policy_best.pth"),
+        store_path=str(tmp_path / "weight_store.json"),
+        save_every_n_steps=10,
+        device="cpu",
+    )
+
+    runner.step(
+        observation=np.array([0.1] * 8, dtype=np.float32),
+        candidate_skill_payloads=[_candidate_payload("skill_a", 1.7, (0.8, 0.4))],
+        execute_skill=_execute_skill,
+    )
+
+    assert len(replay) == 1
+    entry = replay.last()
+    assert entry is not None
+    assert entry.selected_skill_id == "skill_a"
+    assert entry.candidate_skill_ids == ("skill_a",)
+
+
+def test_replay_entry_not_added_when_no_certified_candidate_selected(tmp_path):
+    replay = AuxiliaryReplayBuffer(capacity=10)
+    model = MotiveDecompositionNetwork(input_dim=8, num_objectives=2)
+    store = WeightSetStore(num_objectives=2)
+    pipeline = RuntimeCertificationPipeline(
+        model=model,
+        weight_store=store,
+        config=RuntimePipelineConfig(
+            gate_type="CDS",
+            train_support_after_certify=False,
+            store_path=str(tmp_path / "weight_store.json"),
+        ),
+    )
+    trainer = MDNTrainer(model=model, device="cpu")
+    runner = MDNOnlineRunner(
+        model=model,
+        certification_pipeline=pipeline,
+        policy_trainer=trainer,
+        auxiliary_replay_buffer=replay,
+        baseline_stats=_baseline_stats(),
+        checkpoint_path=str(tmp_path / "mdn_policy_best.pth"),
+        store_path=str(tmp_path / "weight_store.json"),
+        save_every_n_steps=10,
+        device="cpu",
+    )
+
+    runner.step(
+        observation=np.array([0.1] * 8, dtype=np.float32),
+        candidate_skill_payloads=[_candidate_payload("skill_b", 0.1, (-0.5, -0.4))],
+        execute_skill=_execute_skill,
+    )
+
+    assert len(replay) == 0
