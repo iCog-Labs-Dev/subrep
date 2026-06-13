@@ -79,6 +79,7 @@ class MDNAuxiliaryTrainerConfig:
     random_seed: int = 0
     use_ips: bool = False
     ips_clip: float = 10.0
+    use_doubly_robust: bool = False
 
 
 class MDNAuxiliaryTrainer:
@@ -221,13 +222,24 @@ class MDNAuxiliaryTrainer:
             raw_weight = target_prob / max(float(record.behavior_probability), 1e-8)
             ips_weight = min(raw_weight, float(self.config.ips_clip))
 
-            batch_loss, gate_loss, q_loss = self._compute_losses(
-                gate_logits,
-                q_hat,
-                label,
-                q_tgt,
-                q_loss_weight=ips_weight,
-            )
+            if self.config.use_doubly_robust:
+                baseline = q_hat.detach()
+                dr_target = baseline + ips_weight * (q_tgt - baseline)
+                batch_loss, gate_loss, q_loss = self._compute_losses(
+                    gate_logits,
+                    q_hat,
+                    label,
+                    dr_target,
+                    q_loss_weight=1.0,
+                )
+            else:
+                batch_loss, gate_loss, q_loss = self._compute_losses(
+                    gate_logits,
+                    q_hat,
+                    label,
+                    q_tgt,
+                    q_loss_weight=ips_weight,
+                )
 
             if training:
                 batch_loss.backward()
