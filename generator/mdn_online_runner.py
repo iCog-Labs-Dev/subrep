@@ -11,7 +11,11 @@ from typing import Any, Callable, Optional
 import numpy as np
 
 from generator.mdn import MotiveDecompositionNetwork
-from generator.mdn_auxiliary_replay import AuxiliaryReplayBuffer, AuxiliaryReplayEntry
+from generator.mdn_auxiliary_replay import (
+    AuxiliaryReplayBuffer,
+    AuxiliaryReplayEntry,
+    replay_entry_to_selected_auxiliary_record,
+)
 from generator.mdn_auxiliary_trainer import AuxiliaryTrainingRecord, MDNAuxiliaryTrainer
 from generator.mdn_runtime_selector import MDNRuntimeSelector
 from generator.mdn_trainer import MDNTrainer
@@ -49,18 +53,22 @@ class MDNOnlineRunner:
         save_every_n_steps: int = 10,
         auxiliary_trainer: Optional[MDNAuxiliaryTrainer] = None,
         auxiliary_replay_buffer: Optional[AuxiliaryReplayBuffer] = None,
+        auxiliary_replay_train_every_n_steps: Optional[int] = None,
         device: Optional[str] = None,
         certificate_store: Optional[Any] = None,
         certificate_metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         if save_every_n_steps <= 0:
             raise ValueError("save_every_n_steps must be positive")
+        if auxiliary_replay_train_every_n_steps is not None and auxiliary_replay_train_every_n_steps <= 0:
+            raise ValueError("auxiliary_replay_train_every_n_steps must be positive when provided")
 
         self.model = model
         self.certification_pipeline = certification_pipeline
         self.policy_trainer = policy_trainer
         self.auxiliary_trainer = auxiliary_trainer
         self.auxiliary_replay_buffer = auxiliary_replay_buffer
+        self.auxiliary_replay_train_every_n_steps = auxiliary_replay_train_every_n_steps
         self.baseline_stats = dict(baseline_stats)
         self.checkpoint_path = checkpoint_path
         self.store_path = store_path or certification_pipeline.config.store_path
@@ -138,7 +146,7 @@ class MDNOnlineRunner:
             )
 
         auxiliary_metrics: dict[str, float] | None = None
-        if self.auxiliary_trainer is not None:
+        if self.auxiliary_trainer is not None and self.auxiliary_replay_train_every_n_steps is None:
             aux_record = self._build_aux_record(
                 context=context,
                 certified_candidates=certified_candidates,
@@ -156,6 +164,9 @@ class MDNOnlineRunner:
         )
 
         self._step_count += 1
+        replay_metrics = self._maybe_train_auxiliary_from_replay()
+        if replay_metrics is not None:
+            auxiliary_metrics = replay_metrics
         self._maybe_save()
         return StepResult(
             selected_skill_id=selection.selected_skill_id,
@@ -256,6 +267,30 @@ class MDNOnlineRunner:
             candidate_delta_n=tuple(tuple(float(v) for v in candidate.delta_n) for candidate in candidates),
         )
 
+    def _maybe_train_auxiliary_from_replay(self) -> dict[str, float] | None:
+        if self.auxiliary_trainer is None:
+            return None
+        if self.auxiliary_replay_buffer is None:
+            return None
+        if self.auxiliary_replay_train_every_n_steps is None:
+            return None
+        if self._step_count % self.auxiliary_replay_train_every_n_steps != 0:
+            return None
+
+        entries = self.auxiliary_replay_buffer.sample_all()
+        if not entries:
+            return None
+        if len(entries) < 2:
+            return None
+
+        records = [
+            replay_entry_to_selected_auxiliary_record(entry, num_skills=self.model.num_skills)
+            for entry in entries
+        ]
+        if self.auxiliary_trainer.config.use_ips:
+            return self.auxiliary_trainer.train_probability_aware_records(records)
+        return self.auxiliary_trainer.train_records(records)
+
     def save(self) -> None:
         """Persist policy checkpoint and weight store."""
         self.policy_trainer.save_checkpoint(self.checkpoint_path)
@@ -279,6 +314,7 @@ class MDNOnlineRunner:
         save_every_n_steps: int = 10,
         auxiliary_trainer: Optional[MDNAuxiliaryTrainer] = None,
         auxiliary_replay_buffer: Optional[AuxiliaryReplayBuffer] = None,
+        auxiliary_replay_train_every_n_steps: Optional[int] = None,
         device: Optional[str] = None,
         certificate_store: Optional[Any] = None,
         certificate_metadata: Optional[dict[str, Any]] = None,
@@ -294,6 +330,7 @@ class MDNOnlineRunner:
             save_every_n_steps=save_every_n_steps,
             auxiliary_trainer=auxiliary_trainer,
             auxiliary_replay_buffer=auxiliary_replay_buffer,
+            auxiliary_replay_train_every_n_steps=auxiliary_replay_train_every_n_steps,
             device=device,
             certificate_store=certificate_store,
             certificate_metadata=certificate_metadata,
