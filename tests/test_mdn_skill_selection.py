@@ -483,3 +483,178 @@ def test_tie_break_selects_lexicographically_smaller_id():
         chosen = selector.select_by_mdn(np.zeros(8))
 
     assert chosen == "skill_a"
+
+def test_add_skill_mdn_wx_succeeds():
+    """add_skill with MDN_WX should verify against the W_x region and succeed."""
+    lib = SkillLibrary()
+    # CDS cert: Δr=1.0, Δn=(-0.2, 0.1)
+    # For full simplex: Δr + min(-0.2, 0.1) = 1.0 + (-0.2) = 0.8 ≥ 0 → pass
+    # For W_x [s₁=0.8, s₂=0.4]: h_Wx = 0.14, Δr=1.0 ≥ 0.14 → also pass
+    cert = _make_cert(
+        skill_id="wx-add-ok",
+        gate_type="CDS",
+        delta_r=1.0,
+        delta_n=(-0.2, 0.1),
+    )
+    result = lib.add_skill(
+        "wx-add-ok", cert, lambda obs: 0,
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 14,
+        mdn_alpha=(3.0, 2.0),
+        wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
+        wx_support_values=(0.8, 0.4),
+    )
+    assert result is True
+    entry = lib.get_skill("wx-add-ok")
+    assert entry is not None
+    assert entry.weight_region_type == MDN_WX
+    assert entry.mdn_alpha == (3.0, 2.0)
+
+def test_add_skill_mdn_wx_rejects_when_fails_wx_gate():
+    """add_skill should reject a cert that passes full simplex but fails W_x."""
+    lib = SkillLibrary()
+    cert = _make_cert(
+        skill_id="wx-narrow",
+        gate_type="CDS",
+        delta_r=0.18,
+        delta_n=(-0.2, 0.1),
+    )
+
+    # Should FAIL if added as FULL_SIMPLEX (default)
+    result_fs = lib.add_skill("wx-narrow", cert, lambda obs: 0)
+    assert result_fs is False
+
+    # Should PASS when added as MDN_WX with narrower W_x
+    result_wx = lib.add_skill(
+        "wx-narrow", cert, lambda obs: 0,
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 14,
+        mdn_alpha=(3.0, 2.0),
+        wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
+        wx_support_values=(0.8, 0.4),
+    )
+    assert result_wx is True
+    assert lib.get_skill("wx-narrow") is not None
+
+def test_construction_rejects_out_of_range_support_values():
+    """add_skill should reject support values outside [0, 1]."""
+    lib = SkillLibrary()
+    cert = _make_cert(skill_id="bad-sv", delta_r=1.0, delta_n=(-0.2, 0.1))
+
+    with pytest.raises(ValueError, match="0 ≤ s_i ≤ 1"):
+        lib.add_skill(
+            "bad-sv", cert, lambda obs: 0,
+            weight_region_type=MDN_WX,
+            certification_context=(0.0,) * 14,
+            mdn_alpha=(3.0, 2.0),
+            wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
+            wx_support_values=(1.2, 0.4),  # 1.2 > 1
+        )
+
+def test_construction_rejects_empty_region_support_values():
+    """add_skill should reject support values where s₀ + s₁ < 1 (empty W_x)."""
+    lib = SkillLibrary()
+    cert = _make_cert(skill_id="bad-sv", delta_r=1.0, delta_n=(-0.2, 0.1))
+
+    with pytest.raises(ValueError, match="s₀ \\+ s₁ ≥ 1"):
+        lib.add_skill(
+            "bad-sv", cert, lambda obs: 0,
+            weight_region_type=MDN_WX,
+            certification_context=(0.0,) * 14,
+            mdn_alpha=(3.0, 2.0),
+            wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
+            wx_support_values=(0.4, 0.4),  # sum = 0.8 < 1
+        )
+
+def test_construction_boundary_support_values_pass():
+    """Support values summing to exactly 1.0 should be accepted."""
+    lib = SkillLibrary()
+    cert = _make_cert(skill_id="boundary", delta_r=1.0, delta_n=(-0.2, 0.1))
+
+    # s₀ + s₁ = 0.5 + 0.5 = 1.0 — boundary case, should pass.
+    result = lib.add_skill(
+        "boundary", cert, lambda obs: 0,
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 14,
+        mdn_alpha=(3.0, 2.0),
+        wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
+        wx_support_values=(0.5, 0.5),
+    )
+    assert result is True
+
+@pytest.mark.parametrize(
+    "bad_support_values",
+    [
+        (1.2, 0.4),    # s₀ > 1 → out of [0, 1]
+        (-0.1, 1.0),   # s₀ < 0 → out of [0, 1]
+        (0.4, 0.4),    # s₀ + s₁ = 0.8 < 1 → empty W_x region
+    ],
+)
+def test_query_admissible_falls_back_on_infeasible_support_values(
+    bad_support_values,
+):
+    """Infeasible support values exclude MDN_WX but keep FULL_SIMPLEX skills."""
+    lib = _build_library_with_both_types()
+
+    result = lib.query_admissible(
+        current_weight=np.array([0.5, 0.5]),
+        support_directions=np.eye(2),
+        support_values=np.array(bad_support_values),
+    )
+
+    ids = {entry.skill_id for entry in result}
+    assert ids == {"fs-cds"}, (
+        f"Expected only FULL_SIMPLEX skill to survive infeasible support "
+        f"values {bad_support_values}, got {ids}"
+    )
+
+
+def test_query_admissible_logs_warning_on_infeasible_support_values(caplog):
+    """The fallback path must log a warning naming the bad support values."""
+    lib = _build_library_with_both_types()
+
+    with caplog.at_level("WARNING", logger="library.skill_library"):
+        lib.query_admissible(
+            current_weight=np.array([0.5, 0.5]),
+            support_directions=np.eye(2),
+            support_values=np.array([1.2, 0.4]),
+        )
+
+    assert any(
+        "Infeasible support values" in record.message
+        for record in caplog.records
+    ), "Expected a warning about infeasible support values"
+
+
+def test_query_admissible_feasible_support_values_admits_both():
+    """Sanity counterpart: feasible support values keep the MDN_WX skill too."""
+    lib = _build_library_with_both_types()
+
+    result = lib.query_admissible(
+        current_weight=np.array([0.5, 0.5]),
+        support_directions=np.eye(2),
+        support_values=np.array([0.8, 0.4]),
+    )
+
+    ids = {entry.skill_id for entry in result}
+    assert ids == {"fs-cds", "wx-cds"}
+
+
+def test_select_by_mdn_falls_back_when_mdn_predicts_infeasible_support():
+    """select_by_mdn must still pick a FULL_SIMPLEX skill when the MDN predicts infeasible support values (MDN_WX skills are dropped)."""
+    lib = _build_library_with_both_types()
+
+    class _StubMDN:
+        """Minimal MDN stand-in returning infeasible support (sum < 1)."""
+
+        def forward_inference(self, obs_tensor):
+            alpha = torch.tensor([3.0, 2.0], dtype=torch.float32)
+            support = torch.tensor([0.4, 0.4], dtype=torch.float32)  # sum 0.8
+            return alpha, support
+
+    selector = SkillSelector(library=lib, mdn=_StubMDN(), seed=42)
+    chosen = selector.select_by_mdn(np.zeros(8))
+
+    # MDN_WX skill is excluded by the fallback; only the FULL_SIMPLEX one
+    # remains, so it must be selected (never None, never the wx skill).
+    assert chosen == "fs-cds"
