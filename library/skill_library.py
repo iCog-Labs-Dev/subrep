@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 import warnings
+import logging
 
 import numpy as np
 
@@ -16,6 +17,8 @@ from utils.weight_set_store import WeightSet
 from certification.certificate_schema import Certificate
 from certification.cds_test import CDSGate
 from certification.pds_test import PDSGate
+
+logger = logging.getLogger(__name__)
 
 def _validate_wx_geometry(support_directions: np.ndarray, support_values: np.ndarray,) -> tuple[np.ndarray, np.ndarray]:
     """Validate W_x support geometry for M=2 standard basis"""
@@ -37,10 +40,29 @@ def _validate_wx_geometry(support_directions: np.ndarray, support_values: np.nda
     basis = np.eye(num_obj, dtype=np.float64)
     if not np.allclose(sd, basis, atol=1e-6):
         raise ValueError(
-            "W_x vertex reconstruction requires standard basis support directions (identity matrix), got {sd.tolist()}"
+            f"W_x vertex reconstruction requires standard basis support directions (identity matrix), got {sd.tolist()}"
+        )
+    
+    if not np.all((sv >= 0.0) & (sv <= 1.0)):
+        raise ValueError(
+            f"support_values must satisfy 0 ≤ s_i ≤ 1, got {sv.tolist()}"
+        )
+
+    if float(np.sum(sv)) < 1.0:
+        raise ValueError(
+            f"Support values must satisfy s₀ + s₁ ≥ 1, (otherwise W_x is empty), got sum={float(np.sum(sv)):.6f} from {sv.tolist()}"
         )
 
     return sd, sv
+
+def _support_values_feasible(support_values: np.ndarray) -> bool:
+    """Check runtime feasibility of MDN-predicted support values"""
+    sv = np.asarray(support_values, dtype=np.float64)
+    if not np.all((sv >= 0.0) & (sv <= 1.0)):
+        return False
+    if float(np.sum(sv)) < 1.0:
+        return False
+    return True
 
 def _compute_wx_worst_case(delta_n: np.ndarray, support_directions: np.ndarray, support_values: np.ndarray,) -> float:
     """Compute h_{W_x}(-Δn) = max_{w ∈ W_x} w · (-Δn)"""
@@ -207,6 +229,15 @@ class SkillLibrary:
                 f"current_weight must be a valid simplex vector, got {current_weight}"
             )
 
+        wx_feasible = True
+        if support_values is not None:
+            if not _support_values_feasible(support_values):
+                logger.warning(
+                    "Infeasible support values (outside [0,1] or sum < 1): %s. Excluding MDN_WX skills for this step.",
+                    np.asarray(support_values).tolist(),
+                )
+                wx_feasible = False
+
         admissible: list[SkillEntry] = []
         for entry in self._skills.values():
             if entry.weight_region_type == FULL_SIMPLEX:
@@ -214,6 +245,9 @@ class SkillLibrary:
                 admissible.append(entry)
 
             elif entry.weight_region_type == MDN_WX:
+                if not wx_feasible:
+                    continue
+
                 if support_directions is None or support_values is None:
                     raise ValueError(
                         f"MDN_WX skill '{entry.skill_id}' requires current support_directions and support_values for runtime admissibility, but they were not provided."
