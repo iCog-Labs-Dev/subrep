@@ -10,13 +10,14 @@ Verifies the full lifecycle of the SubRep Skill Library:
 - Integration with certification gates
 
 """
+import warnings
 
 import numpy as np
 import pytest
 from datetime import datetime
 
 from certification.certificate_schema import Certificate
-from library.skill_metadata import SkillEntry
+from library.skill_metadata import FULL_SIMPLEX, MDN_WX, SkillEntry
 from library.skill_library import SkillLibrary
 from library.skill_selector import SkillSelector
 
@@ -318,9 +319,11 @@ def test_query_by_weights_cds_always_admissible():
     lib.add_skill(cert.skill_id, cert, make_dummy_policy())
 
     # Try multiple weight vectors — CDS should always pass
-    for w in [[0.5, 0.5], [1.0, 0.0], [0.0, 1.0], [0.3, 0.7]]:
-        result = lib.query_by_weights(w)
-        assert len(result) == 1, f"CDS skill should pass for weights {w}"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        for w in [[0.5, 0.5], [1.0, 0.0], [0.0, 1.0], [0.3, 0.7]]:
+            result = lib.query_by_weights(w)
+            assert len(result) == 1, f"CDS skill should pass for weights {w}"
 
 
 def test_query_by_weights_pds_depends_on_weights():
@@ -330,14 +333,16 @@ def test_query_by_weights_pds_depends_on_weights():
     cert = make_pds_certificate("pds-skill")
     lib.add_skill(cert.skill_id, cert, make_dummy_policy())
 
-    # w=[0.5, 0.5]: score = 0.5 + 0.5*0.8 + 0.5*(-0.6) = 0.5 + 0.1 = 0.6 ≥ -0.1 → Pass
-    assert len(lib.query_by_weights([0.5, 0.5])) == 1
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        # w=[0.5, 0.5]: score = 0.5 + 0.5*0.8 + 0.5*(-0.6) = 0.6 ≥ -0.1 → Pass
+        assert len(lib.query_by_weights([0.5, 0.5])) == 1
 
-    # w=[1.0, 0.0]: score = 0.5 + 1.0*0.8 + 0.0*(-0.6) = 1.3 ≥ -0.1 → Pass
-    assert len(lib.query_by_weights([1.0, 0.0])) == 1
+        # w=[1.0, 0.0]: score = 0.5 + 1.0*0.8 = 1.3 ≥ -0.1 → Pass
+        assert len(lib.query_by_weights([1.0, 0.0])) == 1
 
-    # w=[0.0, 1.0]: score = 0.5 + 0.0*0.8 + 1.0*(-0.6) = -0.1 ≥ -0.1 → Pass (boundary)
-    assert len(lib.query_by_weights([0.0, 1.0])) == 1
+        # w=[0.0, 1.0]: score = 0.5 + (-0.6) = -0.1 ≥ -0.1 → Pass (boundary)
+        assert len(lib.query_by_weights([0.0, 1.0])) == 1
 
 
 def test_query_by_weights_pds_rejected():
@@ -361,7 +366,7 @@ def test_query_by_weights_pds_rejected():
         episode_length=200,
         version="0.1.0",
     )
-    # We must bypass add_skill here because our new Chain of Safety correctly 
+    # We must bypass add_skill here because our new Chain of Safety correctly
     # rejects this mathematically failing certificate before it enters the library!
     # We inject it directly into _skills to test query_by_weights in isolation.
     lib._skills["hard-pds"] = SkillEntry(
@@ -371,30 +376,36 @@ def test_query_by_weights_pds_rejected():
         policy=make_dummy_policy()
     )
 
-    # w=[0.0, 1.0] → should reject
-    assert len(lib.query_by_weights([0.0, 1.0])) == 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        # w=[0.0, 1.0] → should reject
+        assert len(lib.query_by_weights([0.0, 1.0])) == 0
 
-    # w=[1.0, 0.0] → score = 0.3 + 0.8 = 1.1 ≥ -0.1 → should pass
-    assert len(lib.query_by_weights([1.0, 0.0])) == 1
+        # w=[1.0, 0.0] → score = 0.3 + 0.8 = 1.1 ≥ -0.1 → should pass
+        assert len(lib.query_by_weights([1.0, 0.0])) == 1
 
 
 def test_query_by_weights_mixed_library():
     """With mixed CDS/PDS, only CDS + qualifying PDS should pass."""
     lib = build_populated_library()  # 2 CDS + 1 PDS (Δr=0.5, Δn=[0.8,-0.6], ε=0.1)
 
-    # w=[0.5, 0.5]: PDS score = 0.5 + 0.1 = 0.6 ≥ -0.1 → all 3 pass
-    assert len(lib.query_by_weights([0.5, 0.5])) == 3
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        # w=[0.5, 0.5]: PDS score = 0.5 + 0.1 = 0.6 ≥ -0.1 → all 3 pass
+        assert len(lib.query_by_weights([0.5, 0.5])) == 3
 
 
 def test_query_by_weights_rejects_invalid_weights():
     """Invalid weight vectors should raise ValueError."""
     lib = build_populated_library()
 
-    with pytest.raises(ValueError):
-        lib.query_by_weights([0.3, 0.3])   # doesn't sum to 1
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        with pytest.raises(ValueError):
+            lib.query_by_weights([0.3, 0.3])   # doesn't sum to 1
 
-    with pytest.raises(ValueError):
-        lib.query_by_weights([1.5, -0.5])  # negative component
+        with pytest.raises(ValueError):
+            lib.query_by_weights([1.5, -0.5])  # negative component
 
 
 # Persistence Tests
@@ -544,13 +555,13 @@ def test_select_by_payoff_raises_not_implemented():
         selector.select_by_payoff(obs)
 
 
-def test_select_by_mdn_raises_not_implemented():
-    """select_by_mdn should raise NotImplementedError (Stage 6 stub)."""
+def test_select_by_mdn_requires_mdn():
+    """select_by_mdn should raise ValueError without an MDN."""
     lib = build_populated_library()
     selector = SkillSelector(library=lib)
     obs = np.zeros(8)
 
-    with pytest.raises(NotImplementedError, match="Stage 6"):
+    with pytest.raises(ValueError, match="MotiveDecompositionNetwork"):
         selector.select_by_mdn(obs)
 
 # Integration: Certification → Library → Selection
@@ -612,8 +623,10 @@ def test_certification_to_library_flow():
     assert lib.count() == 2
 
     # Query: both should appear for equal weights
-    admissible = lib.query_by_weights([0.5, 0.5])
-    assert len(admissible) == 2
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        admissible = lib.query_by_weights([0.5, 0.5])
+        assert len(admissible) == 2
 
     # Query: only CDS for gate type
     cds_only = lib.query_by_gate_type("CDS")
