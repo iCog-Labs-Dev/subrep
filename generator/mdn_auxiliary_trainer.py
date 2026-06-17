@@ -17,7 +17,7 @@ from certification.cds_test import CDSGate
 from certification.pds_test import PDSGate
 from generator.mdn import MotiveDecompositionNetwork
 from utils.mdn_selection import alpha_to_mean_weights
-from utils.return_targets import discounted_motive_return, doubly_robust_return, ips_weighted_return
+from utils.return_targets import discounted_motive_return, doubly_robust_return
 from utils.weight_set_store import WeightSet
 
 
@@ -253,6 +253,9 @@ class MDNAuxiliaryTrainer:
                         q_loss_weight=1.0,
                     )
                 else:
+                    # IPS is a loss weight, not target scaling. Scaling q_tgt by
+                    # rho would train q_hat toward rho * return and can inflate
+                    # values; weighting the loss estimates target-policy risk.
                     batch_loss, gate_loss, q_loss = self._compute_losses(
                         gate_logits,
                         q_hat,
