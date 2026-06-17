@@ -105,7 +105,7 @@ class TestMDNRuntimeSelectorSelect:
             _make_candidate("skill_b", 0.3, (0.2, 0.1), True),
         ]
         result = selector.select(_obs(), candidates)
-        assert 0.0 < result.behavior_probability <= 1.0
+        assert result.behavior_probability == pytest.approx(1.0)
 
     def test_behavior_probability_is_one_with_single_certified_candidate(self):
         model = _make_model()
@@ -166,6 +166,17 @@ class TestMDNRuntimeSelectorSelect:
         assert result.selected_skill_id == "skill_a"
         assert result.behavior_probability == pytest.approx(1.0)
         assert result.candidate_skills[0].metadata["weight_region_type"] == "FULL_SIMPLEX"
+
+    def test_select_from_library_logs_deterministic_behavior_probability(self):
+        model = _make_model()
+        selector = MDNRuntimeSelector(model)
+        library = SkillLibrary()
+        assert library.add_skill("skill_a", _make_certificate("skill_a", 0.5, (0.3, 0.2)), lambda obs: None)
+        assert library.add_skill("skill_b", _make_certificate("skill_b", 0.4, (0.2, 0.1)), lambda obs: None)
+
+        result = selector.select_from_library(_obs(), library)
+
+        assert result.behavior_probability == pytest.approx(1.0)
 
 
 class TestSelectionResultBuildDecisionRecord:

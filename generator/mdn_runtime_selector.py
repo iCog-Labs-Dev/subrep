@@ -18,7 +18,6 @@ from utils.mdn_reward import compute_mdn_utility
 from utils.mdn_selection import (
     alpha_to_mean_weights,
     select_best_candidate,
-    softmax_selection_probabilities,
 )
 from utils.support_geometry import make_basis_query_directions
 
@@ -105,7 +104,7 @@ class MDNRuntimeSelector:
 
         Returns:
             SelectionResult with selected skill, weights, alpha, support_values,
-            and softmax-based behavior_probability for IPS logging.
+            and deterministic behavior_probability for IPS logging.
 
         Raises:
             ValueError: If no certified candidates are available.
@@ -120,8 +119,6 @@ class MDNRuntimeSelector:
         alpha_np, support_np, weights = self._infer_mdn(obs)
 
         selected_skill_id, selected_score = select_best_candidate(certified, weights)
-        softmax_probs = softmax_selection_probabilities(certified, weights)
-        behavior_probability = softmax_probs[selected_skill_id]
 
         return SelectionResult(
             selected_skill_id=selected_skill_id,
@@ -129,7 +126,7 @@ class MDNRuntimeSelector:
             weights_used=weights,
             alpha=alpha_np,
             support_values=support_np,
-            behavior_probability=behavior_probability,
+            behavior_probability=1.0,
             candidate_skills=tuple(candidate_skills),
             context=tuple(float(v) for v in obs),
         )
@@ -158,7 +155,6 @@ class MDNRuntimeSelector:
         candidate_records = tuple(
             _candidate_record_from_entry(entry) for entry in admissible_entries
         )
-        softmax_probs = softmax_selection_probabilities(candidate_records, weights)
 
         return SelectionResult(
             selected_skill_id=selected_skill_id,
@@ -166,7 +162,7 @@ class MDNRuntimeSelector:
             weights_used=weights,
             alpha=alpha_np,
             support_values=support_np,
-            behavior_probability=softmax_probs[selected_skill_id],
+            behavior_probability=1.0,
             candidate_skills=candidate_records,
             context=tuple(float(v) for v in obs),
         )
