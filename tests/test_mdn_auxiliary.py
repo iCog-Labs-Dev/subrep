@@ -3,9 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
+import numpy as np
+import pytest
 import torch
 
 from generator.mdn import MotiveDecompositionNetwork
+from generator.mdn_auxiliary_trainer import MDNAuxiliaryTrainer
 
 
 def test_auxiliary_model_single_and_batch_output_shapes():
@@ -67,3 +70,29 @@ def test_auxiliary_model_checkpoint_round_trip():
     finally:
         if save_path.exists():
             save_path.unlink()
+
+
+def test_auxiliary_softmax_target_probability_validates_candidate_set():
+    trainer = MDNAuxiliaryTrainer(MotiveDecompositionNetwork(input_dim=8, num_skills=16, num_objectives=2))
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        trainer._compute_softmax_target_probability(0, (), (), np.array([0.5, 0.5]))
+
+    with pytest.raises(ValueError, match="same length"):
+        trainer._compute_softmax_target_probability(0, (0.1,), ((0.2, 0.3), (0.1, 0.4)), np.array([0.5, 0.5]))
+
+    with pytest.raises(ValueError, match="selected_index"):
+        trainer._compute_softmax_target_probability(1, (0.1,), ((0.2, 0.3),), np.array([0.5, 0.5]))
+
+
+def test_auxiliary_softmax_target_probability_uses_finite_probability():
+    trainer = MDNAuxiliaryTrainer(MotiveDecompositionNetwork(input_dim=8, num_skills=16, num_objectives=2))
+
+    probability = trainer._compute_softmax_target_probability(
+        0,
+        (0.1, 0.2),
+        ((0.2, 0.3), (0.1, 0.4)),
+        np.array([0.5, 0.5], dtype=np.float64),
+    )
+
+    assert 0.0 < probability < 1.0

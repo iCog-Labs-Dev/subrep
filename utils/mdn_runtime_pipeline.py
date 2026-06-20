@@ -16,6 +16,7 @@ from generator.mdn import MotiveDecompositionNetwork
 from generator.mdn_support_trainer import MDNSupportTrainer
 from utils.mdn_contracts import CandidateSkillRecord
 from utils.mdn_selection import alpha_to_mean_weights, select_best_candidate
+from utils.support_geometry import make_basis_query_directions, simplex_support_values
 from utils.weight_set_store import WeightSet, WeightSetStore
 
 
@@ -29,6 +30,7 @@ class CertificationResult:
     admission_margin: float
     delta_r: float
     delta_n: tuple[float, ...]
+    epsilon: float = 0.0
     weight_region_type: str = "FULL_SIMPLEX"
     certification_context: tuple[float, ...] | None = None
     mdn_alpha: tuple[float, ...] | None = None
@@ -59,8 +61,11 @@ def certification_result_to_certificate_kwargs(
             raise ValueError("CDS certificates must use epsilon == 0.0")
     elif gate_type == "PDS":
         if epsilon is None:
-            raise ValueError("PDS certificate conversion requires epsilon")
-        certificate_epsilon = float(epsilon)
+            if result.epsilon is None:
+                raise ValueError("PDS certificate conversion requires epsilon")
+            certificate_epsilon = float(result.epsilon)
+        else:
+            certificate_epsilon = float(epsilon)
     else:
         raise ValueError(f"Unsupported certificate gate_type: {result.gate_type!r}")
 
@@ -134,6 +139,7 @@ class RuntimeCertificationPipeline:
         skill_motives: np.ndarray,
         baseline_stats: dict[str, Any],
         weights_used: Optional[np.ndarray] = None,
+        epsilon: Optional[float] = None,
     ) -> CertificationResult:
         """Run the full certification pipeline for a single skill.
 
@@ -153,8 +159,15 @@ class RuntimeCertificationPipeline:
         )
 
         weight_set = self.weight_store.get_weight_set(context)
-        is_certified = self._run_gate_tests(delta_r, delta_n, context, weight_set)
-        audit_fields = self._build_audit_fields(context, weight_set, delta_n)
+        effective_epsilon = self._effective_epsilon(epsilon)
+        is_certified = self._run_gate_tests(
+            delta_r,
+            delta_n,
+            context,
+            weight_set,
+            epsilon=effective_epsilon,
+        )
+        audit_fields = self._build_audit_fields(context, weight_set)
 
         if is_certified and weights_used is not None:
             self.weight_store.observe_certified_weight(context, weights_used)
@@ -166,9 +179,16 @@ class RuntimeCertificationPipeline:
             is_certified=is_certified,
             gate_type=self.config.gate_type,
             was_already_certified=False,
-            admission_margin=self._compute_admission_margin(delta_r, delta_n, context, weight_set),
+            admission_margin=self._compute_admission_margin(
+                delta_r,
+                delta_n,
+                context,
+                weight_set,
+                epsilon=effective_epsilon,
+            ),
             delta_r=float(delta_r),
             delta_n=tuple(float(v) for v in delta_n),
+            epsilon=effective_epsilon,
             **audit_fields,
         )
 
@@ -208,22 +228,24 @@ class RuntimeCertificationPipeline:
                         gate_type=stored.gate_type,
                         metadata=dict(candidate.metadata),
                         admission_margin=stored.admission_margin,
-                        epsilon=self._candidate_epsilon(candidate),
+                        epsilon=stored.epsilon,
                         baseline_id=candidate.baseline_id,
                     )
                 )
                 continue
+
+            effective_epsilon = self._candidate_epsilon(candidate)
 
             is_certified = self._run_gate_tests(
                 candidate.delta_r,
                 np.array(candidate.delta_n),
                 context,
                 weight_set,
+                epsilon=effective_epsilon,
             )
             audit_fields = self._build_audit_fields(
                 context,
                 weight_set,
-                np.array(candidate.delta_n),
             )
 
             if is_certified:
@@ -239,9 +261,11 @@ class RuntimeCertificationPipeline:
                         np.array(candidate.delta_n),
                         context,
                         weight_set,
+                        epsilon=effective_epsilon,
                     ),
                     delta_r=candidate.delta_r,
                     delta_n=candidate.delta_n,
+                    epsilon=effective_epsilon,
                     **audit_fields,
                 )
                 self._certified_skills[permanence_key] = result
@@ -254,7 +278,7 @@ class RuntimeCertificationPipeline:
                         gate_type=result.gate_type,
                         metadata=dict(candidate.metadata),
                         admission_margin=result.admission_margin,
-                        epsilon=self._candidate_epsilon(candidate),
+                        epsilon=result.epsilon,
                         baseline_id=candidate.baseline_id,
                     )
                 )
@@ -275,8 +299,13 @@ class RuntimeCertificationPipeline:
         return self._certified_skills.get((context_key, skill_id))
 
     def _candidate_epsilon(self, candidate: CandidateSkillRecord) -> float:
-        if candidate.gate_type == "PDS":
-            return self.config.pds_epsilon if candidate.epsilon is None else float(candidate.epsilon)
+        if self.config.gate_type.upper() == "PDS":
+            return self._effective_epsilon(candidate.epsilon)
+        return 0.0
+
+    def _effective_epsilon(self, epsilon: float | None) -> float:
+        if self.config.gate_type.upper() == "PDS":
+            return self.config.pds_epsilon if epsilon is None else float(epsilon)
         return 0.0
 
     def _observe_certified_weight(self, context: np.ndarray, weights_used: np.ndarray) -> None:
@@ -315,6 +344,10 @@ class RuntimeCertificationPipeline:
         """Get W_x support function values for a context."""
         return self.weight_store.get_support_values(context)
 
+    def observe_certified_weight(self, context: np.ndarray, weights_used: np.ndarray) -> None:
+        """Record a selected weight vector for a certified or stored skill reuse."""
+        self._observe_certified_weight(context, weights_used)
+
     def save_store(self, path: Optional[str] = None) -> str:
         """Persist W_x store to disk."""
         save_path = path or self.config.store_path or "data/weight_store.json"
@@ -336,6 +369,8 @@ class RuntimeCertificationPipeline:
         delta_n: np.ndarray,
         context: np.ndarray,
         weight_set: Optional[WeightSet],
+        *,
+        epsilon: float | None = None,
     ) -> bool:
         """Run configured gate tests against W_x."""
         gate_type = self.config.gate_type.upper()
@@ -344,7 +379,7 @@ class RuntimeCertificationPipeline:
             gate = CDSGate()
             result = gate.admit(delta_r, delta_n, weight_set=weight_set)
         elif gate_type == "PDS":
-            gate = PDSGate(epsilon=self.config.pds_epsilon)
+            gate = PDSGate(epsilon=self.config.pds_epsilon if epsilon is None else float(epsilon))
             result = gate.admit(delta_r, delta_n, weight_set=weight_set)
         elif gate_type == "CVAR":
             with __import__("torch").no_grad():
@@ -374,7 +409,6 @@ class RuntimeCertificationPipeline:
         self,
         context: np.ndarray,
         weight_set: Optional[WeightSet],
-        delta_n: np.ndarray,
     ) -> dict[str, object]:
         """Return certificate audit fields for the active certification region."""
         gate_type = self.config.gate_type.upper()
@@ -400,7 +434,10 @@ class RuntimeCertificationPipeline:
         with torch.no_grad():
             alpha, _ = self.model.forward_inference(context_tensor)
 
-        support_directions, support_values = _gate_support_evidence(delta_n, weight_set)
+        support_directions, support_values = _wx_support_evidence(
+            self.weight_store.num_objectives,
+            weight_set,
+        )
 
         return {
             "weight_region_type": "MDN_WX",
@@ -419,13 +456,17 @@ class RuntimeCertificationPipeline:
         delta_n: np.ndarray,
         context: np.ndarray,
         weight_set: Optional[WeightSet],
+        *,
+        epsilon: float | None = None,
     ) -> float:
         gate_type = self.config.gate_type.upper()
 
         if gate_type == "CDS":
             return CDSGate().get_admission_margin(delta_r, delta_n, weight_set=weight_set)
         if gate_type == "PDS":
-            return PDSGate(epsilon=self.config.pds_epsilon).get_admission_margin(
+            return PDSGate(
+                epsilon=self.config.pds_epsilon if epsilon is None else float(epsilon)
+            ).get_admission_margin(
                 delta_r,
                 delta_n,
                 weight_set=weight_set,
@@ -447,39 +488,14 @@ class RuntimeCertificationPipeline:
         raise ValueError(f"Unknown gate_type: {gate_type}")
 
 
-def _gate_support_evidence(
-    delta_n: np.ndarray,
+def _wx_support_evidence(
+    num_objectives: int,
     weight_set: Optional[WeightSet],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return replayable support evidence for the CDS/PDS W_x gate term.
-
-    CDS/PDS use min_w w^T delta_n. To keep stored support values non-negative,
-    store h_W(max(delta_n) - delta_n); replay recovers the gate term as
-    max(delta_n) - support_value.
-    """
-    delta = np.asarray(delta_n, dtype=np.float32).reshape(-1)
-    if delta.ndim != 1 or len(delta) == 0:
-        raise ValueError(f"delta_n must be a non-empty 1D vector, got {delta.shape}")
-    if not np.all(np.isfinite(delta)):
-        raise ValueError("delta_n must contain only finite values")
-
-    support_direction = float(np.max(delta)) - delta
+    """Return standard-basis W_x support geometry for SkillLibrary replay."""
+    support_directions = make_basis_query_directions(num_objectives)
     if weight_set is None or weight_set.is_empty():
-        support_value = float(np.max(support_direction))
+        support_values = simplex_support_values(support_directions)
     else:
-        vertices = weight_set.get_vertices_array()
-        if vertices is None:
-            support_value = float(np.max(support_direction))
-        else:
-            support_value = float(np.max(vertices @ support_direction))
-
-    if support_value < 0.0:
-        if np.isclose(support_value, 0.0):
-            support_value = 0.0
-        else:
-            raise ValueError("gate support evidence must be non-negative")
-
-    return (
-        support_direction.reshape(1, -1).astype(np.float32),
-        np.asarray([support_value], dtype=np.float32),
-    )
+        support_values = weight_set.get_support_values(support_directions)
+    return support_directions, support_values.astype(np.float32)

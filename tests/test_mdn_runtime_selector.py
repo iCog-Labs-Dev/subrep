@@ -114,6 +114,16 @@ class TestMDNRuntimeSelectorSelect:
         result = selector.select(_obs(), candidates)
         assert abs(result.behavior_probability - 1.0) < 1e-5
 
+    def test_select_forces_model_eval_mode(self):
+        model = _make_model()
+        selector = MDNRuntimeSelector(model)
+        selector.model.train()
+        candidates = [_make_candidate("skill_a", 0.5, (0.3, 0.2), True)]
+
+        selector.select(_obs(), candidates)
+
+        assert selector.model.training is False
+
     def test_context_stored_correctly(self):
         model = _make_model()
         selector = MDNRuntimeSelector(model)
@@ -123,7 +133,7 @@ class TestMDNRuntimeSelectorSelect:
         assert len(result.context) == 8
         assert abs(result.context[0] - 0.1) < 1e-6
 
-    def test_all_candidates_stored_in_result(self):
+    def test_only_selection_eligible_candidates_stored_in_result(self):
         model = _make_model()
         selector = MDNRuntimeSelector(model)
         candidates = [
@@ -131,7 +141,8 @@ class TestMDNRuntimeSelectorSelect:
             _make_candidate("skill_b", -0.1, (-0.1, -0.1), False),
         ]
         result = selector.select(_obs(), candidates)
-        assert len(result.candidate_skills) == 2
+        assert len(result.candidate_skills) == 1
+        assert result.candidate_skills[0].skill_id == "skill_a"
 
     def test_raises_if_no_certified_candidates(self):
         model = _make_model()

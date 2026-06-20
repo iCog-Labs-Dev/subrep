@@ -140,10 +140,18 @@ class MDNAuxiliaryTrainer:
         """Recompute softmax selection probability for the selected skill using current MDN weights.
         Returns the softmax probability of the candidate at selected_index.
         """
+        if not candidate_delta_r or not candidate_delta_n:
+            raise ValueError("candidate_delta_r and candidate_delta_n must not be empty")
+        if len(candidate_delta_r) != len(candidate_delta_n):
+            raise ValueError("candidate_delta_r and candidate_delta_n must have the same length")
+        if selected_index < 0 or selected_index >= len(candidate_delta_r):
+            raise ValueError("selected_index must refer to a candidate entry")
+
+        weights = np.asarray(weights, dtype=np.float64).reshape(-1)
         scores = np.array(
-            [float(dr) + float(np.dot(weights, np.asarray(dn, dtype=np.float32)))
+            [float(dr) + float(np.dot(weights, np.asarray(dn, dtype=np.float64)))
              for dr, dn in zip(candidate_delta_r, candidate_delta_n)],
-            dtype=np.float32,
+            dtype=np.float64,
         )
         scores -= np.max(scores)
         exp_scores = np.exp(scores)

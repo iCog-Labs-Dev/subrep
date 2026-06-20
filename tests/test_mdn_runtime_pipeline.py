@@ -7,6 +7,7 @@ import pytest
 
 from certification.certificate_schema import Certificate
 from generator.mdn import MotiveDecompositionNetwork
+from library.skill_library import SkillLibrary
 from utils.mdn_contracts import CandidateSkillRecord
 from utils.mdn_runtime_pipeline import (
     CertificationResult,
@@ -106,14 +107,14 @@ def test_runtime_pipeline_uses_wx_not_simplex():
     assert result.wx_support_values is not None
     assert len(result.wx_support_values) == len(result.wx_support_directions)
 
-    delta_n = np.array(result.delta_n, dtype=np.float32)
-    support_direction = np.array(result.wx_support_directions[0], dtype=np.float32)
-    support_value = float(result.wx_support_values[0])
-    np.testing.assert_allclose(support_direction, np.max(delta_n) - delta_n)
-
-    replayed_worst_case = float(np.max(delta_n)) - support_value
-    actual_worst_case = float(np.min(certification_time_vertices @ delta_n))
-    assert replayed_worst_case == pytest.approx(actual_worst_case)
+    np.testing.assert_allclose(
+        np.array(result.wx_support_directions, dtype=np.float32),
+        np.eye(2, dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        np.array(result.wx_support_values, dtype=np.float32),
+        np.array([0.7, 0.3], dtype=np.float32),
+    )
 
 
 def test_runtime_result_to_certificate_kwargs_preserves_audit_fields():
@@ -151,6 +152,99 @@ def test_runtime_result_to_certificate_kwargs_preserves_audit_fields():
     assert cert.mdn_alpha == result.mdn_alpha
     assert cert.wx_support_directions == result.wx_support_directions
     assert cert.wx_support_values == result.wx_support_values
+
+
+def test_runtime_mdn_wx_certificate_promotes_to_skill_library():
+    model = MotiveDecompositionNetwork(input_dim=8, num_objectives=2)
+    store = WeightSetStore(num_objectives=2)
+    context = np.array([0.1] * 8, dtype=np.float32)
+    store.observe_certified_weight(context, np.array([0.7, 0.3], dtype=np.float32))
+
+    config = RuntimePipelineConfig(gate_type="CDS", train_support_after_certify=False)
+    pipeline = RuntimeCertificationPipeline(model=model, weight_store=store, config=config)
+
+    result = pipeline.certify_skill(
+        context=context,
+        skill_id="skill_a",
+        skill_payoff=1.7,
+        skill_motives=np.array([0.8, 0.4], dtype=np.float32),
+        baseline_stats=_baseline_stats(),
+        weights_used=np.array([0.5, 0.5], dtype=np.float32),
+    )
+    kwargs = certification_result_to_certificate_kwargs(
+        result,
+        timestamp="2026-06-09T12:00:00+00:00",
+        seed=7,
+        gamma=0.99,
+        baseline_id="idle_policy",
+        environment="MO-LunarLander-v3",
+        episode_length=100,
+        version="test",
+    )
+    cert = Certificate(**kwargs)
+    library = SkillLibrary()
+
+    promoted = library.add_skill(
+        "skill_a",
+        cert,
+        lambda _obs=None: None,
+        weight_region_type=cert.weight_region_type,
+        certification_context=cert.certification_context,
+        mdn_alpha=cert.mdn_alpha,
+        wx_support_directions=cert.wx_support_directions,
+        wx_support_values=cert.wx_support_values,
+    )
+
+    assert promoted is True
+    assert library.get_skill("skill_a") is not None
+
+
+def test_pds_candidate_epsilon_is_preserved_in_runtime_certificate():
+    model = MotiveDecompositionNetwork(input_dim=8, num_objectives=2)
+    store = WeightSetStore(num_objectives=2)
+    config = RuntimePipelineConfig(
+        gate_type="PDS",
+        pds_epsilon=0.1,
+        train_support_after_certify=False,
+    )
+    pipeline = RuntimeCertificationPipeline(model=model, weight_store=store, config=config)
+    context = np.array([0.1] * 8, dtype=np.float32)
+    candidate = CandidateSkillRecord(
+        skill_id="skill_pds",
+        delta_r=0.0,
+        delta_n=(-0.25, 0.0),
+        is_certified=False,
+        gate_type="PDS",
+        admission_margin=None,
+        epsilon=0.3,
+    )
+
+    updated = pipeline.certify_candidate_skills(
+        context=context,
+        candidate_skills=[candidate],
+        baseline_stats=_baseline_stats(),
+        weights_used=np.array([0.5, 0.5], dtype=np.float32),
+    )
+    result = pipeline.get_certification_result(context=context, skill_id="skill_pds")
+
+    assert updated[0].is_certified is True
+    assert updated[0].epsilon == pytest.approx(0.3)
+    assert result is not None
+    assert result.epsilon == pytest.approx(0.3)
+
+    kwargs = certification_result_to_certificate_kwargs(
+        result,
+        timestamp="2026-06-09T12:00:00+00:00",
+        seed=7,
+        gamma=0.99,
+        baseline_id="idle_policy",
+        environment="MO-LunarLander-v3",
+        episode_length=100,
+        version="test",
+    )
+    cert = Certificate(**kwargs)
+
+    assert cert.epsilon == pytest.approx(0.3)
 
 
 def test_runtime_result_to_certificate_kwargs_rejects_unsupported_gate_type():
