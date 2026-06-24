@@ -313,16 +313,21 @@ class TestLibraryQueryAdmissible:
             skill_id="mdn-spec-example",
             delta_r=0.15,
             delta_n=(-0.2, 0.1),
-        )
-        library.add_skill(
-            skill_id="mdn-spec-example",
-            certificate=mdn_cert,
-            policy=lambda obs: 0,
             weight_region_type=MDN_WX,
-            certification_context=(1.0, 0.0, 0.0), # Mock audit fields
+            certification_context=(1.0, 0.0, 0.0),
             mdn_alpha=(2.0, 1.0),
             wx_support_directions=tuple(tuple(d) for d in self.DIRECTIONS),
             wx_support_values=tuple(self.VALUES),
+        )
+        library.add_skill(
+            skill_id=mdn_cert.skill_id,
+            certificate=mdn_cert,
+            policy=lambda obs: 0,
+            weight_region_type=mdn_cert.weight_region_type,
+            certification_context=mdn_cert.certification_context,
+            mdn_alpha=mdn_cert.mdn_alpha,
+            wx_support_directions=mdn_cert.wx_support_directions,
+            wx_support_values=mdn_cert.wx_support_values,
         )
 
         return library
