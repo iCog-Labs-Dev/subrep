@@ -86,6 +86,46 @@ python -m pilot.train_pilot --seed 7 --output models/pilot_ppo.pt
 # Validate the checkpoint without retraining:
 python -m pytest tests/test_pilot_performance.py -v
 ```
+
+### 6. Admission Report Output
+After running the demo pipeline, admission statistics are automatically generated:
+
+```bash
+# Run the pipeline (report is generated automatically)
+python -m demo.run_full_pipeline
+
+# View the JSON report
+cat demo/artifacts/admission_report.json
+
+# View the Markdown report
+cat demo/artifacts/admission_report.md
+```
+
+**Report location**: `demo/artifacts/admission_report.json` and `demo/artifacts/admission_report.md`
+
+**Report contents**:
+- Total attempted, admitted, and rejected skills
+- Admission/rejection rates
+- CDS and PDS pass counts
+- Failure reasons for rejected skills
+- Example admitted and rejected skills with full metrics
+
+### 7. MDN Stub Configuration
+The pipeline uses a **deterministic MDN stub** by default for testing and demonstration. This allows the MDN selection pipeline to run without a trained checkpoint.
+
+**Default behavior**:
+- Pipeline looks for `models/mdn.pt`
+- If not found → falls back to `StubMDN` with fixed outputs
+- Stub returns `alpha=[2.0, 2.0]` and `support_values=[1.0, 1.0]`
+
+**To use a trained MDN checkpoint**:
+1. Train your MDN model (see `generator/train_mdn.py`)
+2. Save the checkpoint to `models/mdn.pt`
+3. Run the pipeline — it will automatically use the trained model
+
+**Code location**: `utils/mdn_stub.py` contains the `load_mdn_or_stub()` helper that handles this swap transparently.
+
+**No code changes required** — the pipeline works identically with stub or trained MDN.
 ## Project Structure
 | Folder | Description| 
 | :--- | :---|
