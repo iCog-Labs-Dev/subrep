@@ -19,6 +19,9 @@ from certification.certificate_schema import Certificate
 from utils.reuse_evaluator import ZeroShotEvaluator, FULL_SIMPLEX, MDN_WX
 
 
+MDN_CONTEXT = (0.0,) * 14
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 def _make_cert(
@@ -131,7 +134,7 @@ class TestMDNContextualReuse:
             weight_region_type="MDN_WX",
             wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
             wx_support_values=(0.8, 0.4),
-            certification_context=(0.0, 0.0),
+            certification_context=MDN_CONTEXT,
             mdn_alpha=(1.0, 1.0),
         )
         result = evaluator.is_safe_mathematically(
@@ -148,7 +151,7 @@ class TestMDNContextualReuse:
             weight_region_type="MDN_WX",
             wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
             wx_support_values=(0.8, 0.4),
-            certification_context=(0.0, 0.0),
+            certification_context=MDN_CONTEXT,
             mdn_alpha=(1.0, 1.0),
         )
         result = evaluator.is_safe_mathematically(
@@ -169,7 +172,7 @@ class TestMDNContextualReuse:
             weight_region_type="MDN_WX",
             wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
             wx_support_values=(0.8, 0.4),
-            certification_context=(0.0, 0.0),
+            certification_context=MDN_CONTEXT,
             mdn_alpha=(1.0, 1.0),
         )
         result = evaluator.is_safe_mathematically(
@@ -186,7 +189,7 @@ class TestMDNContextualReuse:
             weight_region_type="MDN_WX",
             wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
             wx_support_values=(0.8, 0.4),
-            certification_context=(0.0, 0.0),
+            certification_context=MDN_CONTEXT,
             mdn_alpha=(1.0, 1.0),
         )
         result = evaluator.is_safe_mathematically(
@@ -203,7 +206,7 @@ class TestMDNContextualReuse:
             delta_n=(-0.2, 0.1),
             weight_region_type="MDN_WX",
             # Add required audit fields for MDN_WX to pass constructor validation
-            certification_context=(1.0, 0.0, 0.0),
+            certification_context=MDN_CONTEXT,
             mdn_alpha=(1.0, 1.0),
             wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
             wx_support_values=(0.8, 0.4),
@@ -229,7 +232,7 @@ class TestMotiveShiftCoverage:
             weight_region_type="MDN_WX",
             wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
             wx_support_values=(0.8, 0.4),
-            certification_context=(0.0, 0.0),
+            certification_context=MDN_CONTEXT,
             mdn_alpha=(1.0, 1.0),
         )
 
@@ -314,7 +317,7 @@ class TestLibraryQueryAdmissible:
             delta_r=0.15,
             delta_n=(-0.2, 0.1),
             weight_region_type=MDN_WX,
-            certification_context=(1.0, 0.0, 0.0),
+            certification_context=MDN_CONTEXT,
             mdn_alpha=(2.0, 1.0),
             wx_support_directions=tuple(tuple(d) for d in self.DIRECTIONS),
             wx_support_values=tuple(self.VALUES),
