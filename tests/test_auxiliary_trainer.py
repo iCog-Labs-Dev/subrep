@@ -84,6 +84,25 @@ def test_auxiliary_trainer_improves_gate_accuracy_and_q_error():
     assert torch.isfinite(torch.tensor(train_metrics["q_loss"]))
 
 
+def test_auxiliary_trainer_supports_huber_q_loss():
+    model = MotiveDecompositionNetwork(input_dim=2, num_skills=4, num_objectives=1)
+    trainer = MDNAuxiliaryTrainer(
+        model,
+        config=MDNAuxiliaryTrainerConfig(q_loss="huber", huber_delta=1.0),
+        device="cpu",
+    )
+
+    total_loss, gate_loss, q_loss = trainer._compute_losses(
+        gate_logits=torch.tensor([0.0]),
+        q_hat=torch.tensor([[10.0]]),
+        accept_label=torch.tensor([1.0]),
+        q_target=torch.tensor([[0.0]]),
+    )
+
+    assert q_loss.item() == pytest.approx(9.5)
+    assert total_loss.item() == pytest.approx(gate_loss.item() + 0.1 * 9.5)
+
+
 def test_build_auxiliary_record_uses_discounted_target_when_trajectory_exists():
     record = build_auxiliary_record(
         context=(0.1,) * 14,

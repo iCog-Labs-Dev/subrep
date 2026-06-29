@@ -37,6 +37,40 @@ behavior_probability = float(data['behavior_probability']) if 'behavior_probabil
 
 ---
 
+## Candidate-Set Data for MDN Training
+
+The raw rollout files above contain one executed rollout per file. They are useful
+for skill-generator training.
+
+For stronger MDN selection training, collecting candidate-set files instead:
+
+```bash
+python -m data_collector.collect_candidate_sets --contexts 500 --save-dir data/mdn_candidate_sets --seed 42
+```
+
+Each candidate-set file contains one shared starting context and multiple candidate
+policy outcomes collected from that same reset seed.
+
+### Candidate-Set Schema
+
+| Key | Shape | Type | Description |
+|-----|-------|------|-------------|
+| `context` | `(8,)` | float32 | Shared initial observation for all candidates |
+| `context_seed` | `()` | int | Reset seed used to reproduce the context |
+| `candidate_skill_ids` | `(K,)` | str | Candidate policy/skill identifiers |
+| `candidate_payoffs` | `(K,)` | float32 | Discounted scalar payoff per candidate |
+| `candidate_motives` | `(K, 2)` | float32 | Discounted motive vector per candidate |
+| `terminated_flags` | `(K,)` | bool | Whether each rollout ended naturally |
+| `behavior_probabilities` | `(K,)` | float32 | Optional behavior probabilities; NaN when unavailable |
+| `step_counts` | `(K,)` | int32 | Number of executed steps per candidate |
+| `stop_reasons` | `(K,)` | str | Rollout stop reason per candidate |
+
+The important difference is that all `K` candidates share the same `context`, so
+the MDN can learn which candidate is better under the same state rather than only
+learning isolated rollout outcomes.
+
+---
+
 ## Testing the Pipeline
 You can verify the data collection logic by running the automated test suite:
 

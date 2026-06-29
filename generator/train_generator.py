@@ -3,6 +3,9 @@ import glob
 import numpy as np
 import torch
 import torch.optim as optim
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path

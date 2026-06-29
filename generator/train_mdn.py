@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Iterable, Optional
+import zlib
 
 import numpy as np
 
@@ -116,6 +117,7 @@ def build_auxiliary_records_from_prepared_candidate_outcomes(
     baseline_stats: dict[str, Any],
     gamma: float = 1.0,
     weight_store: Optional[WeightSetStore] = None,
+    skill_id_bucket_count: int = 100_000,
 ) -> list[AuxiliaryTrainingRecord]:
     """Build auxiliary records from all proposals, including uncertified ones.
 
@@ -149,11 +151,7 @@ def build_auxiliary_records_from_prepared_candidate_outcomes(
                     selected_index = idx
                     break
 
-            numeric_id = (
-                int(str(outcome.skill_id).split("_")[-1])
-                if str(outcome.skill_id).split("_")[-1].isdigit()
-                else hash(outcome.skill_id) % 100000
-            )
+            numeric_id = _stable_skill_id(str(outcome.skill_id), bucket_count=skill_id_bucket_count)
             records.append(
                 build_auxiliary_record(
                     context=outcome.context,
@@ -172,6 +170,15 @@ def build_auxiliary_records_from_prepared_candidate_outcomes(
                 )
             )
     return records
+
+
+def _stable_skill_id(skill_id: str, *, bucket_count: int) -> int:
+    if bucket_count <= 0:
+        raise ValueError("bucket_count must be positive")
+    suffix = skill_id.split("_")[-1]
+    if suffix.isdigit():
+        return int(suffix) % int(bucket_count)
+    return zlib.crc32(skill_id.encode()) % int(bucket_count)
 
 
 def train_mdn_from_prepared_outcomes(
