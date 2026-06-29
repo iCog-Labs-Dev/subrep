@@ -35,6 +35,8 @@ def test_train_mdn_from_candidate_set_directory_runs_and_saves_checkpoints(tmp_p
         policy_checkpoint_path=str(tmp_path / "mdn_policy_best.pth"),
         auxiliary_checkpoint_path=str(tmp_path / "mdn_auxiliary_best.pth"),
         skill_id_bucket_count=128,
+        q_loss="huber",
+        calibrate_auxiliary_q=True,
     )
 
     assert result["candidate_outcomes"] == 4
@@ -44,6 +46,13 @@ def test_train_mdn_from_candidate_set_directory_runs_and_saves_checkpoints(tmp_p
     assert result["auxiliary"]["best_val_loss"] >= 0.0
     assert result["auxiliary_target_normalization"]["enabled"] is True
     assert result["auxiliary_target_normalization"]["count"] == 4
+    assert result["auxiliary_q_calibration"]["enabled"] is True
+    assert result["auxiliary_q_calibration"]["count"] == 4
+    assert len(result["auxiliary_q_calibration"]["slope"]) == 2
 
     checkpoint = torch.load(tmp_path / "mdn_policy_best.pth", map_location="cpu")
     assert checkpoint["auxiliary_target_normalization"] == result["auxiliary_target_normalization"]
+    assert checkpoint["auxiliary_q_calibration"] == result["auxiliary_q_calibration"]
+
+    auxiliary_checkpoint = torch.load(tmp_path / "mdn_auxiliary_best.pth", map_location="cpu")
+    assert auxiliary_checkpoint["config"]["q_loss"] == "huber"

@@ -77,6 +77,26 @@ def load_auxiliary_target_normalization(path: str | Path, *, map_location: str =
     }
 
 
+def load_auxiliary_q_calibration(path: str | Path, *, map_location: str = "cpu") -> dict[str, object] | None:
+    checkpoint = torch.load(path, map_location=map_location)
+    if not isinstance(checkpoint, dict):
+        return None
+    calibration = checkpoint.get("auxiliary_q_calibration")
+    if not calibration:
+        return None
+    slope = np.asarray(calibration["slope"], dtype=np.float32).reshape(-1)
+    intercept = np.asarray(calibration["intercept"], dtype=np.float32).reshape(-1)
+    if slope.shape != intercept.shape or slope.shape[0] == 0:
+        raise ValueError("Invalid auxiliary_q_calibration in checkpoint")
+    return {
+        "enabled": bool(calibration.get("enabled", True)),
+        "type": str(calibration.get("type", "affine")),
+        "slope": slope,
+        "intercept": intercept,
+        "count": int(calibration.get("count", 0)),
+    }
+
+
 def evaluate_mdn_candidate_sets(
     *,
     checkpoint_path: str | Path = "models/mdn_policy_best.pth",
@@ -93,6 +113,7 @@ def evaluate_mdn_candidate_sets(
 ) -> dict[str, float]:
     model = load_mdn_checkpoint(checkpoint_path, map_location=device)
     target_normalization = load_auxiliary_target_normalization(checkpoint_path, map_location=device)
+    q_calibration = load_auxiliary_q_calibration(checkpoint_path, map_location=device)
     outcomes = candidate_set_directory_to_prepared_candidate_outcomes(data_dir, pattern=pattern)
     grouped = group_candidate_outcomes_by_context(outcomes)
     if baseline_stats is None:
@@ -115,7 +136,7 @@ def evaluate_mdn_candidate_sets(
     gate_true: list[int] = []
     gate_pred: list[int] = []
     gate_probabilities: list[float] = []
-    q_squared_errors: list[float] = []
+    q_errors: list[np.ndarray] = []
     balanced_top1_matches = 0
     skipped_no_certified = 0
 
@@ -145,8 +166,17 @@ def evaluate_mdn_candidate_sets(
                         f"q prediction shape {q_prediction.shape} does not match normalization shape {mean.shape}"
                     )
                 q_prediction = q_prediction * std + mean
-            q_error = np.mean((q_prediction - target_motives) ** 2)
-            q_squared_errors.append(float(q_error))
+            if q_calibration is not None and q_calibration["enabled"]:
+                if q_calibration["type"] != "affine":
+                    raise ValueError(f"Unsupported auxiliary_q_calibration type {q_calibration['type']!r}")
+                slope = np.asarray(q_calibration["slope"], dtype=np.float32).reshape(-1)
+                intercept = np.asarray(q_calibration["intercept"], dtype=np.float32).reshape(-1)
+                if q_prediction.shape != slope.shape:
+                    raise ValueError(
+                        f"q prediction shape {q_prediction.shape} does not match calibration shape {slope.shape}"
+                    )
+                q_prediction = q_prediction * slope + intercept
+            q_errors.append(q_prediction - target_motives)
 
         if not certified:
             skipped_no_certified += 1
@@ -202,6 +232,9 @@ def evaluate_mdn_candidate_sets(
     precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0.0
     recall = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0.0
     f1 = 2.0 * precision * recall / (precision + recall) if precision + recall else 0.0
+    q_error_array = np.stack(q_errors, axis=0).astype(np.float64)
+    q_squared_error = q_error_array ** 2
+    q_absolute_error = np.abs(q_error_array)
 
     metrics = {
         "candidate_outcomes": float(len(outcomes)),
@@ -229,15 +262,20 @@ def evaluate_mdn_candidate_sets(
         "gate_true_negative": float(true_negative),
         "gate_false_negative": float(false_negative),
         "mean_gate_probability": float(np.mean(gate_probabilities)),
-        "q_motive_mse": float(np.mean(q_squared_errors)),
+        "q_motive_mse": float(np.mean(q_squared_error)),
+        "q_motive_mae": float(np.mean(q_absolute_error)),
         "q_target_normalization_enabled": float(
             target_normalization is not None and bool(target_normalization["enabled"])
         ),
+        "q_calibration_enabled": float(q_calibration is not None and bool(q_calibration["enabled"])),
         "mean_alpha_weight_0": float(np.mean(alpha_array[:, 0])),
         "mean_alpha_weight_1": float(np.mean(alpha_array[:, 1])) if alpha_array.shape[1] > 1 else float("nan"),
         "std_alpha_weight_0": float(np.std(alpha_array[:, 0])),
         "std_alpha_weight_1": float(np.std(alpha_array[:, 1])) if alpha_array.shape[1] > 1 else float("nan"),
     }
+    for objective_index in range(q_error_array.shape[1]):
+        metrics[f"q_motive_mse_{objective_index}"] = float(np.mean(q_squared_error[:, objective_index]))
+        metrics[f"q_motive_mae_{objective_index}"] = float(np.mean(q_absolute_error[:, objective_index]))
 
     if bootstrap_samples > 0:
         metrics.update(

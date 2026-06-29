@@ -38,6 +38,13 @@ def test_evaluate_mdn_candidate_sets_returns_metrics(tmp_path):
                 "std": (1.0, 1.0),
                 "count": 4,
             },
+            "auxiliary_q_calibration": {
+                "enabled": True,
+                "type": "affine",
+                "slope": (1.0, 1.0),
+                "intercept": (0.0, 0.0),
+                "count": 4,
+            },
         },
         checkpoint_path,
     )
@@ -63,8 +70,14 @@ def test_evaluate_mdn_candidate_sets_returns_metrics(tmp_path):
     assert "score_lift_vs_ppo_ci95_high" in metrics
     assert "std_alpha_weight_0" in metrics
     assert metrics["q_target_normalization_enabled"] == 1.0
+    assert metrics["q_calibration_enabled"] == 1.0
     assert 0.0 <= metrics["gate_accuracy"] <= 1.0
     assert 0.0 <= metrics["gate_precision"] <= 1.0
     assert 0.0 <= metrics["gate_recall"] <= 1.0
     assert 0.0 <= metrics["gate_f1"] <= 1.0
     assert metrics["q_motive_mse"] == pytest.approx(0.06625)
+    assert metrics["q_motive_mae"] == pytest.approx(0.225)
+    assert metrics["q_motive_mse_0"] == pytest.approx(0.1225)
+    assert metrics["q_motive_mse_1"] == pytest.approx(0.01)
+    assert metrics["q_motive_mae_0"] == pytest.approx(0.35)
+    assert metrics["q_motive_mae_1"] == pytest.approx(0.1)

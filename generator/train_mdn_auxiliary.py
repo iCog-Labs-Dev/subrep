@@ -20,6 +20,8 @@ def train_auxiliary_from_records(
     device: Optional[str] = None,
     use_ips: bool = False,
     use_doubly_robust: bool = False,
+    q_loss: str = "mse",
+    huber_delta: float = 1.0,
 ) -> dict[str, object]:
     records = list(records)
     if not records:
@@ -41,6 +43,8 @@ def train_auxiliary_from_records(
             random_seed=seed,
             use_ips=use_ips,
             use_doubly_robust=use_doubly_robust,
+            q_loss=q_loss,
+            huber_delta=huber_delta,
         ),
         device=device,
     )

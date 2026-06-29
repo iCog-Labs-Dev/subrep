@@ -8,7 +8,7 @@ from typing import Any, Iterable, Optional
 
 import numpy as np
 import torch
-from torch.nn import BCEWithLogitsLoss, MSELoss
+from torch.nn import BCEWithLogitsLoss, HuberLoss, MSELoss
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader, Dataset, random_split
 
@@ -81,20 +81,28 @@ class MDNAuxiliaryTrainerConfig:
     use_ips: bool = False
     ips_clip: float = 10.0
     use_doubly_robust: bool = False
+    q_loss: str = "mse"
+    huber_delta: float = 1.0
 
 
 class MDNAuxiliaryTrainer:
-    """Train the proposal-conditioned auxiliary MDN model with BCE + MSE."""
+    """Train the proposal-conditioned auxiliary MDN model with BCE + configurable Q loss."""
 
     def __init__(self, model: MotiveDecompositionNetwork, config: Optional[MDNAuxiliaryTrainerConfig] = None, device: Optional[str] = None) -> None:
         self.model = model
         self.config = config or MDNAuxiliaryTrainerConfig()
         if self.config.use_ips and self.config.use_doubly_robust:
             raise ValueError("use_ips and use_doubly_robust are mutually exclusive auxiliary estimators")
+        q_loss = self.config.q_loss.strip().lower()
+        if q_loss not in {"mse", "huber"}:
+            raise ValueError(f"q_loss must be 'mse' or 'huber', got {self.config.q_loss!r}")
+        if self.config.huber_delta <= 0.0:
+            raise ValueError("huber_delta must be positive")
+        self.config.q_loss = q_loss
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model.to(self.device)
         self.gate_loss_fn = BCEWithLogitsLoss()
-        self.q_loss_fn = MSELoss()
+        self.q_loss_fn = MSELoss() if q_loss == "mse" else HuberLoss(delta=float(self.config.huber_delta))
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
