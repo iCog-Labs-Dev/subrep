@@ -52,6 +52,34 @@ def test_mdn_support_values_are_non_negative():
     assert torch.all(support_values >= 0)
 
 
+def test_mdn_two_objective_support_values_are_feasible_for_single_context():
+    """Two-objective support values should define a non-empty W_x interval."""
+    torch.manual_seed(0)
+    model = MotiveDecompositionNetwork(num_objectives=2)
+    context = torch.randn(8)
+
+    _, support_values = model.forward_inference(context)
+
+    assert support_values.shape == (2,)
+    assert torch.all(support_values >= 0)
+    assert torch.all(support_values <= 1)
+    assert torch.sum(support_values) >= 1.0
+
+
+def test_mdn_two_objective_support_values_are_feasible_for_batched_contexts():
+    """Batched two-objective support values should all define non-empty W_x intervals."""
+    torch.manual_seed(0)
+    model = MotiveDecompositionNetwork(num_objectives=2)
+    context = torch.randn(5, 8)
+
+    _, support_values = model.forward_inference(context)
+
+    assert support_values.shape == (5, 2)
+    assert torch.all(support_values >= 0)
+    assert torch.all(support_values <= 1)
+    assert torch.all(torch.sum(support_values, dim=-1) >= 1.0)
+
+
 def test_mdn_outputs_are_finite():
     """Both heads should produce finite tensors without NaN or Inf values."""
     torch.manual_seed(0)

@@ -640,6 +640,28 @@ def test_query_admissible_feasible_support_values_admits_both():
     assert ids == {"fs-cds", "wx-cds"}
 
 
+def test_select_by_mdn_uses_mdn_generated_feasible_support_values():
+    """Real MDN support output should keep MDN_WX skills eligible."""
+    lib = _build_library_with_both_types()
+    mdn = MotiveDecompositionNetwork(input_dim=8, num_objectives=2)
+
+    with torch.no_grad():
+        mdn.distribution_head.weight.zero_()
+        mdn.distribution_head.bias.copy_(torch.tensor([-4.0, 4.0]))
+        mdn.support_head.weight.zero_()
+        mdn.support_head.bias.zero_()
+
+    _, support_values = mdn.forward_inference(torch.zeros(8))
+    assert torch.all(support_values >= 0)
+    assert torch.all(support_values <= 1)
+    assert torch.sum(support_values) >= 1.0
+
+    selector = SkillSelector(library=lib, mdn=mdn, seed=42)
+    chosen = selector.select_by_mdn(np.zeros(8))
+
+    assert chosen == "wx-cds"
+
+
 def test_select_by_mdn_falls_back_when_mdn_predicts_infeasible_support():
     """select_by_mdn must still pick a FULL_SIMPLEX skill when the MDN predicts infeasible support values (MDN_WX skills are dropped)."""
     lib = _build_library_with_both_types()
