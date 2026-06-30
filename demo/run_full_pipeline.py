@@ -41,7 +41,7 @@ CERT_FILE           = "data/certificates.metta"
 LIBRARY_FILE        = "data/library.json"
 ENV_NAME            = "MO-LunarLander-v3"
 VERSION             = "0.1.0"
-MDN_CHECKPOINT_PATH = "models/mdn.pt"  # Will fallback to stub if not found
+MDN_CHECKPOINT_PATH = "models/mdn_policy_best.pth"  # Will fallback to stub if not found
 REPORT_JSON_PATH    = "demo/artifacts/admission_report.json"
 REPORT_MD_PATH      = "demo/artifacts/admission_report.md"
 # ──────────────────────────────────────────────────────────────────────────────
