@@ -102,23 +102,45 @@ def load_mdn_or_stub(
 
     This enables continuous integration and demo pipelines to run cleanly even
     if the developer has not yet trained a full MDN model in their local environment.
+    
+    When a checkpoint is found, this function infers model dimensions directly
+    from the checkpoint state_dict, making it robust to different model architectures.
     """
-    from generator.mdn_runtime_selector import MDNRuntimeSelector
-
     path = str(checkpoint_path)
     if os.path.exists(path) and os.path.isfile(path):
         try:
-            # We use the selector's loader just to get the actual model 
-            # (MDNRuntimeSelector.from_checkpoint instantiates the selector, 
-            # we just want the model inside it).
-            selector = MDNRuntimeSelector.from_checkpoint(
-                checkpoint_path=path,
-                input_dim=input_dim,
-                num_objectives=num_objectives,
-                device=device,
+            # Load checkpoint and infer dimensions from state_dict
+            checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+            state = checkpoint.get("model_state_dict", checkpoint)
+            
+            # Infer dimensions from checkpoint weights
+            inferred_input_dim = int(state["trunk.0.weight"].shape[1])
+            hidden_dim = int(state["trunk.0.weight"].shape[0])
+            num_hidden_layers = sum(
+                1 for key in state if key.startswith("trunk.") and key.endswith(".weight")
             )
-            print(f"[MDN Loader] Successfully loaded actual checkpoint from: {path}")
-            return selector.model
+            inferred_num_objectives = int(state["distribution_head.weight"].shape[0])
+            skill_embedding = state.get("skill_embedding.weight")
+            num_skills = int(skill_embedding.shape[0]) if skill_embedding is not None else 128
+            skill_embedding_dim = int(skill_embedding.shape[1]) if skill_embedding is not None else 8
+            
+            # Create model with inferred dimensions
+            from generator.mdn import MotiveDecompositionNetwork
+            model = MotiveDecompositionNetwork(
+                input_dim=inferred_input_dim,
+                num_objectives=inferred_num_objectives,
+                hidden_dim=hidden_dim,
+                num_hidden_layers=num_hidden_layers,
+                num_skills=num_skills,
+                skill_embedding_dim=skill_embedding_dim,
+            )
+            model.load_state_dict(state)
+            model.to(torch.device(device or "cpu"))
+            model.eval()
+            
+            print(f"[MDN Loader] Successfully loaded checkpoint from: {path}")
+            print(f"[MDN Loader] Inferred dimensions: input={inferred_input_dim}, objectives={inferred_num_objectives}, skills={num_skills}")
+            return model
         except Exception as e:
             print(f"[MDN Loader] Warning: Failed to load existing checkpoint from '{path}'.")
             print(f"             Exception: {e}")
