@@ -27,9 +27,10 @@ from library.skill_library import SkillLibrary
 from library.skill_selector import SkillSelector
 from generator.skill_generator import SkillGenerator
 from utils.admission_report import AdmissionReport, AdmissionRecord
-from utils.mdn_stub import load_mdn_or_stub
+from utils.mdn_stub import load_mdn_or_stub, StubMDN
 from generator.mdn_runtime_selector import MDNRuntimeSelector
 from utils.mdn_contracts import CandidateSkillRecord
+from utils.mdn_selection import alpha_to_mean_weights
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 NUM_EPISODES        = 10
@@ -278,6 +279,49 @@ def run_pipeline() -> dict:
     # ── 4.5. Generate Admission Report ─────────────────────────────────────────
     print("\n[Report] Generating admission report...")
     os.makedirs("demo/artifacts", exist_ok=True)
+    
+    # Track MDN metadata before saving report
+    if library.count() > 0:
+        print("[Report] Collecting MDN metadata...")
+        # Load MDN to get metadata (or use stub)
+        mdn_for_metadata = load_mdn_or_stub(
+            checkpoint_path=MDN_CHECKPOINT_PATH,
+            input_dim=8,
+            num_objectives=2,
+        )
+        
+        # Determine MDN source
+        if isinstance(mdn_for_metadata, StubMDN):
+            mdn_source = "stub"
+        else:
+            mdn_source = "trained_checkpoint"
+        
+        # Run inference to get alpha and support values
+        with torch.no_grad():
+            dummy_obs = torch.tensor([0.0] * 8, dtype=torch.float32)
+            alpha, support = mdn_for_metadata.forward_inference(dummy_obs)
+            alpha_list = alpha.tolist()
+            support_list = support.tolist()
+            weights = alpha_to_mean_weights(alpha).tolist()
+            
+            # Check support geometry feasibility
+            support_geometry_feasible = (
+                torch.all(alpha > 0).item() and
+                torch.all(support >= 0).item() and
+                torch.all(support <= 1).item() and
+                torch.all(support.sum(dim=-1) >= 1.0).item()
+            )
+        
+        report.set_mdn_metadata(
+            source=mdn_source,
+            checkpoint_path=MDN_CHECKPOINT_PATH,
+            alpha_values=alpha_list,
+            derived_weights=weights,
+            support_values=support_list,
+            support_geometry_feasible=support_geometry_feasible,
+        )
+        print(f"[Report] MDN source: {mdn_source}")
+    
     report.save_json(REPORT_JSON_PATH)
     report.save_markdown(REPORT_MD_PATH)
     print(f"[Report] JSON report → {REPORT_JSON_PATH}")

@@ -40,6 +40,7 @@ class AdmissionReport:
 
     def __init__(self) -> None:
         self._records: list[AdmissionRecord] = []
+        self._mdn_metadata: dict = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -64,6 +65,34 @@ class AdmissionReport:
             )
         )
 
+    def set_mdn_metadata(
+        self,
+        source: str,
+        checkpoint_path: str,
+        alpha_values: list[float],
+        derived_weights: list[float],
+        support_values: list[float],
+        support_geometry_feasible: bool,
+    ) -> None:
+        """Record which MDN was used and its outputs.
+        
+        Args:
+            source: "trained_checkpoint" or "stub"
+            checkpoint_path: Path to the MDN checkpoint file
+            alpha_values: MDN alpha output (mixture weights)
+            derived_weights: Mean weights derived from alpha
+            support_values: MDN support output (support geometry)
+            support_geometry_feasible: Whether support values satisfy constraints
+        """
+        self._mdn_metadata = {
+            "mdn_source": source,
+            "checkpoint_path": checkpoint_path,
+            "alpha_values": alpha_values,
+            "derived_weights": derived_weights,
+            "support_values": support_values,
+            "support_geometry_feasible": support_geometry_feasible,
+        }
+
     def compile(self) -> dict:
         """Return a dict of aggregate admission statistics."""
         total = len(self._records)
@@ -87,7 +116,7 @@ class AdmissionReport:
         example_admitted = asdict(admitted_records[0]) if admitted_records else None
         example_rejected = asdict(rejected_records[0]) if rejected_records else None
 
-        return {
+        result = {
             "total_attempted": total,
             "admitted": admitted,
             "rejected": rejected,
@@ -98,6 +127,12 @@ class AdmissionReport:
             "example_admitted_skill": example_admitted,
             "example_rejected_skill": example_rejected,
         }
+        
+        # Add MDN metadata if available
+        if self._mdn_metadata:
+            result.update(self._mdn_metadata)
+        
+        return result
 
     def save_json(self, path: str | Path) -> None:
         """Write the compiled report to a JSON file."""
@@ -181,5 +216,18 @@ def _render_markdown(stats: dict) -> list[str]:
     else:
         lines.append("_No skills were rejected._")
     lines.append("")
+
+    # MDN metadata section (if available)
+    if "mdn_source" in stats:
+        lines += ["## MDN Selection Metadata", ""]
+        lines += [
+            f"- **MDN Source**: {stats['mdn_source']}",
+            f"- **Checkpoint Path**: `{stats['checkpoint_path']}`",
+            f"- **Alpha Values**: {stats['alpha_values']}",
+            f"- **Derived Weights**: {stats['derived_weights']}",
+            f"- **Support Values**: {stats['support_values']}",
+            f"- **Support Geometry Feasible**: {stats['support_geometry_feasible']}",
+        ]
+        lines.append("")
 
     return lines
