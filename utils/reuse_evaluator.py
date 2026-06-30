@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import numpy as np
 from certification.certificate_schema import Certificate
+from library.skill_metadata import FULL_SIMPLEX, MDN_WX
 
 # ── Region-type constants ────────────────────────────────────────────────────
-FULL_SIMPLEX = "FULL_SIMPLEX"
-MDN_WX = "MDN_WX"
+_SUPPORTED_REGION_TYPES = {FULL_SIMPLEX, MDN_WX}
 
 
 class ZeroShotEvaluator:
@@ -62,10 +62,15 @@ class ZeroShotEvaluator:
         self._validate_simplex(w)
 
         # 2. Check region type (default to FULL_SIMPLEX for legacy support)
-        region_type = getattr(certificate, "weight_region_type", "FULL_SIMPLEX")
+        region_type = getattr(certificate, "weight_region_type", FULL_SIMPLEX)
+        if region_type not in _SUPPORTED_REGION_TYPES:
+            raise ValueError(
+                f"Unsupported weight_region_type {region_type!r}; "
+                f"expected one of {_SUPPORTED_REGION_TYPES}"
+            )
 
         # ── Mode 1: Full-simplex global reuse ────────────────────────────
-        if region_type == "FULL_SIMPLEX":
+        if region_type == FULL_SIMPLEX:
             # Any valid simplex weight is safe for a full-simplex certificate.
             return True
 
@@ -78,23 +83,22 @@ class ZeroShotEvaluator:
         from library.skill_library import SkillLibrary
 
         temp_lib = SkillLibrary()
-        
-        # Add the skill with a dummy policy
-        temp_lib.add_skill(
+        if not temp_lib.add_skill(
             skill_id=certificate.skill_id,
             certificate=certificate,
-            policy=lambda s, a: None,
-            weight_region_type="MDN_WX",
+            policy=lambda *_args, **_kwargs: None,
+            weight_region_type=MDN_WX,
             certification_context=certificate.certification_context,
             mdn_alpha=certificate.mdn_alpha,
             wx_support_directions=certificate.wx_support_directions,
-            wx_support_values=certificate.wx_support_values
-        )
+            wx_support_values=certificate.wx_support_values,
+        ):
+            return False
 
         admissible = temp_lib.query_admissible(
             current_weight=w,
             support_directions=support_directions,
-            support_values=support_values
+            support_values=support_values,
         )
 
         return any(entry.skill_id == certificate.skill_id for entry in admissible)

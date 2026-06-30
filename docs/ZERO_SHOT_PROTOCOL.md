@@ -17,6 +17,11 @@ Mathematical verification is the **primary guarantee** of reuse safety. If `is_s
 
 Empirical performance checks (`evaluate_performance()`) are **secondary validation** — they provide supporting evidence but are not required for safety.
 
+No trained MDN model is required to validate this protocol. Tests may provide
+controlled `support_directions` and `support_values` directly. A trained MDN can
+later replace those controlled values by producing the same runtime support
+descriptor interface.
+
 ## 4. Full-Simplex Reuse
 
 A full-simplex certificate means the skill was proven safe across **every** combination of motive weights. To reuse:
@@ -30,6 +35,12 @@ A full-simplex certificate means the skill was proven safe across **every** comb
 An MDN/contextual certificate means the skill's safety depends on the **current context's learned motive geometry**, described by support directions and support values.
 
 **Important:** Support values are threshold constraints, **not weight vectors**. They do not need to sum to 1. For example, `[0.8, 0.4]` is a valid support values vector even though `0.8 + 0.4 = 1.2`.
+
+Runtime support geometry is mandatory for `MDN_WX`. If the current
+`support_directions` or `support_values` are missing, reuse is blocked. If an
+MDN produces infeasible support values, the runtime library excludes contextual
+`MDN_WX` skills for that step while preserving globally certified
+`FULL_SIMPLEX` skills.
 
 To validate reuse:
 1. Obtain `support_directions` and `support_values` from the current context.
@@ -76,16 +87,12 @@ The current implementation handles the **2-objective** case by deriving interval
 
 The current architecture is designed to make this extension straightforward — the `_compute_h_wx` method is isolated and can be replaced with an LP-based implementation when needed.
 
-## 8. Independence from SkillLibrary
-
-This protocol is **intentionally independent** of `SkillLibrary` and its runtime selection logic. The zero-shot evaluator validates reuse safety as a standalone mathematical check, decoupled from how skills are stored or selected at runtime. This separation ensures:
-- Clear responsibility boundaries between certification and selection.
-- The evaluator can be used by any downstream consumer (tests, demos, future selectors).
-- No risk of circular dependencies with the library's admission logic.
-
-### 9. Runtime Integration (SkillLibrary)
+## 8. Runtime Integration (SkillLibrary)
 
 For production runtime selection, reuse checks are performed through `SkillLibrary.query_admissible()`. The `ZeroShotEvaluator.is_safe_mathematically()` and `is_reusable_via_library()` methods now delegate to this unified library path to ensure 100% mathematical consistency across all architectural components.
 
 - **FULL_SIMPLEX** certificates allow global reuse (no support geometry required).
 - **MDN_WX** certificates strictly require valid `support_directions` and `support_values` at runtime; otherwise, reuse is blocked to maintain safety.
+- `SkillSelector.select_by_mdn()` uses the same path: MDN alpha gives the current
+  weight, MDN support values describe W_x, and only library-admissible skills are
+  scored. This proves reuse under motive shifts without retraining the skill.

@@ -25,6 +25,11 @@ def _make_cert(
     delta_n: tuple = (0.3, 0.2),
     epsilon: float = 0.0,
     margin: float = 0.5,
+    weight_region_type: str = FULL_SIMPLEX,
+    certification_context: tuple | None = None,
+    mdn_alpha: tuple | None = None,
+    wx_support_directions: tuple | None = None,
+    wx_support_values: tuple | None = None,
 ) -> Certificate:
     return Certificate(
         skill_id=skill_id,
@@ -40,6 +45,11 @@ def _make_cert(
         environment="MO-LunarLander-v3",
         episode_length=200,
         version="0.1.0",
+        weight_region_type=weight_region_type,
+        certification_context=certification_context,
+        mdn_alpha=mdn_alpha,
+        wx_support_directions=wx_support_directions,
+        wx_support_values=wx_support_values,
     )
 
 
@@ -54,13 +64,26 @@ def _make_entry(
     mdn_alpha: tuple = None,
     wx_support_directions: tuple = None,
     wx_support_values: tuple = None,
+    certificate_weight_region_type: str | None = None,
 ) -> SkillEntry:
+    cert_region_type = certificate_weight_region_type or weight_region_type
+    cert_mdn_fields = {}
+    if cert_region_type == MDN_WX:
+        cert_mdn_fields = {
+            "certification_context": certification_context,
+            "mdn_alpha": mdn_alpha,
+            "wx_support_directions": wx_support_directions,
+            "wx_support_values": wx_support_values,
+        }
+
     cert = _make_cert(
         skill_id=skill_id,
         gate_type=gate_type,
         delta_r=delta_r,
         delta_n=delta_n,
         epsilon=epsilon,
+        weight_region_type=cert_region_type,
+        **cert_mdn_fields,
     )
     return SkillEntry(
         skill_id=skill_id,
@@ -298,6 +321,40 @@ def test_fuel_heavy_alpha_selects_fuel_skill():
     # Fuel-heavy weights favor wx-cds (higher delta_n[1])
     assert chosen == "wx-cds"
 
+def test_select_by_mdn_filters_unsafe_mdn_wx_before_scoring():
+    """A high-scoring MDN_WX skill must not be selected if current W_x rejects it."""
+    lib = SkillLibrary()
+    safe_entry = _make_entry(
+        skill_id="safe-global",
+        delta_r=0.4,
+        delta_n=(0.1, 0.1),
+        weight_region_type=FULL_SIMPLEX,
+    )
+    unsafe_entry = _make_entry(
+        skill_id="unsafe-contextual",
+        delta_r=0.05,
+        delta_n=(-2.0, 5.0),
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 14,
+        mdn_alpha=(1.0, 10.0),
+        wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
+        wx_support_values=(0.4, 0.9),
+    )
+    lib._skills["safe-global"] = safe_entry
+    lib._skills["unsafe-contextual"] = unsafe_entry
+
+    mdn = MotiveDecompositionNetwork(input_dim=8, num_objectives=2)
+    mock_alpha = torch.tensor([1.0, 10.0])
+    mock_support = torch.tensor([0.8, 0.4])
+
+    with patch.object(mdn, "forward_inference", return_value=(mock_alpha, mock_support)):
+        selector = SkillSelector(library=lib, mdn=mdn, seed=42)
+        chosen = selector.select_by_mdn(np.zeros(8))
+
+    # The contextual skill would score higher under fuel-heavy weights, but the
+    # current W_x gives h_Wx(-delta_n)=0.6 and delta_r=0.05, so it is removed.
+    assert chosen == "safe-global"
+
 def test_selection_score_matches_manual_formula():
     """Verify the selection score equals delta_r + w^T · delta_n."""
     lib = SkillLibrary()
@@ -410,6 +467,7 @@ def test_mdn_wx_without_audit_fields_raises_at_construction():
         _make_entry(
             skill_id="bad-wx",
             weight_region_type=MDN_WX,
+            certificate_weight_region_type=FULL_SIMPLEX,
         )
     msg = str(exc_info.value)
     for field in ["certification_context", "mdn_alpha",
@@ -420,6 +478,7 @@ def test_mdn_wx_without_audit_fields_raises_at_construction():
         _make_entry(
             skill_id="bad-wx-2",
             weight_region_type=MDN_WX,
+            certificate_weight_region_type=FULL_SIMPLEX,
             mdn_alpha=(3.0, 2.0),
         )
     msg = str(exc_info.value)
