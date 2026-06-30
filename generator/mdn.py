@@ -95,10 +95,19 @@ class MotiveDecompositionNetwork(nn.Module):
         features = self.trunk(context)
         return features, is_single_input
 
+    def _support_values_from_raw(self, raw_support: Tensor) -> Tensor:
+        if self.num_objectives != 2:
+            return self.support_activation(raw_support)
+
+        lower = torch.sigmoid(raw_support[..., 0])
+        width_fraction = torch.sigmoid(raw_support[..., 1])
+        upper = lower + width_fraction * (1.0 - lower)
+        return torch.stack((upper, 1.0 - lower), dim=-1)
+
     def forward_inference(self, context: Tensor) -> tuple[Tensor, Tensor]:
         features, is_single_input = self._encode_context(context)
         weight_params = self.softplus(self.distribution_head(features)) + self.alpha_epsilon
-        support_values = self.support_activation(self.support_head(features))
+        support_values = self._support_values_from_raw(self.support_head(features))
 
         if is_single_input:
             weight_params = weight_params.squeeze(0)

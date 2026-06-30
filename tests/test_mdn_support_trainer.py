@@ -57,19 +57,21 @@ def test_support_trainer_updates_support_predictions_toward_targets():
         device="cpu",
     )
 
-    context, target_values = store.get_all_support_targets()[0]
+    targets = store.get_all_support_targets()
+    contexts = torch.tensor(np.stack([item[0] for item in targets], axis=0), dtype=torch.float32)
+    target_values = torch.tensor(np.stack([item[1] for item in targets], axis=0), dtype=torch.float32)
     with torch.no_grad():
-        _, before = model.forward_inference(torch.tensor(context, dtype=torch.float32))
-    before_distance = torch.norm(before - torch.tensor(target_values, dtype=torch.float32)).item()
+        _, before = model.forward_inference(contexts)
+    before_loss = torch.nn.functional.mse_loss(before, target_values).item()
 
     for _ in range(30):
         trainer.training_step()
 
     with torch.no_grad():
-        _, after = model.forward_inference(torch.tensor(context, dtype=torch.float32))
-    after_distance = torch.norm(after - torch.tensor(target_values, dtype=torch.float32)).item()
+        _, after = model.forward_inference(contexts)
+    after_loss = torch.nn.functional.mse_loss(after, target_values).item()
 
-    assert after_distance < before_distance
+    assert after_loss < before_loss
 
 
 def test_support_trainer_checkpoint_round_trip(tmp_path: Path):
