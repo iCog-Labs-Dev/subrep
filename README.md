@@ -114,18 +114,26 @@ cat demo/artifacts/admission_report.md
 The pipeline uses a **deterministic MDN stub** by default for testing and demonstration. This allows the MDN selection pipeline to run without a trained checkpoint.
 
 **Default behavior**:
-- Pipeline looks for `models/mdn.pt`
+- Pipeline looks for `models/mdn_policy_best.pth`
 - If not found → falls back to `StubMDN` with fixed outputs
 - Stub returns `alpha=[2.0, 2.0]` and `support_values=[1.0, 1.0]`
 
 **To use a trained MDN checkpoint**:
-1. Train your MDN model (see `generator/train_mdn.py`)
-2. Save the checkpoint to `models/mdn.pt`
+1. Train your MDN model (see `generator/README.md` section "MDN Candidate-Set Training and Evaluation")
+2. Save the checkpoint to `models/mdn_policy_best.pth`
 3. Run the pipeline — it will automatically use the trained model
 
 **Code location**: `utils/mdn_stub.py` contains the `load_mdn_or_stub()` helper that handles this swap transparently.
 
 **No code changes required** — the pipeline works identically with stub or trained MDN.
+
+**MDN Metadata**: The admission report (`demo/artifacts/admission_report.json`) includes metadata about which MDN was used:
+- `mdn_source`: "trained_checkpoint" or "stub"
+- `checkpoint_path`: Path to checkpoint file
+- `alpha_values`: MDN alpha output (mixture weights)
+- `derived_weights`: Mean weights derived from alpha
+- `support_values`: MDN support output (support geometry)
+- `support_geometry_feasible`: Whether support values satisfy constraints
 ## Project Structure
 | Folder | Description| 
 | :--- | :---|
