@@ -22,6 +22,12 @@ controlled `support_directions` and `support_values` directly. A trained MDN can
 later replace those controlled values by producing the same runtime support
 descriptor interface.
 
+The locally reproduced MDN checkpoint documented in `generator/README.md`
+(`models/mdn_policy_best.pth`) can now provide runtime `alpha` and
+`support_values` for the same zero-shot path. The checkpoint output is used only
+to derive the current weights and W_x support descriptor; all safety and reuse
+decisions still flow through `SkillLibrary.query_admissible()`.
+
 ## 4. Full-Simplex Reuse
 
 A full-simplex certificate means the skill was proven safe across **every** combination of motive weights. To reuse:
@@ -96,3 +102,7 @@ For production runtime selection, reuse checks are performed through `SkillLibra
 - `SkillSelector.select_by_mdn()` uses the same path: MDN alpha gives the current
   weight, MDN support values describe W_x, and only library-admissible skills are
   scored. This proves reuse under motive shifts without retraining the skill.
+- `MDNRuntimeSelector.from_checkpoint()` can load the locally reproduced
+  `models/mdn_policy_best.pth` checkpoint, inferring architecture dimensions from
+  the checkpoint so candidate-set models with larger skill embedding tables are
+  usable without hardcoded `num_skills` assumptions.

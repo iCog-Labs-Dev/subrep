@@ -86,6 +86,13 @@ The evaluator reports lift versus PPO and random certified baselines, balanced
 top-1 accuracy, regret, gate precision/recall/F1, bootstrap confidence
 intervals, and per-objective Q error.
 
+The same policy checkpoint can also drive zero-shot runtime reuse. Runtime
+selection loads `models/mdn_policy_best.pth` with shape inference, calls
+`forward_inference()` for `alpha` and `support_values`, derives current simplex
+weights from `alpha`, and then delegates admissibility to
+`SkillLibrary.query_admissible()`. The MDN supplies geometry only; certified
+reuse safety remains enforced by the library path.
+
 Reference local result after the 2-objective support-geometry fix:
 
 | Metric | Mean |
