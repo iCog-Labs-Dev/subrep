@@ -12,6 +12,7 @@ import torch
 from baseline.idle_policy import IdlePolicy
 from env.lunar_lander_wrapper import SubRepEnv
 from generator.mdn import MotiveDecompositionNetwork
+from utils.mdn_checkpoint_loader import load_mdn_checkpoint as _load_mdn_checkpoint
 from utils.mdn_data_adapter import candidate_set_directory_to_prepared_candidate_outcomes
 from utils.mdn_record_builder import build_candidate_skill_records, group_candidate_outcomes_by_context
 from utils.mdn_selection import alpha_to_mean_weights, score_candidate, select_best_candidate
@@ -32,30 +33,7 @@ def compute_idle_baseline_stats(
 
 
 def load_mdn_checkpoint(path: str | Path, *, map_location: str = "cpu") -> MotiveDecompositionNetwork:
-    checkpoint = torch.load(path, map_location=map_location)
-    state = checkpoint.get("model_state_dict", checkpoint)
-    input_dim = int(state["trunk.0.weight"].shape[1])
-    hidden_dim = int(state["trunk.0.weight"].shape[0])
-    num_hidden_layers = sum(
-        1 for key in state if key.startswith("trunk.") and key.endswith(".weight")
-    )
-    num_objectives = int(state["distribution_head.weight"].shape[0])
-    skill_embedding = state.get("skill_embedding.weight")
-    num_skills = int(skill_embedding.shape[0]) if skill_embedding is not None else 128
-    skill_embedding_dim = int(skill_embedding.shape[1]) if skill_embedding is not None else 8
-
-    model = MotiveDecompositionNetwork(
-        input_dim=input_dim,
-        num_objectives=num_objectives,
-        hidden_dim=hidden_dim,
-        num_hidden_layers=num_hidden_layers,
-        num_skills=num_skills,
-        skill_embedding_dim=skill_embedding_dim,
-    )
-    model.load_state_dict(state)
-    model.to(torch.device(map_location))
-    model.eval()
-    return model
+    return _load_mdn_checkpoint(path, map_location=map_location)
 
 
 def load_auxiliary_target_normalization(path: str | Path, *, map_location: str = "cpu") -> dict[str, object] | None:
