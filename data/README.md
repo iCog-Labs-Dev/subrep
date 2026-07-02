@@ -1,86 +1,105 @@
-# SubRep Rollout Dataset
+# Data Artifacts
 
-## File Structure
-data/
-  raw/
-    random_ep001.npz
-    random_ep002.npz
-    ...
+The repo uses two generated data formats:
 
-## Schema (per .npz file)
-| Key         | Shape | Type    | Description                          |
-|-------------|-------|---------|--------------------------------------|
-| obs         | (8,)  | float32 | Initial state observation            |
-| payoff      | ()    | float32 | Discounted cumulative payoff          |
-| motives     | (2,)  | float32 | [Safety_delta, Fuel_delta]           |
-| skill_id    | ()    | str     | Policy identifier                    |
-| terminated  | ()    | bool    | True if episode ended naturally      |
-| behavior_probability | ()    | float32 | Optional probability assigned by behavior policy |
+- raw rollout records for the `SkillGenerator`,
+- same-context candidate-set records for MDN training and evaluation.
 
-## Usage Example
-```python
-import numpy as np
-data = np.load('data/raw/random_ep001.npz', allow_pickle=True)
-obs      = data['obs']       # shape (8,)
-payoff   = float(data['payoff'])
-motives  = data['motives']   # shape (2,)
-skill_id = str(data['skill_id'])
-terminated = bool(data['terminated'])
-behavior_probability = float(data['behavior_probability']) if 'behavior_probability' in data else None
+Generated datasets are ignored by git and should be regenerated locally unless
+attached as an external artifact.
+
+## Raw Rollout Records
+
+Default path:
+
+```text
+data/raw/*.npz
 ```
 
-## Notes
-- ALL episodes are collected (certified and uncertified) for unbiased training
-- `behavior_probability` is optional and appears only when the behavior policy
-  exposes the probability of the selected action/skill at collection time
-- Use seed parameter in DataCollector for reproducibility
-
----
-
-## Candidate-Set Data for MDN Training
-
-The raw rollout files above contain one executed rollout per file. They are useful
-for skill-generator training.
-
-For stronger MDN selection training, collecting candidate-set files instead:
+Collect raw rollout records:
 
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 500 --save-dir data/mdn_candidate_sets --seed 42
+python -m data_collector.collect
 ```
 
-Each candidate-set file contains one shared starting context and multiple candidate
-policy outcomes collected from that same reset seed.
+Per-file schema:
 
-### Candidate-Set Schema
+| Key | Shape | Description |
+|---|---:|---|
+| `obs` | `(8,)` | Initial MO-LunarLander observation |
+| `payoff` | scalar | Discounted scalar payoff |
+| `motives` | `(2,)` | Discounted `[Safety, Fuel]` motive returns |
+| `skill_id` | scalar/string | Policy or skill identifier |
+| `terminated` | scalar/bool | Whether the episode ended naturally |
+| `behavior_probability` | scalar/float, optional | Behavior-policy probability when available |
 
-| Key | Shape | Type | Description |
-|-----|-------|------|-------------|
-| `context` | `(8,)` | float32 | Shared initial observation for all candidates |
-| `context_seed` | `()` | int | Reset seed used to reproduce the context |
-| `candidate_skill_ids` | `(K,)` | str | Candidate policy/skill identifiers |
-| `candidate_payoffs` | `(K,)` | float32 | Discounted scalar payoff per candidate |
-| `candidate_motives` | `(K, 2)` | float32 | Discounted motive vector per candidate |
-| `terminated_flags` | `(K,)` | bool | Whether each rollout ended naturally |
-| `behavior_probabilities` | `(K,)` | float32 | Optional behavior probabilities; NaN when unavailable |
-| `step_counts` | `(K,)` | int32 | Number of executed steps per candidate |
-| `stop_reasons` | `(K,)` | str | Rollout stop reason per candidate |
+These records train `models/generator.pt` through supervised payoff/motive
+regression.
 
-The important difference is that all `K` candidates share the same `context`, so
-the MDN can learn which candidate is better under the same state rather than only
-learning isolated rollout outcomes.
+## Candidate-Set Records
 
----
+Default paths:
 
-## Testing the Pipeline
-You can verify the data collection logic by running the automated test suite:
+```text
+data/mdn_candidate_sets/*.npz
+data/mdn_candidate_sets_eval/*.npz
+```
+
+Candidate-set records are the preferred MDN input because each file contains
+multiple candidate outcomes from the same starting context.
+
+Collect training candidate sets:
 
 ```bash
-python -m pytest tests/test_data_collector.py -v
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 42 --prefix seed42
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 43 --prefix seed43
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 44 --prefix seed44
 ```
 
-### What the tests verify:
-- **`test_collector_runs_without_error`**: Confirms the environment, executor, and collector work together without crashing.
-- **`test_saved_files_have_correct_keys`**: Ensures saved `.npz` files contain all required keys (`obs`, `payoff`, `motives`, etc.) with correct dimensions.
-- **`test_summary_statistics_are_correct`**: Verifies that the summary printed to the console accurately reflects the collected data.
-- **`test_seed_produces_consistent_results`**: Guarantees bit-perfect reproducibility across `random`, `numpy`, and `torch` libraries.
-- **`test_custom_prefix_prevents_overwriting`**: Confirms that different skill prefixes create unique filenames, preventing accidental data loss when switching data sources.
+Collect held-out candidate sets:
+
+```bash
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 100 --prefix seed100
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 101 --prefix seed101
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 102 --prefix seed102
+```
+
+Per-file schema:
+
+| Key | Shape | Description |
+|---|---:|---|
+| `context` | `(8,)` | Shared initial observation |
+| `context_seed` | scalar/int | Reset seed used for the shared context |
+| `candidate_skill_ids` | `(K,)` | Candidate policy identifiers |
+| `candidate_payoffs` | `(K,)` | Discounted scalar payoff per candidate |
+| `candidate_motives` | `(K, 2)` | Discounted `[Safety, Fuel]` returns per candidate |
+| `terminated_flags` | `(K,)` | Candidate terminal flags |
+| `behavior_probabilities` | `(K,)` | Candidate behavior probabilities or `NaN` |
+| `step_counts` | `(K,)` | Executed step count per candidate |
+| `stop_reasons` | `(K,)` | Stop reason per candidate rollout |
+
+## Generated Pipeline Outputs
+
+The demo pipeline writes:
+
+```text
+data/certificates.metta
+data/library.json
+demo/artifacts/admission_report.json
+demo/artifacts/admission_report.md
+```
+
+These files are run outputs. Regenerate them with:
+
+```bash
+python -m demo.run_full_pipeline
+```
+
+If `models/mdn_policy_best.pth` is present, the admission report records
+`mdn_source: trained_checkpoint`. Otherwise it records `mdn_source: stub`.
+
+## Tests
+
+```bash
+python -m pytest tests/test_data_collector.py tests/test_mdn_data_adapter.py -v
+```

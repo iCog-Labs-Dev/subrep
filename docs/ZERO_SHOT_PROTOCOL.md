@@ -1,7 +1,5 @@
 # Zero-Shot Reuse Protocol
 
-## 1. Overview
-
 Zero-shot reuse is the core SubRep promise: **a certified skill can be safely deployed under new motive weights without retraining.** This protocol defines how that claim is validated mathematically and, secondarily, empirically.
 
 ## 2. Two Reuse Modes
@@ -11,98 +9,133 @@ Zero-shot reuse is the core SubRep promise: **a certified skill can be safely de
 | **Full-Simplex** | `FULL_SIMPLEX` | Skill was certified over the entire simplex — safe under *any* valid weight. |
 | **MDN/Contextual** | `MDN_WX` | Skill was certified within a context-conditioned weight set W_x learned by the MDN. |
 
-## 3. Mathematical Safety is Primary
+## Full-Simplex Reuse
 
-Mathematical verification is the **primary guarantee** of reuse safety. If `is_safe_mathematically()` returns `True`, the skill is provably safe to deploy.
+`FULL_SIMPLEX` certificates are globally reusable.
 
-Empirical performance checks (`evaluate_performance()`) are **secondary validation** — they provide supporting evidence but are not required for safety.
+Runtime requirements:
 
-No trained MDN model is required to validate this protocol. Tests may provide
-controlled `support_directions` and `support_values` directly. A trained MDN can
-later replace those controlled values by producing the same runtime support
-descriptor interface.
+- provide a valid simplex weight `w`,
+- verify `w >= 0` and `sum(w) = 1`,
+- admit the skill without MDN support geometry.
 
-The locally reproduced MDN checkpoint documented in `generator/README.md`
-(`models/mdn_policy_best.pth`) can now provide runtime `alpha` and
-`support_values` for the same zero-shot path. The checkpoint output is used only
-to derive the current weights and W_x support descriptor; all safety and reuse
-decisions still flow through `SkillLibrary.query_admissible()`.
+For CDS certificates this is safe because certification already proved:
 
-## 4. Full-Simplex Reuse
+```text
+delta_r + min(delta_n) >= 0
+```
 
-A full-simplex certificate means the skill was proven safe across **every** combination of motive weights. To reuse:
+For PDS certificates the runtime check is:
 
-1. Provide a new weight vector `w`.
-2. Validate that `w` is a legal simplex point (all components ≥ 0, sum = 1).
-3. If valid → **safe to reuse.** No support values are needed.
+```text
+delta_r + w^T delta_n >= -epsilon
+```
 
-## 5. MDN/Contextual Reuse
+## MDN_WX Reuse
 
-An MDN/contextual certificate means the skill's safety depends on the **current context's learned motive geometry**, described by support directions and support values.
+`MDN_WX` certificates use context-conditioned support geometry. Runtime reuse
+requires:
 
-**Important:** Support values are threshold constraints, **not weight vectors**. They do not need to sum to 1. For example, `[0.8, 0.4]` is a valid support values vector even though `0.8 + 0.4 = 1.2`.
+- current simplex weight from MDN alpha,
+- current support directions,
+- current support values.
 
-Runtime support geometry is mandatory for `MDN_WX`. If the current
-`support_directions` or `support_values` are missing, reuse is blocked. If an
-MDN produces infeasible support values, the runtime library excludes contextual
-`MDN_WX` skills for that step while preserving globally certified
-`FULL_SIMPLEX` skills.
+The runtime path is:
 
-To validate reuse:
-1. Obtain `support_directions` and `support_values` from the current context.
-2. Compute the worst-case motive cost `h_Wx(-Δn)` (see Section 6).
-3. **CDS:** Safe if `Δr ≥ h_Wx(-Δn)`.
-4. **PDS:** Safe if `Δr ≥ h_Wx(-Δn) - ε`.
+```text
+MDN.forward_inference(context)
+  -> alpha, support_values
+alpha_to_mean_weights(alpha)
+  -> current_weight
+SkillLibrary.query_admissible(current_weight, support_directions, support_values)
+```
 
-## 6. Computing h_Wx(-Δn)
+All final admissibility decisions still flow through `SkillLibrary`. The MDN
+only supplies weights and support geometry.
 
-`h_Wx(-Δn)` is the **worst-case motive cost** a skill can incur over the admissible weight region W_x.
+## 2-Objective Support Geometry
 
-Formally: `h_Wx(-Δn) = max_{w ∈ W_x} w · (-Δn)`
+The current implementation is 2-objective MO-LunarLander. Support
+directions are the standard basis:
 
-The weight region W_x is described by support constraints: each pair `(u_j, h_j)` gives `u_j · w ≤ h_j`.
+```text
+u0 = [1, 0]
+u1 = [0, 1]
+```
 
-### 2-Objective Example
+Support values are thresholds, not weights. A valid example is:
 
-**Support descriptor:**
-- Directions: `[1,0]`, `[0,1]`
-- Values: `[0.8, 0.4]`
+```text
+support_values = [0.8, 0.4]
+```
 
-**Deriving W_x:**
-- Constraint 1: `w[0] ≤ 0.8`
-- Constraint 2: `w[1] ≤ 0.4`
-- Combined with `w[0] + w[1] = 1`:
-  - Vertex 1: `w = [0.8, 0.2]`
-  - Vertex 2: `w = [0.6, 0.4]`
+This means:
 
-**Example skill:** `Δn = [-0.2, 0.1]`, so `-Δn = [0.2, -0.1]`
+```text
+w0 <= 0.8
+w1 <= 0.4
+w0 + w1 = 1
+```
 
-| Vertex | Dot with -Δn | Value |
-|---|---|---|
-| `[0.8, 0.2]` | `0.8×0.2 + 0.2×(-0.1)` | `0.14` |
-| `[0.6, 0.4]` | `0.6×0.2 + 0.4×(-0.1)` | `0.08` |
+So the feasible interval is:
 
-**Result:** `h_Wx(-Δn) = max(0.14, 0.08) = 0.14`
+```text
+w0 in [0.6, 0.8]
+w1 = 1 - w0
+```
 
-- **CDS** passes if `Δr ≥ 0.14`
-- **PDS** passes if `Δr ≥ 0.14 - ε`
+The worst-case motive cost is:
 
-## 7. Future 3+ Objective Scaling
+```text
+h_Wx(-delta_n) = max_{w in W_x} w dot (-delta_n)
+```
 
-The current implementation handles the **2-objective** case by deriving interval endpoints algebraically. For **3 or more objectives**, the weight region W_x becomes a higher-dimensional polytope, and computing `h_Wx(-Δn)` will require a proper **support-function evaluation** or **linear-feasibility solver** (e.g., linear programming) rather than simple interval arithmetic.
+For CDS:
 
-The current architecture is designed to make this extension straightforward — the `_compute_h_wx` method is isolated and can be replaced with an LP-based implementation when needed.
+```text
+delta_r >= h_Wx(-delta_n)
+```
 
-## 8. Runtime Integration (SkillLibrary)
+For PDS:
 
-For production runtime selection, reuse checks are performed through `SkillLibrary.query_admissible()`. The `ZeroShotEvaluator.is_safe_mathematically()` and `is_reusable_via_library()` methods now delegate to this unified library path to ensure 100% mathematical consistency across all architectural components.
+```text
+delta_r >= h_Wx(-delta_n) - epsilon
+```
 
-- **FULL_SIMPLEX** certificates allow global reuse (no support geometry required).
-- **MDN_WX** certificates strictly require valid `support_directions` and `support_values` at runtime; otherwise, reuse is blocked to maintain safety.
-- `SkillSelector.select_by_mdn()` uses the same path: MDN alpha gives the current
-  weight, MDN support values describe W_x, and only library-admissible skills are
-  scored. This proves reuse under motive shifts without retraining the skill.
-- `MDNRuntimeSelector.from_checkpoint()` can load the locally reproduced
-  `models/mdn_policy_best.pth` checkpoint, inferring architecture dimensions from
-  the checkpoint so candidate-set models with larger skill embedding tables are
-  usable without hardcoded `num_skills` assumptions.
+## Safety Behavior
+
+Runtime selection is conservative:
+
+- `FULL_SIMPLEX` skills remain available without support geometry.
+- `MDN_WX` skills require current support geometry.
+- Missing support geometry blocks `MDN_WX` reuse.
+- Infeasible support values exclude `MDN_WX` skills for that step.
+- Reuse checks are centralized in `SkillLibrary.query_admissible()`.
+
+## Trained MDN Checkpoints
+
+`MDNRuntimeSelector.from_checkpoint()` can load a trained checkpoint from:
+
+```text
+models/mdn_policy_best.pth
+```
+
+The loader infers architecture dimensions from the checkpoint state dict, so
+candidate-set models with large skill embedding tables can be loaded without
+hardcoded constructor arguments.
+
+If the checkpoint is missing in the demo pipeline, `StubMDN` is used only as a
+test/smoke fallback.
+
+## Future Work
+
+For 3+ objectives, `W_x` becomes a higher-dimensional polytope. The current 2D
+interval arithmetic should be replaced with a proper support-function or linear
+programming solver before claiming general higher-dimensional contextual reuse.
+
+## Tests
+
+```bash
+python -m pytest tests/test_zero_shot_reuse.py tests/test_trained_mdn_zero_shot.py -v
+python -m pytest tests/test_mdn_skill_selection.py tests/test_mdn_runtime_selector.py -v
+```
