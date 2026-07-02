@@ -10,28 +10,28 @@
     "skill_id": "skill_001",
     "admitted": true,
     "gate_type": "CDS",
-    "delta_r": 186.00402880597233,
+    "delta_r": 153.84659987511571,
     "delta_n": [
-      127.19883728027344,
-      58.80522918701172
+      114.52487182617188,
+      39.32173538208008
     ],
-    "margin": 244.80925799298404,
+    "margin": 193.1683352571958,
     "failure_reason": null
   },
   "example_rejected_skill": null,
   "mdn_source": "trained_checkpoint",
   "checkpoint_path": "models/mdn_policy_best.pth",
   "alpha_values": [
-    0.7335808873176575,
-    0.7050632834434509
+    0.7593032717704773,
+    0.7502007484436035
   ],
   "derived_weights": [
-    0.509911298751831,
-    0.49008873105049133
+    0.5030150413513184,
+    0.49698489904403687
   ],
   "support_values": [
-    0.7457194328308105,
-    0.5010267496109009
+    0.7350444793701172,
+    0.5167338848114014
   ],
   "support_geometry_feasible": true
 }
