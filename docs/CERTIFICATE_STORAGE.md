@@ -1,7 +1,7 @@
 # Certificate Storage
 
 This document describes the SubRep certificate schema, Hyperon MeTTA atom
-format, and storage/query behavior used in this phase.
+format, and storage/query behavior used by this implementation.
 
 ## Overview
 
@@ -94,9 +94,9 @@ Canonical expression shape:
   (seed 42)
   (gamma 0.99)
   (baseline_id "idle_policy")
-  (environment "MO-LunarLander-v0")
+  (environment "MO-LunarLander-v3")
   (episode_length 120)
-  (version "subrep-q1-v0.1")
+  (version "0.1.0")
   (weight_region_type "FULL_SIMPLEX")
   (certification_context Nil)
   (mdn_alpha Nil)
@@ -104,7 +104,7 @@ Canonical expression shape:
   (wx_support_values Nil))
 ```
 
-Note: `delta_n` is fixed to 2D in this phase for MO-LunarLander compatibility.
+Note: `delta_n` is fixed to 2D for MO-LunarLander compatibility.
 The paper's broader formulation uses an `m`-dimensional motive vector.
 
 Contextual MDN/W_x example:
@@ -121,14 +121,14 @@ Contextual MDN/W_x example:
   (seed 42)
   (gamma 0.99)
   (baseline_id "idle_policy")
-  (environment "MO-LunarLander-v0")
+  (environment "MO-LunarLander-v3")
   (episode_length 120)
-  (version "subrep-q1-v0.1")
+  (version "0.1.0")
   (weight_region_type "MDN_WX")
-  (certification_context (vec 0.1 0.2 0.3))
+  (certification_context (vec 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8))
   (mdn_alpha (vec 1.5 2.0))
-  (wx_support_directions (list (vec 0.0 0.3)))
-  (wx_support_values (vec 0.09)))
+  (wx_support_directions (list (vec 1.0 0.0) (vec 0.0 1.0)))
+  (wx_support_values (vec 0.8 0.4)))
 ```
 
 Backward compatibility:
@@ -250,9 +250,9 @@ cert = Certificate(
     seed=42,
     gamma=0.99,
     baseline_id="idle_policy",
-    environment="MO-LunarLander-v0",
+    environment="MO-LunarLander-v3",
     episode_length=120,
-    version="subrep-q1-v0.1",
+    version="0.1.0",
     weight_region_type="FULL_SIMPLEX",
     certification_context=None,
     mdn_alpha=None,
