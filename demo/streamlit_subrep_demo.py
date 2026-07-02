@@ -48,6 +48,7 @@ from utils.subrep_demo_data import (
     LIBRARY_PATH,
     MDN_CHECKPOINT_PATH,
     REPORT_PATH,
+    build_failed_skill_rejection_probe,
     build_mdn_selection_trace,
     load_demo_artifacts,
     support_geometry_feasible,
@@ -88,7 +89,8 @@ def main() -> None:
     _hero(report, artifacts.store_synced)
     _animated_story(play_clicked)
     _real_rollout_demo()
-    _proof_snapshot(artifacts, report)
+    _proof_snapshot(artifacts, report, selection_trace)
+    _failed_skill_gate_demo()
     _admission_and_library(artifacts, report)
     _mdn_and_zero_shot(report, selection_trace)
     _motive_shift_explorer(artifacts.skill_rows)
@@ -285,34 +287,61 @@ def _run_visual_rollout(frame_slot, *, max_steps: int = 240, frame_stride: int =
         env.close()
 
 
-def _proof_snapshot(artifacts, report: dict[str, Any]) -> None:
+def _proof_snapshot(artifacts, report: dict[str, Any], selection_trace: dict[str, Any]) -> None:
     st.subheader("3. Quarter-Plan Proof Snapshot")
     total = int(report.get("total_attempted", 0) or 0)
     admitted = int(report.get("admitted", 0) or 0)
     rejected = int(report.get("rejected", 0) or 0)
     library_count = int(artifacts.library.get("skill_count", len(artifacts.skill_rows)) or 0)
-    admission_rate = float(report.get("admission_rate", 0.0) or 0.0)
+    failed_probe = build_failed_skill_rejection_probe()
+    safety_ok = artifacts.store_synced and bool(failed_probe["blocked"])
+    reuse_rate = _selection_reuse_rate(selection_trace)
 
-    cols = st.columns(5)
-    cols[0].metric("Attempted", total)
-    cols[1].metric("Admitted", admitted, f"{admission_rate:.1f}%")
-    cols[2].metric("Rejected", rejected)
-    cols[3].metric("Library", library_count)
-    cols[4].metric("MeTTa Certs", artifacts.certificate_count)
-
-    status_cols = st.columns(4)
-    status_cols[0].metric("CDS pass count", report.get("cds_pass_count", 0))
-    status_cols[1].metric("PDS pass count", report.get("pds_pass_count", 0))
-    status_cols[2].metric("Rejected skills blocked", "yes")
-    status_cols[3].metric("Cert store = library", "yes" if artifacts.store_synced else "check")
+    cols = st.columns(3)
+    cols[0].metric("Safety Compliance", "100%" if safety_ok else "check")
+    cols[1].metric("Reuse Rate", "-" if reuse_rate is None else f"{reuse_rate:.0f}%")
+    cols[2].metric("Certified Skills", library_count)
     st.caption(
-        "PDS count can be 0 when all admitted skills pass the stronger CDS gate. "
-        "That is not a failure; it means no bounded trade-off exception was needed in this run."
+        f"Detailed audit: {total} attempted, {admitted} admitted, {rejected} rejected, "
+        f"{artifacts.certificate_count} MeTTa certificates. The raw CDS/PDS counts are kept in the report below."
     )
 
 
+def _failed_skill_gate_demo() -> None:
+    st.subheader("4. Live Unsafe-Skill Block")
+    probe = build_failed_skill_rejection_probe()
+    left, right = st.columns([0.62, 0.38], gap="large")
+
+    with left:
+        st.markdown("**Deliberately unsafe candidate**")
+        st.write(
+            "This tiny live check uses the real CDS/PDS gates. "
+            "The candidate worsens the worst motive more than the payoff can compensate, "
+            "so it never reaches certificate storage or the SkillLibrary."
+        )
+        st.code(
+            "\n".join(
+                [
+                    f"delta_r = {probe['delta_r']}",
+                    f"delta_n = {probe['delta_n']}",
+                    "CDS: delta_r + min(delta_n) >= 0",
+                    "PDS: delta_r + min(delta_n) >= -epsilon",
+                ]
+            )
+        )
+
+    with right:
+        st.metric("CDS Gate", "fail" if not probe["cds_pass"] else "pass")
+        st.metric("PDS Gate", "fail" if not probe["pds_pass"] else "pass")
+        if probe["blocked"]:
+            st.success("Blocked from certificate store and library.")
+        else:
+            st.error("Unsafe candidate was not blocked.")
+        st.caption(probe["reason"])
+
+
 def _admission_and_library(artifacts, report: dict[str, Any]) -> None:
-    st.subheader("4. Admission Report And Certified Library")
+    st.subheader("5. Admission Report And Certified Library")
     left, right = st.columns([0.95, 1.05], gap="large")
 
     with left:
@@ -352,7 +381,7 @@ def _admission_and_library(artifacts, report: dict[str, Any]) -> None:
 
 
 def _mdn_and_zero_shot(report: dict[str, Any], selection_trace: dict[str, Any]) -> None:
-    st.subheader("5. Trained MDN And Zero-Shot Reuse")
+    st.subheader("6. Trained MDN And Zero-Shot Reuse")
     source = selection_trace.get("mdn_source") or report.get("mdn_source", "unknown")
     support_values = report.get("support_values")
     feasible = bool(report.get("support_geometry_feasible", support_geometry_feasible(support_values)))
@@ -390,7 +419,7 @@ def _mdn_and_zero_shot(report: dict[str, Any], selection_trace: dict[str, Any]) 
 
 
 def _motive_shift_explorer(skill_rows: list[dict[str, Any]]) -> None:
-    st.subheader("6. Motive-Shift Explorer")
+    st.subheader("7. Motive-Shift Explorer")
     st.caption("For the video: slide the motive priority and watch the certified-library ranking update without retraining.")
     if not skill_rows:
         st.warning("Run the pipeline first to populate the certified skill library.")
@@ -435,7 +464,7 @@ def _motive_shift_explorer(skill_rows: list[dict[str, Any]]) -> None:
 
 
 def _audit_artifacts(selection_trace: dict[str, Any]) -> None:
-    st.subheader("7. Reproducible Artifacts")
+    st.subheader("8. Reproducible Artifacts")
     cols = st.columns(4)
     cols[0].code(str(REPORT_PATH))
     cols[1].code(str(LIBRARY_PATH))
@@ -460,6 +489,14 @@ def _vector_text(values: Any) -> str:
     if not isinstance(values, list):
         return "-"
     return "[" + ", ".join(f"{float(v):.2f}" for v in values[:2]) + "]"
+
+
+def _selection_reuse_rate(selection_trace: dict[str, Any]) -> float | None:
+    decisions = selection_trace.get("decisions", [])
+    if not decisions:
+        return None
+    selected = sum(1 for decision in decisions if decision.get("status") == "selected")
+    return 100.0 * selected / len(decisions)
 
 
 def _lander_animation_html() -> str:

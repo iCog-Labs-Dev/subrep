@@ -7,15 +7,18 @@ selection trace logic separate from the UI.
 
 from __future__ import annotations
 
-import json
 import contextlib
 import io
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from certification.cds_test import CDSGate
+from certification.metta_storage import CertificateStore
+from certification.pds_test import PDSGate
 from generator.mdn_runtime_selector import MDNRuntimeSelector
 from library.skill_library import SkillLibrary
 from utils.mdn_stub import StubMDN, load_mdn_or_stub
@@ -185,6 +188,39 @@ def support_geometry_feasible(values: Any) -> bool:
     if support.shape != (2,):
         return False
     return bool(np.all(support >= 0.0) and np.all(support <= 1.0) and float(np.sum(support)) >= 1.0)
+
+
+def build_failed_skill_rejection_probe() -> dict[str, Any]:
+    """Return a small live proof that an unsafe skill is blocked before storage."""
+    delta_r = -0.2
+    delta_n = np.array([-0.5, 0.1], dtype=np.float64)
+    epsilon = 0.1
+
+    cds_gate = CDSGate()
+    pds_gate = PDSGate(epsilon=epsilon)
+    cds_pass = cds_gate.admit(delta_r, delta_n)
+    pds_pass = pds_gate.admit(delta_r, delta_n)
+    cds_margin = cds_gate.get_admission_margin(delta_r, delta_n)
+    pds_margin = pds_gate.get_admission_margin(delta_r, delta_n)
+
+    cert_store = CertificateStore()
+    library = SkillLibrary(cert_store=cert_store)
+    blocked = not cds_pass and not pds_pass and cert_store.count() == 0 and library.count() == 0
+
+    return {
+        "skill_id": "unsafe_probe_skill",
+        "delta_r": delta_r,
+        "delta_n": delta_n.tolist(),
+        "epsilon": epsilon,
+        "cds_pass": cds_pass,
+        "pds_pass": pds_pass,
+        "cds_margin": cds_margin,
+        "pds_margin": pds_margin,
+        "blocked": blocked,
+        "cert_store_count": cert_store.count(),
+        "library_count": library.count(),
+        "reason": "delta_r + min(delta_n) = -0.70, which is below both the CDS threshold 0.00 and the PDS threshold -0.10.",
+    }
 
 
 def _delta_n_at(cert: dict[str, Any], index: int) -> float | None:

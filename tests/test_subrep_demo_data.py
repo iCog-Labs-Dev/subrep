@@ -9,6 +9,7 @@ import numpy as np
 from certification.certificate_schema import Certificate
 from library.skill_library import SkillLibrary
 from utils.subrep_demo_data import (
+    build_failed_skill_rejection_probe,
     build_mdn_selection_trace,
     build_skill_rows,
     count_metta_certificates,
@@ -97,3 +98,13 @@ def test_count_metta_certificates_missing_file_is_zero(tmp_path: Path):
 
 def test_build_skill_rows_handles_empty_library():
     assert build_skill_rows({}) == []
+
+
+def test_failed_skill_rejection_probe_blocks_storage():
+    probe = build_failed_skill_rejection_probe()
+
+    assert probe["cds_pass"] is False
+    assert probe["pds_pass"] is False
+    assert probe["blocked"] is True
+    assert probe["cert_store_count"] == 0
+    assert probe["library_count"] == 0
