@@ -78,6 +78,16 @@ python -m generator.train_generator
 python -m demo.run_full_pipeline
 ```
 
+**Step 4 — Open the evaluator demo app:**
+```bash
+streamlit run demo/streamlit_subrep_demo.py
+```
+
+The Streamlit app is the recommended video/demo interface. It can run the real
+pipeline from the sidebar, then presents the full SubRep story in one place:
+skill execution, improvement calculation, CDS/PDS admission, certificate
+storage, trained-MDN selection, zero-shot reuse, and the final audit tables.
+
 ### 5. PPO Pilot Reproducibility
 ```bash
 # Regenerate the committed PPO pilot checkpoint:
@@ -241,5 +251,4 @@ The pipeline will automatically:
 - **MetaMo Integration:** Dynamic weight management & risk budgets.
 - **Cross-Paradigm Skills:** Logic macros & evolutionary programs.
 - **Benchmarking:** Hypervolume efficiency vs. standard MORL baselines.
-
 
