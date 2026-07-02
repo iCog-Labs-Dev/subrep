@@ -66,7 +66,6 @@ def main() -> None:
 
     with st.sidebar:
         st.title("SubRep Demo")
-        st.caption("One app for the video: run, watch, verify.")
         st.divider()
         st.write("**Artifacts**")
         st.code("\n".join([str(REPORT_PATH), str(LIBRARY_PATH), str(CERTIFICATE_PATH)]))
@@ -131,10 +130,10 @@ def _hero(report: dict[str, Any], store_synced: bool) -> None:
         f"""
         <div class="hero">
           <div>
-            <div class="eyebrow">MO-LunarLander Q1 Prototype</div>
+            <div class="eyebrow">MO-LunarLander Prototype</div>
             <h1>SubRep certifies skills before reuse.</h1>
             <p>
-              This demo shows the full quarter-plan story in one place:
+              This demo shows the full story in one place:
               execute candidate skills, compute improvements, pass/fail CDS/PDS,
               store certificates, and reuse admitted skills with {source_label}.
             </p>
@@ -288,7 +287,7 @@ def _run_visual_rollout(frame_slot, *, max_steps: int = 240, frame_stride: int =
 
 
 def _proof_snapshot(artifacts, report: dict[str, Any], selection_trace: dict[str, Any]) -> None:
-    st.subheader("3. Quarter-Plan Proof Snapshot")
+    st.subheader("3.Proof Snapshot")
     total = int(report.get("total_attempted", 0) or 0)
     admitted = int(report.get("admitted", 0) or 0)
     rejected = int(report.get("rejected", 0) or 0)
