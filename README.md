@@ -6,14 +6,14 @@ This project develops a standalone **SubRep** implementation that transforms ski
 This project validates the core mechanism in **MO-LunarLander**, storing certified skills as native **MeTTa Atoms** for future Hyperon integration.
 
 ## Objectives & Key Results (OKRs)
-Aligned with Approved Quarter Plan:
 
-| Objective | Goal | Key Results |
+
+| Objective | Goal | Implemented Capabilities |
 | :--- | :--- | :--- |
-| **1. Neural Skill Generator** | Generate skill summaries from experience | • 2-head MLP (Payoff + Motives)<br>• MDN Interface Defined<br>• TD Error Computation |
-| **2. Core Certification** | Implement CDS/PDS admission tests | • CDS Test (Universal Benefit)<br>• PDS-ε Test (Acceptable Trade-off)<br>• MO-LunarLander Integration |
-| **3. MeTTa Storage** | Store certificates as native Atoms | • Certificate Schema Defined<br>• PyMeTTa Bridge (`hyperon`)<br>• Zero-Shot Reuse Demo |
-| **4. Minimal Validation** | Demonstrate core mechanism works | • Certified Skills Pass Tests<br>• Uncertified Skills Rejected<br>• Admission Rates Documented |
+| **1. Neural Skill Generator + MDN** | Generate skill summaries and learn motive geometry from experience | 2-head MLP for payoff/motives; MDN input/output contract; candidate-set MDN training and evaluation; auxiliary gate/Q heads |
+| **2. Core Certification** | Implement CDS/PDS admission tests | CDS test; PDS-epsilon test; MO-LunarLander integration |
+| **3. MeTTa Certificate Storage** | Store certificates as native atoms | Certificate schema; Hyperon-backed MeTTa bridge; store/retrieve/query operations |
+| **4. Validation** | Demonstrate the certificate-driven mechanism works | Certified skills pass; unsafe skills are rejected; admission reports document pass/fail behavior |
 
 ## Quick Start
 
@@ -31,54 +31,46 @@ cd subrep
 #Create and activate a virtual environment
 python -m venv .venv
 
-#On Linux / macOS:
-source .venv/bin/activate
-
-
-#On Windows:
+# Windows
 .venv\Scripts\activate
 
+# Linux / macOS
+source .venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
-
+python -m pip install -r requirements.txt
 ```
 
 ### 3. Validation
-```bash
 
-#Run all tests:
+```bash
+# Run all tests
 python -m pytest -v
 
-#Run a specific test file:
+# Run certification tests only
 python -m pytest tests/test_certification_gates.py -v
 
-# Run Full Pipeline (Phase 3+)
+# Run the full demo pipeline
 python -m demo.run_full_pipeline
 ```
 
-### 4. Running the Demo Pipeline
+## Running the Demo Pipeline
 
-> [!NOTE]
-> `models/generator.pt` is gitignored. You must train the generator
-> before running the demo.
-
-**Step 1 — Collect environment data:**
-```bash
-python -m data_collector.collect
-```
-
-**Step 2 — Train the Skill Generator:**
-```bash
-python -m generator.train_generator
-```
-
-**Step 3 — Run the end-to-end demo:**
 ```bash
 python -m demo.run_full_pipeline
 ```
 
-**Step 4 — Open the demo app:**
+The demo pipeline:
+
+- computes an idle baseline,
+- executes the trained PPO pilot,
+- computes `delta_r` and `delta_n`,
+- certifies skills with CDS/PDS,
+- stores admitted certificates in MeTTa and `SkillLibrary`,
+- writes admission reports to `demo/artifacts/`,
+- runs MDN-based skill selection from the certified library.
+
+To open the Streamlit demo app:
+
 ```bash
 streamlit run demo/streamlit_subrep_demo.py
 ```
@@ -88,76 +80,62 @@ pipeline from the sidebar, then presents the full SubRep story in one place:
 skill execution, improvement calculation, CDS/PDS admission, certificate
 storage, trained-MDN selection, zero-shot reuse, and the final audit tables.
 
-### 5. PPO Pilot Reproducibility
+## PPO Pilot Reproducibility
+
 ```bash
-# Regenerate the committed PPO pilot checkpoint:
+# Regenerate the committed PPO pilot checkpoint
 python -m pilot.train_pilot --seed 7 --output models/pilot_ppo.pt
 
-# Validate the checkpoint without retraining:
+# Validate the checkpoint without retraining
 python -m pytest tests/test_pilot_performance.py -v
 ```
 
-### 6. Admission Report Output
-After running the demo pipeline, admission statistics are automatically generated:
+## Admission Report Output
 
-```bash
-# Run the pipeline (report is generated automatically)
-python -m demo.run_full_pipeline
+After running the demo pipeline, admission statistics are generated at:
 
-# View the JSON report
-cat demo/artifacts/admission_report.json
+- `demo/artifacts/admission_report.json`
+- `demo/artifacts/admission_report.md`
 
-# View the Markdown report
-cat demo/artifacts/admission_report.md
+The report includes:
+
+- total attempted, admitted, and rejected skills,
+- admission and rejection rates,
+- CDS and PDS pass counts,
+- failure reasons for rejected skills,
+- example admitted/rejected records,
+- MDN source and support-geometry metadata.
+
+## MDN Checkpoint Behavior
+
+The pipeline looks for the trained MDN checkpoint at:
+
+```text
+models/mdn_policy_best.pth
 ```
 
-**Report location**: `demo/artifacts/admission_report.json` and `demo/artifacts/admission_report.md`
+If that file is present, the pipeline uses the trained MDN and records:
 
-**Report contents**:
-- Total attempted, admitted, and rejected skills
-- Admission/rejection rates
-- CDS and PDS pass counts
-- Failure reasons for rejected skills
-- Example admitted and rejected skills with full metrics
+```text
+mdn_source: trained_checkpoint
+```
 
-### 7. MDN Stub Configuration
-The pipeline uses a **deterministic MDN stub** by default for testing and demonstration. This allows the MDN selection pipeline to run without a trained checkpoint.
+If the checkpoint is missing, the pipeline falls back to `StubMDN` so tests and smoke runs still work. The stub returns fixed alpha/support values and should not be confused with the trained MDN.
 
-**Default behavior**:
-- Pipeline looks for `models/mdn_policy_best.pth`
-- If not found → falls back to `StubMDN` with fixed outputs
-- Stub returns `alpha=[2.0, 2.0]` and `support_values=[1.0, 1.0]`
+## MDN Training and Evaluation
 
-**To use a trained MDN checkpoint**:
-1. Train your MDN model (see `generator/README.md` section "MDN Candidate-Set Training and Evaluation")
-2. Save the checkpoint to `models/mdn_policy_best.pth`
-3. Run the pipeline — it will automatically use the trained model
+### Collect Training Candidate Sets
 
-**Code location**: `utils/mdn_stub.py` contains the `load_mdn_or_stub()` helper that handles this swap transparently.
-
-**No code changes required** — the pipeline works identically with stub or trained MDN.
-
-**MDN Metadata**: The admission report (`demo/artifacts/admission_report.json`) includes metadata about which MDN was used:
-- `mdn_source`: "trained_checkpoint" or "stub"
-- `checkpoint_path`: Path to checkpoint file
-- `alpha_values`: MDN alpha output (mixture weights)
-- `derived_weights`: Mean weights derived from alpha
-- `support_values`: MDN support output (support geometry)
-- `support_geometry_feasible`: Whether support values satisfy constraints
-
-### 8. MDN Training and Integration
-
-We have successfully trained the MDN and integrated it into the pipeline. Here's the complete workflow:
-
-#### **Step 1: Collect Training Data**
 ```bash
-# Collect 3,000 contexts (21,000 candidate outcomes)
 python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 42 --prefix seed42
 python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 43 --prefix seed43
 python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 44 --prefix seed44
 ```
 
-#### **Step 2: Train the MDN**
+This produces 3,000 contexts and 21,000 candidate outcomes with the default candidate set.
+
+### Train the MDN
+
 ```bash
 python -m generator.train_mdn_candidate_sets \
   --data-dir data/mdn_candidate_sets \
@@ -169,86 +147,87 @@ python -m generator.train_mdn_candidate_sets \
   --q-loss mse
 ```
 
-**Output:**
-- `models/mdn_policy_best.pth` — Trained MDN policy checkpoint
-- `models/mdn_auxiliary_best.pth` — Auxiliary heads checkpoint
+Outputs:
 
-#### **Step 3: Run Pipeline with Trained MDN**
+- `models/mdn_policy_best.pth`: trained MDN policy/runtime checkpoint
+- `models/mdn_auxiliary_best.pth`: trained auxiliary checkpoint
+
+Final MDN training uses candidate-set supervised training with normalized Q targets and MSE Q loss. IPS/DR support exists in the auxiliary trainer for future off-policy logged-data settings, but the final candidate-set checkpoint is not DR-trained.
+
+### Evaluate the MDN
+
 ```bash
-python -m demo.run_full_pipeline
+python -m generator.evaluate_mdn_candidate_sets \
+  --checkpoint models/mdn_policy_best.pth \
+  --data-dir data/mdn_candidate_sets_eval \
+  --pattern "*.npz" \
+  --seed 100 \
+  --device cpu
 ```
 
-The pipeline will automatically:
-- Load the trained MDN from `models/mdn_policy_best.pth`
-- Use it for Phase 5 (MDN-Based Skill Selection Demo)
-- Include MDN metadata in the admission report
+The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy, regret, gate F1, Q/motive error, per-objective Q diagnostics, and bootstrap confidence intervals.
 
-#### **Results: Stub vs Trained MDN**
-
-| Aspect | Stub MDN | Trained MDN |
-|--------|----------|-------------|
-| **Alpha values** | Fixed `[2.00, 2.00]` | Context-aware (varies by observation) |
-| **Scores** | Fixed `306.39` | Varies (e.g., `308.83`, `314.21`, `307.28`) |
-| **Selection behavior** | Same skill for all observations | Different skills based on context |
-| **Use case** | Testing/CI/CD | Production |
-
-**Example output with trained MDN:**
-```
-[MDN Loader] Successfully loaded checkpoint from: models/mdn_policy_best.pth
-[MDN Loader] Inferred dimensions: input=8, objectives=2, skills=100000
-[Report] MDN source: trained_checkpoint
-
-  Obs 1: Selected skill 'skill_005' (score=308.8314, alpha=[0.63, 0.56])
-  Obs 2: Selected skill 'skill_005' (score=314.2143, alpha=[0.71, 0.50])
-  Obs 3: Selected skill 'skill_005' (score=307.2794, alpha=[0.73, 0.71])
-```
-
-**Note:** The alpha values are now context-aware and vary by observation, demonstrating that the trained MDN is being used for selection.
 ## Project Structure
-| Folder | Description| 
-| :--- | :---|
-| `env/` | MO-LunarLander wrapper & vector reward handling| 
-| `generator/` | 2-head MLP skill generator (PyTorch)| 
-| `pilot/` | PPO pilot policy, training entry point, and checkpoint utilities|
-| `certification/` | CDS/PDS admission gate logic|
-| `metta/` | PyMeTTa bridge & certificate schema| 
-| `utils/` | TD error computation, logging, helpers| 
-| `tests/` | Validation scripts for each component| 
 
-
+| Folder | Description |
+| :--- | :--- |
+| `env/` | MO-LunarLander wrapper and skill execution loop |
+| `baseline/` | Idle baseline and improvement computation |
+| `generator/` | Skill generator, MDN model, trainers, and evaluators |
+| `pilot/` | PPO pilot policy, training entry point, and checkpoint utilities |
+| `certification/` | CDS/PDS gates, certificate schema, and MeTTa storage |
+| `library/` | Runtime skill library and selection strategies |
+| `utils/` | Shared MDN, geometry, data, checkpoint, and report helpers |
+| `data_collector/` | Raw rollout and candidate-set data collectors |
+| `demo/` | End-to-end pipeline and generated admission reports |
+| `tests/` | Unit, integration, runtime, and end-to-end tests |
 
 ## Technical Specifications
 
 ### Environment
-- **Platform:** `mo-gymnasium` (MO-LunarLander-v3)
-- **Observation Space:** `(8,)` – State vector (position, velocity, fuel, etc.)
-- **Reward Space:** `(2,)` – `[Safety_Reward, Fuel_Reward]`
+
+- **Platform:** `mo-gymnasium` (`MO-LunarLander-v3`)
+- **Observation Space:** `(8,)`
+- **Reward Space:** `(2,)` mapped to `[Safety, Fuel]`
 
 ### Neural Generator
-- **Architecture:** 2-head MLP (Payoff + Motives)
-- **Input:** State vector `(8,)`
-- **Output:** 
-  - `payoff`: Scalar `(1,)`
-  - `motives`: Vector `(2,)`
+
+- **Architecture:** 2-head MLP
+- **Input:** state vector `(8,)`
+- **Outputs:** scalar payoff `(1,)`, motive vector `(2,)`
+- **Training:** supervised MSE on collected rollout payoff/motive totals
+
+### MDN
+
+- **Input:** context vector `(8,)`
+- **Outputs:** Dirichlet alpha, 2D support values, auxiliary gate logit, auxiliary Q prediction
+- **2D Support Contract:** support values satisfy `0 <= s0,s1 <= 1` and `s0 + s1 >= 1`
 
 ### Certification
-- **CDS:** Cone-Dominant Subtask (Universal Benefit)
-- **PDS-ε:** Pareto-Dominant Subtask (Acceptable Trade-off)
-- **Cones:** Full-simplex (Phase 3) -> MDN-learned (Phase 4+)
+
+- **CDS:** Cone-Dominant Subtask, universal-benefit admission
+- **PDS-epsilon:** Pareto-Dominant Subtask, bounded trade-off admission
+- **Supported regions:** `FULL_SIMPLEX` and 2D `MDN_WX`
 
 ### MeTTa Integration
-- **Package:** `hyperon` (Python bindings)
-- **Operations:** `add_atom`, `match`, `space`
+
+- **Package:** `hyperon`
+- **Active implementation:** `certification/metta_bridge.py` and `certification/metta_storage.py`
+- **Persistence:** `data/certificates.metta`
 
 ## Documentation
-- [Quarter Plan](https://docs.google.com/document/d/111xeC5gMT-JcX04iyH3KH-oE2RZIHx3kvvbZmzUaxeE/edit?usp=sharing)
-- [SubRep Paper](https://chat.singularitynet.io/chat/pl/hhhg89sykbn7zpuhgfr973jear)
-- [Hyperon Whitepaper](https://drive.google.com/file/d/1f2xDbHGoqaBJpNfWdpoi3QOHnAWOFTSD/view)
-- [Metta Integration Guide](https://metta-lang.dev/docs/learn/tutorials/python_use/metta_python_basics.html)
 
-## Roadmap (Q2+)
-- **MDN Training:** Full Motive Decomposition Network implementation.
-- **MetaMo Integration:** Dynamic weight management & risk budgets.
-- **Cross-Paradigm Skills:** Logic macros & evolutionary programs.
-- **Benchmarking:** Hypervolume efficiency vs. standard MORL baselines.
+- `generator/README.md`: skill-generator and MDN training/evaluation
+- `data/README.md`: rollout and candidate-set data schemas
+- `docs/CERTIFICATE_STORAGE.md`: certificate schema and MeTTa atom format
+- `docs/ZERO_SHOT_PROTOCOL.md`: full-simplex and MDN_WX reuse protocol
+- `docs/INTEGRATION_REPORT.md`: integration and validation report
+- `docs/METTA_INTEGRATION.md`: MeTTa and Hyperon integration notes
+- [MeTTa Python Integration Guide](https://metta-lang.dev/docs/learn/tutorials/python_use/metta_python_basics.html)
 
+## Future Work
+
+- Extend candidate-set MDN evaluation beyond the current 2-objective MO-LunarLander testbed.
+- Add MetaMo integration for dynamic weight management and risk budgets.
+- Explore cross-paradigm skill sources through logic macros and evolutionary programs.
+- Expand benchmark comparisons against MORL baselines.
