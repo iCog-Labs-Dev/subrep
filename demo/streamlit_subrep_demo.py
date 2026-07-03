@@ -419,7 +419,7 @@ def _mdn_and_zero_shot(report: dict[str, Any], selection_trace: dict[str, Any]) 
 
 def _motive_shift_explorer(skill_rows: list[dict[str, Any]]) -> None:
     st.subheader("7. Motive-Shift Explorer")
-    st.caption("For the video: slide the motive priority and watch the certified-library ranking update without retraining.")
+    st.caption("slide the motive priority and watch the certified-library ranking update without retraining.")
     if not skill_rows:
         st.warning("Run the pipeline first to populate the certified skill library.")
         return
