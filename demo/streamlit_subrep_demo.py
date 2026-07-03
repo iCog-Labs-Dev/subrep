@@ -387,14 +387,17 @@ def _mdn_and_zero_shot(report: dict[str, Any], selection_trace: dict[str, Any]) 
 
     cols = st.columns(4)
     cols[0].metric("MDN Source", "trained" if source == "trained_checkpoint" else source)
-    cols[1].metric("Alpha", _vector_text(report.get("alpha_values")))
-    cols[2].metric("Weights", _vector_text(report.get("derived_weights")))
-    cols[3].metric("Support feasible", "yes" if feasible else "check")
+    cols[1].metric("MDN alpha", _vector_text(report.get("alpha_values")))
+    cols[2].metric("Scoring weights", _vector_text(report.get("derived_weights")))
+    cols[3].metric("Reuse region valid", "yes" if feasible else "check")
 
     st.info(
-        "Zero-shot here means selection changes under the current context/weights, "
-        "but the skill library and trained MDN are frozen. No new policy training occurs."
+        "Zero-shot reuse queries the frozen certified library: globally valid skills stay reusable, "
+        "and MDN_WX skills use the current MDN reuse region. No new policy training occurs."
     )
+    with st.expander("Support Geometry"):
+        st.write("Support values:", _vector_text(support_values))
+        st.write("Support directions:", "[[1, 0], [0, 1]]")
 
     decisions = selection_trace.get("decisions", [])
     if decisions:
@@ -464,11 +467,13 @@ def _motive_shift_explorer(skill_rows: list[dict[str, Any]]) -> None:
 
 def _audit_artifacts(selection_trace: dict[str, Any]) -> None:
     st.subheader("8. Reproducible Artifacts")
-    cols = st.columns(4)
-    cols[0].code(str(REPORT_PATH))
-    cols[1].code(str(LIBRARY_PATH))
-    cols[2].code(str(CERTIFICATE_PATH))
-    cols[3].code(str(MDN_CHECKPOINT_PATH))
+    artifact_lines = [
+        f"Admission report: {REPORT_PATH}",
+        f"Skill library:     {LIBRARY_PATH}",
+        f"MeTTa certs:       {CERTIFICATE_PATH}",
+        f"MDN checkpoint:    {MDN_CHECKPOINT_PATH}",
+    ]
+    st.code("\n".join(artifact_lines), language="text")
 
     if "error" in selection_trace:
         st.caption(f"Selection trace note: {selection_trace['error']}")

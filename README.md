@@ -78,12 +78,12 @@ python -m generator.train_generator
 python -m demo.run_full_pipeline
 ```
 
-**Step 4 — Open the evaluator demo app:**
+**Step 4 — Open the demo app:**
 ```bash
 streamlit run demo/streamlit_subrep_demo.py
 ```
 
-The Streamlit app is the recommended video/demo interface. It can run the real
+The Streamlit app is the demo interface. It can run the real
 pipeline from the sidebar, then presents the full SubRep story in one place:
 skill execution, improvement calculation, CDS/PDS admission, certificate
 storage, trained-MDN selection, zero-shot reuse, and the final audit tables.
