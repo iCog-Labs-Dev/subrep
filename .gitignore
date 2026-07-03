@@ -13,8 +13,7 @@ models/*
 !models/pilot_ppo.pt
 # Generated training plots
 plots/
-
+data/library.json
 # Generated pipeline outputs (run demo/run_full_pipeline.py to regenerate)
 data/certificates.metta
-data/library.json
-
+demo/artifacts/*
