@@ -1,4 +1,4 @@
-# Full Simplex Integration Report
+# Integration Report
 
 This report documents the current SubRep integration path for MO-LunarLander:
 environment execution, baseline-relative improvement computation, CDS/PDS

@@ -1,8 +1,11 @@
-# MeTTa Bridge 
+# MeTTa Integration
 
-**Purpose:** Stores and retrieves certified skills as native Atoms in AtomSpace using the `hyperon` Python package.  
+**Purpose:** Stores and retrieves certified skills as native Atoms in AtomSpace using the `hyperon` Python package.
+
 ## Goal
+
 Enable Hyperon compatibility by serializing certificates as MeTTa Atoms for logical querying and zero-shot reuse.
+
 - `certification/certificate_schema.py`
 - `certification/metta_bridge.py`
 - `certification/metta_storage.py`
@@ -11,7 +14,9 @@ Certificates are converted to Hyperon MeTTa atoms, stored in a Hyperon space,
 and can be saved to `data/certificates.metta` for audit/replay.
 
 ## Validation
- verify:
+
+Verify:
+
 - Atoms are successfully added to AtomSpace
 - Query returns correct skills for given weights
 - Certificate retrieval preserves numerical precision

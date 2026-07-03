@@ -210,13 +210,14 @@ The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy,
 - `data/README.md`: rollout and candidate-set data schemas
 - `docs/CERTIFICATE_STORAGE.md`: certificate schema and MeTTa atom format
 - `docs/ZERO_SHOT_PROTOCOL.md`: full-simplex and MDN_WX reuse protocol
-- `docs/Full_simplex_INTEGRATION_REPORT.md`: integration and validation report
+- `docs/INTEGRATION_REPORT.md`: integration and validation report
+- `docs/METTA_INTEGRATION.md`: MeTTa and Hyperon integration notes
 - [MeTTa Python Integration Guide](https://metta-lang.dev/docs/learn/tutorials/python_use/metta_python_basics.html)
 
-## Roadmap (Q2+)
-- **MDN Training:** Full Motive Decomposition Network implementation.
-- **MetaMo Integration:** Dynamic weight management & risk budgets.
-- **Cross-Paradigm Skills:** Logic macros & evolutionary programs.
-- **Benchmarking:** Hypervolume efficiency vs. standard MORL baselines.
+## Future Work
 
+- Extend candidate-set MDN evaluation beyond the current 2-objective MO-LunarLander testbed.
+- Add MetaMo integration for dynamic weight management and risk budgets.
+- Explore cross-paradigm skill sources through logic macros and evolutionary programs.
+- Expand benchmark comparisons against MORL baselines.
 
