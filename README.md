@@ -69,6 +69,17 @@ The demo pipeline:
 - writes admission reports to `demo/artifacts/`,
 - runs MDN-based skill selection from the certified library.
 
+To open the Streamlit demo app:
+
+```bash
+streamlit run demo/streamlit_subrep_demo.py
+```
+
+The Streamlit app is the demo interface. It can run the real
+pipeline from the sidebar, then presents the full SubRep story in one place:
+skill execution, improvement calculation, CDS/PDS admission, certificate
+storage, trained-MDN selection, zero-shot reuse, and the final audit tables.
+
 ## PPO Pilot Reproducibility
 
 ```bash
@@ -220,4 +231,3 @@ The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy,
 - Add MetaMo integration for dynamic weight management and risk budgets.
 - Explore cross-paradigm skill sources through logic macros and evolutionary programs.
 - Expand benchmark comparisons against MORL baselines.
-
