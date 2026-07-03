@@ -78,7 +78,7 @@ python -m generator.train_generator
 python -m demo.run_full_pipeline
 ```
 
-**Step 4 — Open the evaluator demo app:**
+**Step 4 — Open the demo app:**
 ```bash
 streamlit run demo/streamlit_subrep_demo.py
 ```
