@@ -62,7 +62,8 @@ python -m demo.run_full_pipeline
 The demo pipeline:
 
 - computes an idle baseline,
-- executes the trained PPO pilot,
+- executes a mixed candidate pool: deterministic PPO, stochastic PPO, perturbed/noisy PPO, fixed-action policies, and random policy,
+- uses the SkillGenerator, when available, only as a pre-filter for promising base-PPO starting contexts,
 - computes `delta_r` and `delta_n`,
 - certifies skills with CDS/PDS,
 - stores admitted certificates in MeTTa and `SkillLibrary`,
@@ -106,6 +107,23 @@ The report includes:
 - example admitted/rejected records,
 - MDN source and support-geometry metadata.
 
+A representative mixed-candidate run produces both accepted and
+rejected skills:
+
+| Metric | Value |
+| :--- | ---: |
+| Total attempted | 10 |
+| Admitted | 7 |
+| Rejected | 3 |
+| CDS admissions | 6 |
+| PDS admissions | 1 |
+
+The perturbed PPO candidate demonstrates a bounded trade-off case where CDS
+fails but PDS admits within the demo epsilon budget (`5.0` on the discounted
+rollout-return scale). Fixed-action candidates still make the report a realistic
+safety check: rejected candidates are discarded before entering both
+`CertificateStore` and `SkillLibrary`.
+
 ## MDN Checkpoint Behavior
 
 The pipeline looks for the trained MDN checkpoint at:
@@ -132,7 +150,9 @@ python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/
 python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 44 --prefix seed44
 ```
 
-This produces 3,000 contexts and 21,000 candidate outcomes with the default candidate set.
+This produces 3,000 contexts and 21,000 candidate outcomes with the default
+candidate set: deterministic PPO, stochastic PPO, fixed noop/engine policies,
+and random policy.
 
 ### Train the MDN
 

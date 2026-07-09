@@ -158,7 +158,7 @@ def _animated_story(play_clicked: bool) -> None:
         placeholder = st.empty()
         progress = st.progress(0)
         steps = [
-            ("Execute", "A pilot policy runs a candidate skill in MO-LunarLander."),
+            ("Execute", "A candidate policy runs a skill attempt in MO-LunarLander."),
             ("Measure", "The pipeline computes payoff improvement and motive improvement."),
             ("Certify", "CDS/PDS gates decide if reuse is mathematically safe."),
             ("Store", "Only admitted certificates enter MeTTa and the SkillLibrary."),

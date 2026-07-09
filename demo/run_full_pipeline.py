@@ -1,8 +1,9 @@
 """
 run_full_pipeline.py — End-to-end SubRep pipeline demonstration.
 
-Runs 10 consecutive episodes in MO-LunarLander, certifying each skill
-via CDS gate and storing admitted certificates in MeTTa + SkillLibrary.
+Runs a small mixed set of candidate policies in MO-LunarLander, certifying each
+candidate via CDS/PDS gates and storing admitted certificates in MeTTa +
+SkillLibrary.
 
 Usage:
     python -m demo.run_full_pipeline
@@ -31,6 +32,7 @@ from utils.mdn_stub import load_mdn_or_stub, StubMDN
 from generator.mdn_runtime_selector import MDNRuntimeSelector
 from utils.mdn_contracts import CandidateSkillRecord
 from utils.mdn_selection import alpha_to_mean_weights
+from data_collector.collect_candidate_sets import CandidatePolicy, build_default_candidate_policies
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 NUM_EPISODES        = 10
@@ -38,6 +40,7 @@ BASELINE_EPISODES   = 20
 GAMMA               = 0.99
 MAX_STEPS           = 200
 SEED                = 42
+PDS_EPSILON         = 5.0
 CERT_FILE           = "data/certificates.metta"
 LIBRARY_FILE        = "data/library.json"
 ENV_NAME            = "MO-LunarLander-v3"
@@ -46,6 +49,90 @@ MDN_CHECKPOINT_PATH = "models/mdn_policy_best.pth"  # Will fallback to stub if n
 REPORT_JSON_PATH    = "demo/artifacts/admission_report.json"
 REPORT_MD_PATH      = "demo/artifacts/admission_report.md"
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _parse_policy_output(action_output) -> tuple[int, float | None]:
+    """Return action/probability from policy callables used in the demo."""
+    if isinstance(action_output, tuple):
+        action, probability = action_output
+        return int(action), float(probability) if probability is not None else None
+    return int(action_output), None
+
+
+def _ppo_then_fixed_action_policy(
+    base_policy,
+    *,
+    switch_step: int,
+    fixed_action: int,
+):
+    """Run PPO first, then switch to a fixed action to create a mild trade-off."""
+    class PPOThenFixedPolicy:
+        def __init__(self) -> None:
+            self.steps = 0
+
+        def reset(self) -> None:
+            self.steps = 0
+
+        def __call__(self, obs: np.ndarray) -> tuple[int, float]:
+            self.steps += 1
+            if self.steps >= switch_step:
+                return int(fixed_action), 1.0
+            action, probability = _parse_policy_output(base_policy(obs))
+            return action, probability if probability is not None else 1.0
+
+    return PPOThenFixedPolicy()
+
+
+def _noisy_ppo_policy(
+    base_policy,
+    env: SubRepEnv,
+    *,
+    noise_probability: float,
+    seed: int,
+):
+    """Mostly follow PPO, but occasionally choose a non-PPO action."""
+    rng = np.random.default_rng(seed)
+    action_count = int(env.env.action_space.n)
+
+    def policy_fn(obs: np.ndarray) -> tuple[int, float]:
+        base_action, base_probability = _parse_policy_output(base_policy(obs))
+        if rng.random() < noise_probability:
+            alternatives = [action for action in range(action_count) if action != base_action]
+            return int(rng.choice(alternatives)), noise_probability / float(len(alternatives))
+        return base_action, base_probability if base_probability is not None else 1.0
+
+    return policy_fn
+
+
+def _build_demo_candidate_policies(env: SubRepEnv) -> tuple[CandidatePolicy, ...]:
+    """Build the demo candidate pool with safe, unsafe, and near-boundary policies."""
+    default_policies = build_default_candidate_policies(env)
+    ppo_deterministic = default_policies[0]
+    ppo_stochastic = default_policies[1]
+    fixed_and_random = default_policies[2:]
+
+    return (
+        ppo_deterministic,
+        CandidatePolicy(
+            "ppo_then_side_tradeoff",
+            _ppo_then_fixed_action_policy(
+                ppo_deterministic.policy_fn,
+                switch_step=45,
+                fixed_action=3,
+            ),
+        ),
+        ppo_stochastic,
+        CandidatePolicy(
+            "ppo_noisy_actions",
+            _noisy_ppo_policy(
+                ppo_deterministic.policy_fn,
+                env,
+                noise_probability=0.30,
+                seed=SEED + 301,
+            ),
+        ),
+        *fixed_and_random,
+    )
 
 
 def _make_certificate(
@@ -85,10 +172,15 @@ def run_pipeline() -> dict:
     print("=" * 60)
     print("  SubRep End-to-End Pipeline Demo")
     print("=" * 60)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
 
     # ── 1. Environment + Baseline ──────────────────────────────────────────────
     print("\n[Init] Setting up environment and computing baseline...")
     env = SubRepEnv(seed=SEED)
+    env.env.action_space.seed(SEED)
     idle = IdlePolicy(env=env, idle_action=0, gamma=GAMMA)
     baseline_stats = idle.run_baseline_episodes(
         num_episodes=BASELINE_EPISODES, seed=SEED
@@ -100,7 +192,7 @@ def run_pipeline() -> dict:
 
     calculator = ImprovementCalculator(baseline_stats)
     gate = CDSGate()
-    pds_gate = PDSGate(epsilon=0.1)  # Allow a small mathematical trade-off budget
+    pds_gate = PDSGate(epsilon=PDS_EPSILON)  # Bounded trade-off budget on rollout-return scale
 
     # ── 1.5 Load Skill Generator (Pre-Filter) ─────────────────────────────────
     generator_available = False
@@ -123,13 +215,17 @@ def run_pipeline() -> dict:
     library = SkillLibrary(cert_store=cert_store, save_path=LIBRARY_FILE)
     selector = SkillSelector(library=library, seed=SEED)
 
-    # ── 3. Episode Loop ────────────────────────────────────────────────────────
-    print(f"\n[Loop] Running {NUM_EPISODES} episodes...\n")
+    # ── 3. Candidate Loop ─────────────────────────────────────────────────────
+    candidate_policies = _build_demo_candidate_policies(env)
+    candidate_names = ", ".join(candidate.skill_id for candidate in candidate_policies)
+    print(f"[Init] Candidate policy pool: {candidate_names}")
+
+    print(f"\n[Loop] Running {NUM_EPISODES} candidate attempts...\n")
     print(
-        f"{'Ep':>4}  {'Search':>6}  {'Payoff':>9}  {'Δr':>8}  {'min(Δn)':>8}  "
+        f"{'Ep':>4}  {'Candidate':>24}  {'Search':>6}  {'Payoff':>9}  {'Δr':>8}  {'min(Δn)':>8}  "
         f"{'CDS':>3}  {'PDS':>3}  {'Result':>10}  {'Lib':>4}"
     )
-    print("-" * 70)
+    print("-" * 98)
 
     admitted = 0
     rejected = 0
@@ -144,19 +240,28 @@ def run_pipeline() -> dict:
     report = AdmissionReport()
 
     for ep in range(1, NUM_EPISODES + 1):
-        skill_id = f"skill_{ep:03d}"
+        candidate = candidate_policies[(ep - 1) % len(candidate_policies)]
+        candidate_name = candidate.skill_id
+        skill_id = f"skill_{ep:03d}_{candidate_name}"
+        if hasattr(candidate.policy_fn, "reset"):
+            candidate.policy_fn.reset()
 
         # SELECT — pick a skill or search for a good starting state
         searches = 0
         max_search = 500
         found_promising_state = False
         obs = None
+        use_generator_prefilter = (
+            generator_available
+            and model is not None
+            and candidate_name in {"ppo_deterministic", "ppo_stochastic"}
+        )
 
-        while not found_promising_state and searches < max_search:
-            searches += 1
-            obs, _ = env.reset()
-            
-            if generator_available and model is not None:
+        if use_generator_prefilter:
+            while not found_promising_state and searches < max_search:
+                searches += 1
+                obs, _ = env.reset()
+
                 # Predict outcome using the SkillGenerator
                 with torch.no_grad():
                     pred_payoff, pred_motives = model(torch.tensor(obs, dtype=torch.float32))
@@ -166,14 +271,17 @@ def run_pipeline() -> dict:
                     # Does the model THINK it will pass either gate?
                     if gate.admit(pred_dr, pred_dn) or pds_gate.admit(pred_dr, pred_dn):
                         found_promising_state = True
-            else:
-                # Fallback: accept any state (random search)
-                found_promising_state = True
+        else:
+            searches = 1
+            # Non-prefiltered candidates use deterministic context seeds so the
+            # admission report can be reproduced exactly.
+            obs, _ = env.reset(seed=SEED + 1000 + ep)
+            found_promising_state = True
 
         # EXECUTE — run one episode
-        # Use the trained RL Policy provided by the team lead.
-        executor = SkillExecutor.from_pilot_checkpoint(
+        executor = SkillExecutor(
             env=env,
+            policy_fn=candidate.policy_fn,
             gamma=GAMMA,
             max_steps=MAX_STEPS,
         )
@@ -192,10 +300,10 @@ def run_pipeline() -> dict:
         # Determine human-readable failure reason for rejected skills
         failure_reason: str | None = None
         if not admitted_flag:
+            worst_case_score = delta_r + float(np.min(delta_n))
             failure_reason = (
-                f"delta_r + min(delta_n) + epsilon < 0 "
-                f"(got {delta_r:.4f} + {float(np.min(delta_n)):.4f} = "
-                f"{delta_r + float(np.min(delta_n)):.4f})"
+                f"delta_r + min(delta_n) below CDS/PDS thresholds "
+                f"(score={worst_case_score:.4f}, PDS threshold={-PDS_EPSILON:.4f})"
             )
 
         if admitted_flag:
@@ -207,14 +315,12 @@ def run_pipeline() -> dict:
                 margin=margin,
                 episode_length=int(episode_length),
                 gate_type=active_gate,
-                epsilon=0.1 if active_gate == "PDS" else 0.0,
+                epsilon=PDS_EPSILON if active_gate == "PDS" else 0.0,
             )
             store_added = cert_store.add(cert)
             lib_added = False
             if store_added:
-                # Attach a fresh random policy as placeholder
-                random_policy = lambda o: env.env.action_space.sample()
-                lib_added = library.add_skill(skill_id, cert, random_policy)
+                lib_added = library.add_skill(skill_id, cert, candidate.policy_fn)
 
                 if not lib_added:
                     # ROLLBACK: library rejected — remove from cert_store to stay in sync
@@ -246,18 +352,21 @@ def run_pipeline() -> dict:
         # Record episode data for admission report
         episode_record_dict = {
             "skill_id": skill_id,
+            "candidate_policy": candidate_name,
             "admitted": admitted_flag,
             "gate_type": active_gate if admitted_flag else None,
             "delta_r": float(delta_r),
             "delta_n": (float(delta_n[0]), float(delta_n[1])),
             "margin": float(margin),
+            "epsilon": PDS_EPSILON if active_gate == "PDS" else 0.0,
             "failure_reason": failure_reason,
         }
         episode_records.append(episode_record_dict)
         report.add_from_dict(episode_record_dict)
 
         print(
-            f"{ep:>4}  {searches:>6d}  {payoff:>9.3f}  {delta_r:>8.3f}  {float(np.min(delta_n)):>8.3f}"
+            f"{ep:>4}  {candidate_name:>24}  {searches:>6d}  {payoff:>9.3f}  "
+            f"{delta_r:>8.3f}  {float(np.min(delta_n)):>8.3f}"
             f"  {'Y' if admitted_cds else 'N':>3}  {'Y' if admitted_pds else 'N':>3}"
             f"  {result_str:>12}  {library.count():>4}"
         )
