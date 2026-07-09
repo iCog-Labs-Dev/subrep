@@ -9,13 +9,59 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from demo.run_full_pipeline import PDS_EPSILON, run_pipeline
+from demo.run_full_pipeline import (
+    PDS_EPSILON,
+    _noisy_ppo_policy,
+    _ppo_then_fixed_action_policy,
+    run_pipeline,
+)
+
+
+class _FakeActionSpace:
+    n = 4
+
+
+class _FakeWrappedEnv:
+    action_space = _FakeActionSpace()
+
+
+class _FakeEnv:
+    env = _FakeWrappedEnv()
 
 
 class TestEndToEndPipeline:
     """Validate the complete pipeline execution with MDN and report integration."""
+
+    def test_ppo_then_fixed_policy_resets_between_episodes(self):
+        """Stateful demo policy should start each episode from step zero."""
+        policy = _ppo_then_fixed_action_policy(
+            lambda obs: (2, 0.8),
+            switch_step=3,
+            fixed_action=1,
+        )
+        obs = np.zeros(8, dtype=np.float32)
+
+        assert policy(obs) == (2, 0.8)
+        assert policy(obs) == (2, 0.8)
+        assert policy(obs) == (1, 1.0)
+
+        policy.reset()
+
+        assert policy(obs) == (2, 0.8)
+
+    def test_noisy_policy_uses_unit_probability_when_base_probability_missing(self):
+        """Fallback probability should be 1.0 when the base policy returns only action."""
+        policy = _noisy_ppo_policy(
+            lambda obs: 2,
+            _FakeEnv(),
+            noise_probability=0.0,
+            seed=42,
+        )
+
+        assert policy(np.zeros(8, dtype=np.float32)) == (2, 1.0)
 
     def test_pipeline_returns_valid_stats(self):
         """Assert run_pipeline() returns a dict with all required keys."""

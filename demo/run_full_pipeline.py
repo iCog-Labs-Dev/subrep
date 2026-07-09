@@ -66,16 +66,21 @@ def _ppo_then_fixed_action_policy(
     fixed_action: int,
 ):
     """Run PPO first, then switch to a fixed action to create a mild trade-off."""
-    step_counter = {"steps": 0}
+    class PPOThenFixedPolicy:
+        def __init__(self) -> None:
+            self.steps = 0
 
-    def policy_fn(obs: np.ndarray) -> tuple[int, float]:
-        step_counter["steps"] += 1
-        if step_counter["steps"] >= switch_step:
-            return int(fixed_action), 1.0
-        action, probability = _parse_policy_output(base_policy(obs))
-        return action, probability if probability is not None else 1.0
+        def reset(self) -> None:
+            self.steps = 0
 
-    return policy_fn
+        def __call__(self, obs: np.ndarray) -> tuple[int, float]:
+            self.steps += 1
+            if self.steps >= switch_step:
+                return int(fixed_action), 1.0
+            action, probability = _parse_policy_output(base_policy(obs))
+            return action, probability if probability is not None else 1.0
+
+    return PPOThenFixedPolicy()
 
 
 def _noisy_ppo_policy(
@@ -94,7 +99,7 @@ def _noisy_ppo_policy(
         if rng.random() < noise_probability:
             alternatives = [action for action in range(action_count) if action != base_action]
             return int(rng.choice(alternatives)), noise_probability / float(len(alternatives))
-        return base_action, base_probability if base_probability is not None else 1.0 - noise_probability
+        return base_action, base_probability if base_probability is not None else 1.0
 
     return policy_fn
 
@@ -238,6 +243,8 @@ def run_pipeline() -> dict:
         candidate = candidate_policies[(ep - 1) % len(candidate_policies)]
         candidate_name = candidate.skill_id
         skill_id = f"skill_{ep:03d}_{candidate_name}"
+        if hasattr(candidate.policy_fn, "reset"):
+            candidate.policy_fn.reset()
 
         # SELECT — pick a skill or search for a good starting state
         searches = 0
