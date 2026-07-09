@@ -24,7 +24,7 @@ flowchart LR
 
 ## 2. Mixed Candidate Admission Check
 
-The demo pipeline now evaluates a small mixed candidate pool instead of only
+The demo pipeline evaluates a small mixed candidate pool instead of only
 the PPO pilot. This makes the admission report cover both successful and unsafe
 candidate behavior in one run.
 

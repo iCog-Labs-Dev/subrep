@@ -107,7 +107,7 @@ The report includes:
 - example admitted/rejected records,
 - MDN source and support-geometry metadata.
 
-A representative mixed-candidate run currently produces both accepted and
+A representative mixed-candidate run produces both accepted and
 rejected skills:
 
 | Metric | Value |
