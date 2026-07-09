@@ -85,6 +85,19 @@ class TestEndToEndPipeline:
             f"{stats['admitted']} were admitted"
         )
 
+    def test_mixed_candidate_pool_produces_natural_rejections(self):
+        """Assert the demo report covers both admitted and rejected candidates."""
+        stats = run_pipeline()
+
+        candidate_policies = {
+            record.get("candidate_policy") for record in stats["episode_records"]
+        }
+
+        assert len(candidate_policies) > 1
+        assert stats["admitted"] > 0
+        assert stats["rejected"] > 0
+        assert stats["library_size"] == stats["admitted"]
+
     def test_admission_rate_calculation(self):
         """Assert admission rate is calculated correctly."""
         stats = run_pipeline()

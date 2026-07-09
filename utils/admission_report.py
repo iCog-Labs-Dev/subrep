@@ -28,6 +28,7 @@ class AdmissionRecord:
     delta_n: tuple[float, ...]
     margin: float
     failure_reason: Optional[str]     # Populated only when admitted=False
+    candidate_policy: Optional[str] = None
 
 
 class AdmissionReport:
@@ -62,6 +63,7 @@ class AdmissionReport:
                 delta_n=tuple(ep_dict["delta_n"]),
                 margin=ep_dict["margin"],
                 failure_reason=ep_dict.get("failure_reason"),
+                candidate_policy=ep_dict.get("candidate_policy"),
             )
         )
 
@@ -194,6 +196,7 @@ def _render_markdown(stats: dict) -> list[str]:
     if ex_admitted:
         lines += [
             f"- **Skill ID**: `{ex_admitted['skill_id']}`",
+            f"- **Candidate Policy**: {ex_admitted.get('candidate_policy') or 'unknown'}",
             f"- **Gate**: {ex_admitted['gate_type']}",
             f"- **Δr**: {ex_admitted['delta_r']:.4f}",
             f"- **Δn**: {ex_admitted['delta_n']}",
@@ -209,6 +212,7 @@ def _render_markdown(stats: dict) -> list[str]:
     if ex_rejected:
         lines += [
             f"- **Skill ID**: `{ex_rejected['skill_id']}`",
+            f"- **Candidate Policy**: {ex_rejected.get('candidate_policy') or 'unknown'}",
             f"- **Δr**: {ex_rejected['delta_r']:.4f}",
             f"- **Δn**: {ex_rejected['delta_n']}",
             f"- **Failure Reason**: {ex_rejected['failure_reason']}",

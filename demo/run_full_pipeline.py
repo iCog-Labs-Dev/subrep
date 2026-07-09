@@ -1,8 +1,9 @@
 """
 run_full_pipeline.py — End-to-end SubRep pipeline demonstration.
 
-Runs 10 consecutive episodes in MO-LunarLander, certifying each skill
-via CDS gate and storing admitted certificates in MeTTa + SkillLibrary.
+Runs a small mixed set of candidate policies in MO-LunarLander, certifying each
+candidate via CDS/PDS gates and storing admitted certificates in MeTTa +
+SkillLibrary.
 
 Usage:
     python -m demo.run_full_pipeline
@@ -31,6 +32,7 @@ from utils.mdn_stub import load_mdn_or_stub, StubMDN
 from generator.mdn_runtime_selector import MDNRuntimeSelector
 from utils.mdn_contracts import CandidateSkillRecord
 from utils.mdn_selection import alpha_to_mean_weights
+from data_collector.collect_candidate_sets import build_default_candidate_policies
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 NUM_EPISODES        = 10
@@ -85,10 +87,15 @@ def run_pipeline() -> dict:
     print("=" * 60)
     print("  SubRep End-to-End Pipeline Demo")
     print("=" * 60)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(SEED)
 
     # ── 1. Environment + Baseline ──────────────────────────────────────────────
     print("\n[Init] Setting up environment and computing baseline...")
     env = SubRepEnv(seed=SEED)
+    env.env.action_space.seed(SEED)
     idle = IdlePolicy(env=env, idle_action=0, gamma=GAMMA)
     baseline_stats = idle.run_baseline_episodes(
         num_episodes=BASELINE_EPISODES, seed=SEED
@@ -123,13 +130,17 @@ def run_pipeline() -> dict:
     library = SkillLibrary(cert_store=cert_store, save_path=LIBRARY_FILE)
     selector = SkillSelector(library=library, seed=SEED)
 
-    # ── 3. Episode Loop ────────────────────────────────────────────────────────
-    print(f"\n[Loop] Running {NUM_EPISODES} episodes...\n")
+    # ── 3. Candidate Loop ─────────────────────────────────────────────────────
+    candidate_policies = build_default_candidate_policies(env)
+    candidate_names = ", ".join(candidate.skill_id for candidate in candidate_policies)
+    print(f"[Init] Candidate policy pool: {candidate_names}")
+
+    print(f"\n[Loop] Running {NUM_EPISODES} candidate attempts...\n")
     print(
-        f"{'Ep':>4}  {'Search':>6}  {'Payoff':>9}  {'Δr':>8}  {'min(Δn)':>8}  "
+        f"{'Ep':>4}  {'Candidate':>17}  {'Search':>6}  {'Payoff':>9}  {'Δr':>8}  {'min(Δn)':>8}  "
         f"{'CDS':>3}  {'PDS':>3}  {'Result':>10}  {'Lib':>4}"
     )
-    print("-" * 70)
+    print("-" * 91)
 
     admitted = 0
     rejected = 0
@@ -144,19 +155,26 @@ def run_pipeline() -> dict:
     report = AdmissionReport()
 
     for ep in range(1, NUM_EPISODES + 1):
-        skill_id = f"skill_{ep:03d}"
+        candidate = candidate_policies[(ep - 1) % len(candidate_policies)]
+        candidate_name = candidate.skill_id
+        skill_id = f"skill_{ep:03d}_{candidate_name}"
 
         # SELECT — pick a skill or search for a good starting state
         searches = 0
         max_search = 500
         found_promising_state = False
         obs = None
+        use_generator_prefilter = (
+            generator_available
+            and model is not None
+            and candidate_name.startswith("ppo")
+        )
 
         while not found_promising_state and searches < max_search:
             searches += 1
             obs, _ = env.reset()
             
-            if generator_available and model is not None:
+            if use_generator_prefilter:
                 # Predict outcome using the SkillGenerator
                 with torch.no_grad():
                     pred_payoff, pred_motives = model(torch.tensor(obs, dtype=torch.float32))
@@ -167,13 +185,14 @@ def run_pipeline() -> dict:
                     if gate.admit(pred_dr, pred_dn) or pds_gate.admit(pred_dr, pred_dn):
                         found_promising_state = True
             else:
-                # Fallback: accept any state (random search)
+                # Non-PPO candidates are evaluated without generator pre-filtering
+                # so the report reflects a broader candidate distribution.
                 found_promising_state = True
 
         # EXECUTE — run one episode
-        # Use the trained RL Policy provided by the team lead.
-        executor = SkillExecutor.from_pilot_checkpoint(
+        executor = SkillExecutor(
             env=env,
+            policy_fn=candidate.policy_fn,
             gamma=GAMMA,
             max_steps=MAX_STEPS,
         )
@@ -212,9 +231,7 @@ def run_pipeline() -> dict:
             store_added = cert_store.add(cert)
             lib_added = False
             if store_added:
-                # Attach a fresh random policy as placeholder
-                random_policy = lambda o: env.env.action_space.sample()
-                lib_added = library.add_skill(skill_id, cert, random_policy)
+                lib_added = library.add_skill(skill_id, cert, candidate.policy_fn)
 
                 if not lib_added:
                     # ROLLBACK: library rejected — remove from cert_store to stay in sync
@@ -246,6 +263,7 @@ def run_pipeline() -> dict:
         # Record episode data for admission report
         episode_record_dict = {
             "skill_id": skill_id,
+            "candidate_policy": candidate_name,
             "admitted": admitted_flag,
             "gate_type": active_gate if admitted_flag else None,
             "delta_r": float(delta_r),
@@ -257,7 +275,8 @@ def run_pipeline() -> dict:
         report.add_from_dict(episode_record_dict)
 
         print(
-            f"{ep:>4}  {searches:>6d}  {payoff:>9.3f}  {delta_r:>8.3f}  {float(np.min(delta_n)):>8.3f}"
+            f"{ep:>4}  {candidate_name:>17}  {searches:>6d}  {payoff:>9.3f}  "
+            f"{delta_r:>8.3f}  {float(np.min(delta_n)):>8.3f}"
             f"  {'Y' if admitted_cds else 'N':>3}  {'Y' if admitted_pds else 'N':>3}"
             f"  {result_str:>12}  {library.count():>4}"
         )

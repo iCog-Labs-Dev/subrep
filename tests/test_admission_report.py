@@ -149,6 +149,7 @@ class TestAdmissionReportAddFromDict:
         report = AdmissionReport()
         ep = {
             "skill_id": "s2",
+            "candidate_policy": "noop",
             "admitted": False,
             "gate_type": None,
             "delta_r": -1.0,
@@ -157,7 +158,9 @@ class TestAdmissionReportAddFromDict:
             "failure_reason": "some reason",
         }
         report.add_from_dict(ep)
-        assert report.compile()["rejected"] == 1
+        stats = report.compile()
+        assert stats["rejected"] == 1
+        assert stats["example_rejected_skill"]["candidate_policy"] == "noop"
 
 
 # ── Tests: save_json() ────────────────────────────────────────────────────────
@@ -234,6 +237,26 @@ class TestAdmissionReportSaveMarkdown:
             report.save_markdown(path)
             content = path.read_text(encoding="utf-8")
         assert "my_special_skill" in content
+
+    def test_markdown_mentions_candidate_policy_when_available(self):
+        report = AdmissionReport()
+        report.add_record(
+            AdmissionRecord(
+                skill_id="skill_001_ppo",
+                admitted=True,
+                gate_type="CDS",
+                delta_r=5.0,
+                delta_n=(2.0, 3.0),
+                margin=7.0,
+                failure_reason=None,
+                candidate_policy="ppo_deterministic",
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "report.md"
+            report.save_markdown(path)
+            content = path.read_text(encoding="utf-8")
+        assert "ppo_deterministic" in content
 
     def test_markdown_no_skills_admitted_message(self):
         report = AdmissionReport()
