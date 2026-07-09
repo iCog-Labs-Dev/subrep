@@ -62,8 +62,8 @@ python -m demo.run_full_pipeline
 The demo pipeline:
 
 - computes an idle baseline,
-- executes a mixed candidate pool: deterministic PPO, stochastic PPO, fixed-action policies, and random policy,
-- uses the SkillGenerator, when available, only as a pre-filter for promising PPO starting contexts,
+- executes a mixed candidate pool: deterministic PPO, stochastic PPO, perturbed/noisy PPO, fixed-action policies, and random policy,
+- uses the SkillGenerator, when available, only as a pre-filter for promising base-PPO starting contexts,
 - computes `delta_r` and `delta_n`,
 - certifies skills with CDS/PDS,
 - stores admitted certificates in MeTTa and `SkillLibrary`,
@@ -113,14 +113,16 @@ rejected skills:
 | Metric | Value |
 | :--- | ---: |
 | Total attempted | 10 |
-| Admitted | 6 |
-| Rejected | 4 |
+| Admitted | 7 |
+| Rejected | 3 |
 | CDS admissions | 6 |
-| PDS admissions | 0 |
+| PDS admissions | 1 |
 
-The fixed-action and random candidates make the report a more realistic safety
-check than the earlier PPO-only demo path. Rejected candidates are discarded
-before entering both `CertificateStore` and `SkillLibrary`.
+The perturbed PPO candidate demonstrates a bounded trade-off case where CDS
+fails but PDS admits within the demo epsilon budget (`5.0` on the discounted
+rollout-return scale). Fixed-action candidates still make the report a realistic
+safety check: rejected candidates are discarded before entering both
+`CertificateStore` and `SkillLibrary`.
 
 ## MDN Checkpoint Behavior
 

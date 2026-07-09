@@ -29,6 +29,7 @@ class AdmissionRecord:
     margin: float
     failure_reason: Optional[str]     # Populated only when admitted=False
     candidate_policy: Optional[str] = None
+    epsilon: float = 0.0
 
 
 class AdmissionReport:
@@ -64,6 +65,7 @@ class AdmissionReport:
                 margin=ep_dict["margin"],
                 failure_reason=ep_dict.get("failure_reason"),
                 candidate_policy=ep_dict.get("candidate_policy"),
+                epsilon=float(ep_dict.get("epsilon", 0.0)),
             )
         )
 
@@ -116,6 +118,7 @@ class AdmissionReport:
 
         # Example admitted / rejected skill (first occurrence of each)
         example_admitted = asdict(admitted_records[0]) if admitted_records else None
+        example_pds = next((asdict(r) for r in admitted_records if r.gate_type == "PDS"), None)
         example_rejected = asdict(rejected_records[0]) if rejected_records else None
 
         result = {
@@ -127,6 +130,7 @@ class AdmissionReport:
             "pds_pass_count": pds_count,
             "failure_reasons": failure_reasons,
             "example_admitted_skill": example_admitted,
+            "example_pds_skill": example_pds,
             "example_rejected_skill": example_rejected,
         }
         
@@ -202,8 +206,27 @@ def _render_markdown(stats: dict) -> list[str]:
             f"- **Δn**: {ex_admitted['delta_n']}",
             f"- **Admission Margin**: {ex_admitted['margin']:.4f}",
         ]
+        if ex_admitted["gate_type"] == "PDS":
+            lines.append(f"- **PDS Epsilon**: {ex_admitted.get('epsilon', 0.0):.4f}")
     else:
         lines.append("_No skills were admitted._")
+    lines.append("")
+
+    # Example PDS skill
+    lines += ["## Example PDS Trade-Off Skill", ""]
+    ex_pds = stats.get("example_pds_skill")
+    if ex_pds:
+        lines += [
+            f"- **Skill ID**: `{ex_pds['skill_id']}`",
+            f"- **Candidate Policy**: {ex_pds.get('candidate_policy') or 'unknown'}",
+            "- **Why PDS**: CDS failed, but the deficit stayed within the PDS epsilon budget.",
+            f"- **Δr**: {ex_pds['delta_r']:.4f}",
+            f"- **Δn**: {ex_pds['delta_n']}",
+            f"- **PDS Margin**: {ex_pds['margin']:.4f}",
+            f"- **PDS Epsilon**: {ex_pds.get('epsilon', 0.0):.4f}",
+        ]
+    else:
+        lines.append("_No PDS-only trade-off admission recorded._")
     lines.append("")
 
     # Example rejected skill

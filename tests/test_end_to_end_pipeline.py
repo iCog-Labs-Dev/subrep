@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from demo.run_full_pipeline import run_pipeline
+from demo.run_full_pipeline import PDS_EPSILON, run_pipeline
 
 
 class TestEndToEndPipeline:
@@ -97,6 +97,23 @@ class TestEndToEndPipeline:
         assert stats["admitted"] > 0
         assert stats["rejected"] > 0
         assert stats["library_size"] == stats["admitted"]
+
+    def test_mixed_candidate_pool_produces_pds_tradeoff_admission(self):
+        """Assert one perturbed candidate fails CDS but passes PDS."""
+        stats = run_pipeline()
+
+        pds_records = [
+            record for record in stats["episode_records"]
+            if record.get("gate_type") == "PDS"
+        ]
+
+        assert stats["pds_pass_count"] == len(pds_records)
+        assert pds_records
+
+        record = pds_records[0]
+        worst_case_score = record["delta_r"] + min(record["delta_n"])
+        assert worst_case_score < 0.0
+        assert worst_case_score + PDS_EPSILON >= 0.0
 
     def test_admission_rate_calculation(self):
         """Assert admission rate is calculated correctly."""

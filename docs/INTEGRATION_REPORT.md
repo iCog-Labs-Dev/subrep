@@ -37,7 +37,9 @@ python -m demo.run_full_pipeline
 Candidate policy pool:
 
 - `ppo_deterministic`
+- `ppo_then_side_tradeoff`
 - `ppo_stochastic`
+- `ppo_noisy_actions`
 - `noop`
 - `left_engine`
 - `main_engine`
@@ -47,9 +49,11 @@ Candidate policy pool:
 | Metric | Value |
 |---|---:|
 | Total Candidate Attempts | 10 |
-| Admitted | 6 |
-| Rejected | 4 |
-| Library Size | 6 |
+| Admitted | 7 |
+| Rejected | 3 |
+| CDS Admissions | 6 |
+| PDS Admissions | 1 |
+| Library Size | 7 |
 | Baseline Episodes | 20 |
 | Baseline Mean Payoff | -21.25 |
 
@@ -57,15 +61,18 @@ Representative rows:
 
 | Ep | Candidate | Payoff | delta_r | min(delta_n) | CDS | PDS | Result | Lib |
 |---:|---|---:|---:|---:|---|---|---|---:|
-| 1 | ppo_deterministic | 132.593 | 153.847 | 39.322 | Y | Y | Admitted | 1 |
-| 3 | noop | 13.454 | 34.708 | 0.000 | Y | Y | Admitted | 3 |
-| 4 | left_engine | -246.526 | -225.272 | -286.393 | N | N | Rejected | 3 |
-| 5 | main_engine | -162.060 | -140.806 | -227.408 | N | N | Rejected | 3 |
-| 7 | random | -120.975 | -99.721 | -147.414 | N | N | Rejected | 3 |
+| 1 | ppo_deterministic | 139.664 | 160.918 | 41.536 | Y | Y | Admitted | 1 |
+| 2 | ppo_then_side_tradeoff | -14.316 | 6.938 | -10.309 | N | Y | Admitted | 2 |
+| 5 | noop | -4.288 | 16.966 | 0.000 | Y | Y | Admitted | 5 |
+| 6 | left_engine | -284.527 | -263.273 | -318.068 | N | N | Rejected | 5 |
+| 7 | main_engine | -159.870 | -138.616 | -204.155 | N | N | Rejected | 5 |
 
 Interpretation:
 
 - PPO-style candidates generally produce positive margins and are admitted.
+- The perturbed PPO candidate demonstrates the PDS-only path: CDS fails because
+  the worst-case score is below zero, while PDS admits because the deficit is
+  inside the demo epsilon budget (`5.0` on the discounted rollout-return scale).
 - Fixed-action candidates expose natural unsafe cases and are rejected.
 - CDS fails when `delta_r + min(delta_n) < 0`; PDS also fails when the deficit
   exceeds the epsilon budget.
@@ -80,9 +87,11 @@ are not stored.
 The full demo keeps the SkillGenerator and PPO pilot roles separate:
 
 - The SkillGenerator is a pre-filter when available. It searches for promising
-  starting contexts for PPO-style candidates.
+  starting contexts for the base PPO candidates.
 - The actual candidate rollout is always measured by executing a concrete policy
   from the mixed candidate pool.
+- Non-prefiltered candidates use deterministic context seeds so the admission
+  report can be reproduced exactly.
 - CDS/PDS certification uses the measured payoff and motive returns, not the
   generator prediction.
 

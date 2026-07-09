@@ -32,7 +32,7 @@ from utils.mdn_stub import load_mdn_or_stub, StubMDN
 from generator.mdn_runtime_selector import MDNRuntimeSelector
 from utils.mdn_contracts import CandidateSkillRecord
 from utils.mdn_selection import alpha_to_mean_weights
-from data_collector.collect_candidate_sets import build_default_candidate_policies
+from data_collector.collect_candidate_sets import CandidatePolicy, build_default_candidate_policies
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 NUM_EPISODES        = 10
@@ -40,6 +40,7 @@ BASELINE_EPISODES   = 20
 GAMMA               = 0.99
 MAX_STEPS           = 200
 SEED                = 42
+PDS_EPSILON         = 5.0
 CERT_FILE           = "data/certificates.metta"
 LIBRARY_FILE        = "data/library.json"
 ENV_NAME            = "MO-LunarLander-v3"
@@ -48,6 +49,85 @@ MDN_CHECKPOINT_PATH = "models/mdn_policy_best.pth"  # Will fallback to stub if n
 REPORT_JSON_PATH    = "demo/artifacts/admission_report.json"
 REPORT_MD_PATH      = "demo/artifacts/admission_report.md"
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _parse_policy_output(action_output) -> tuple[int, float | None]:
+    """Return action/probability from policy callables used in the demo."""
+    if isinstance(action_output, tuple):
+        action, probability = action_output
+        return int(action), float(probability) if probability is not None else None
+    return int(action_output), None
+
+
+def _ppo_then_fixed_action_policy(
+    base_policy,
+    *,
+    switch_step: int,
+    fixed_action: int,
+):
+    """Run PPO first, then switch to a fixed action to create a mild trade-off."""
+    step_counter = {"steps": 0}
+
+    def policy_fn(obs: np.ndarray) -> tuple[int, float]:
+        step_counter["steps"] += 1
+        if step_counter["steps"] >= switch_step:
+            return int(fixed_action), 1.0
+        action, probability = _parse_policy_output(base_policy(obs))
+        return action, probability if probability is not None else 1.0
+
+    return policy_fn
+
+
+def _noisy_ppo_policy(
+    base_policy,
+    env: SubRepEnv,
+    *,
+    noise_probability: float,
+    seed: int,
+):
+    """Mostly follow PPO, but occasionally choose a non-PPO action."""
+    rng = np.random.default_rng(seed)
+    action_count = int(env.env.action_space.n)
+
+    def policy_fn(obs: np.ndarray) -> tuple[int, float]:
+        base_action, base_probability = _parse_policy_output(base_policy(obs))
+        if rng.random() < noise_probability:
+            alternatives = [action for action in range(action_count) if action != base_action]
+            return int(rng.choice(alternatives)), noise_probability / float(len(alternatives))
+        return base_action, base_probability if base_probability is not None else 1.0 - noise_probability
+
+    return policy_fn
+
+
+def _build_demo_candidate_policies(env: SubRepEnv) -> tuple[CandidatePolicy, ...]:
+    """Build the demo candidate pool with safe, unsafe, and near-boundary policies."""
+    default_policies = build_default_candidate_policies(env)
+    ppo_deterministic = default_policies[0]
+    ppo_stochastic = default_policies[1]
+    fixed_and_random = default_policies[2:]
+
+    return (
+        ppo_deterministic,
+        CandidatePolicy(
+            "ppo_then_side_tradeoff",
+            _ppo_then_fixed_action_policy(
+                ppo_deterministic.policy_fn,
+                switch_step=45,
+                fixed_action=3,
+            ),
+        ),
+        ppo_stochastic,
+        CandidatePolicy(
+            "ppo_noisy_actions",
+            _noisy_ppo_policy(
+                ppo_deterministic.policy_fn,
+                env,
+                noise_probability=0.30,
+                seed=SEED + 301,
+            ),
+        ),
+        *fixed_and_random,
+    )
 
 
 def _make_certificate(
@@ -107,7 +187,7 @@ def run_pipeline() -> dict:
 
     calculator = ImprovementCalculator(baseline_stats)
     gate = CDSGate()
-    pds_gate = PDSGate(epsilon=0.1)  # Allow a small mathematical trade-off budget
+    pds_gate = PDSGate(epsilon=PDS_EPSILON)  # Bounded trade-off budget on rollout-return scale
 
     # ── 1.5 Load Skill Generator (Pre-Filter) ─────────────────────────────────
     generator_available = False
@@ -131,16 +211,16 @@ def run_pipeline() -> dict:
     selector = SkillSelector(library=library, seed=SEED)
 
     # ── 3. Candidate Loop ─────────────────────────────────────────────────────
-    candidate_policies = build_default_candidate_policies(env)
+    candidate_policies = _build_demo_candidate_policies(env)
     candidate_names = ", ".join(candidate.skill_id for candidate in candidate_policies)
     print(f"[Init] Candidate policy pool: {candidate_names}")
 
     print(f"\n[Loop] Running {NUM_EPISODES} candidate attempts...\n")
     print(
-        f"{'Ep':>4}  {'Candidate':>17}  {'Search':>6}  {'Payoff':>9}  {'Δr':>8}  {'min(Δn)':>8}  "
+        f"{'Ep':>4}  {'Candidate':>24}  {'Search':>6}  {'Payoff':>9}  {'Δr':>8}  {'min(Δn)':>8}  "
         f"{'CDS':>3}  {'PDS':>3}  {'Result':>10}  {'Lib':>4}"
     )
-    print("-" * 91)
+    print("-" * 98)
 
     admitted = 0
     rejected = 0
@@ -167,14 +247,14 @@ def run_pipeline() -> dict:
         use_generator_prefilter = (
             generator_available
             and model is not None
-            and candidate_name.startswith("ppo")
+            and candidate_name in {"ppo_deterministic", "ppo_stochastic"}
         )
 
-        while not found_promising_state and searches < max_search:
-            searches += 1
-            obs, _ = env.reset()
-            
-            if use_generator_prefilter:
+        if use_generator_prefilter:
+            while not found_promising_state and searches < max_search:
+                searches += 1
+                obs, _ = env.reset()
+
                 # Predict outcome using the SkillGenerator
                 with torch.no_grad():
                     pred_payoff, pred_motives = model(torch.tensor(obs, dtype=torch.float32))
@@ -184,10 +264,12 @@ def run_pipeline() -> dict:
                     # Does the model THINK it will pass either gate?
                     if gate.admit(pred_dr, pred_dn) or pds_gate.admit(pred_dr, pred_dn):
                         found_promising_state = True
-            else:
-                # Non-PPO candidates are evaluated without generator pre-filtering
-                # so the report reflects a broader candidate distribution.
-                found_promising_state = True
+        else:
+            searches = 1
+            # Non-prefiltered candidates use deterministic context seeds so the
+            # admission report can be reproduced exactly.
+            obs, _ = env.reset(seed=SEED + 1000 + ep)
+            found_promising_state = True
 
         # EXECUTE — run one episode
         executor = SkillExecutor(
@@ -211,10 +293,10 @@ def run_pipeline() -> dict:
         # Determine human-readable failure reason for rejected skills
         failure_reason: str | None = None
         if not admitted_flag:
+            worst_case_score = delta_r + float(np.min(delta_n))
             failure_reason = (
-                f"delta_r + min(delta_n) + epsilon < 0 "
-                f"(got {delta_r:.4f} + {float(np.min(delta_n)):.4f} = "
-                f"{delta_r + float(np.min(delta_n)):.4f})"
+                f"delta_r + min(delta_n) below CDS/PDS thresholds "
+                f"(score={worst_case_score:.4f}, PDS threshold={-PDS_EPSILON:.4f})"
             )
 
         if admitted_flag:
@@ -226,7 +308,7 @@ def run_pipeline() -> dict:
                 margin=margin,
                 episode_length=int(episode_length),
                 gate_type=active_gate,
-                epsilon=0.1 if active_gate == "PDS" else 0.0,
+                epsilon=PDS_EPSILON if active_gate == "PDS" else 0.0,
             )
             store_added = cert_store.add(cert)
             lib_added = False
@@ -269,13 +351,14 @@ def run_pipeline() -> dict:
             "delta_r": float(delta_r),
             "delta_n": (float(delta_n[0]), float(delta_n[1])),
             "margin": float(margin),
+            "epsilon": PDS_EPSILON if active_gate == "PDS" else 0.0,
             "failure_reason": failure_reason,
         }
         episode_records.append(episode_record_dict)
         report.add_from_dict(episode_record_dict)
 
         print(
-            f"{ep:>4}  {candidate_name:>17}  {searches:>6d}  {payoff:>9.3f}  "
+            f"{ep:>4}  {candidate_name:>24}  {searches:>6d}  {payoff:>9.3f}  "
             f"{delta_r:>8.3f}  {float(np.min(delta_n)):>8.3f}"
             f"  {'Y' if admitted_cds else 'N':>3}  {'Y' if admitted_pds else 'N':>3}"
             f"  {result_str:>12}  {library.count():>4}"

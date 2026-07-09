@@ -18,7 +18,11 @@ from utils.admission_report import AdmissionRecord, AdmissionReport
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _admitted_record(skill_id: str = "skill_001", gate_type: str = "CDS") -> AdmissionRecord:
+def _admitted_record(
+    skill_id: str = "skill_001",
+    gate_type: str = "CDS",
+    epsilon: float = 0.0,
+) -> AdmissionRecord:
     return AdmissionRecord(
         skill_id=skill_id,
         admitted=True,
@@ -27,6 +31,7 @@ def _admitted_record(skill_id: str = "skill_001", gate_type: str = "CDS") -> Adm
         delta_n=(2.0, 3.0),
         margin=7.0,
         failure_reason=None,
+        epsilon=epsilon,
     )
 
 
@@ -107,6 +112,14 @@ class TestAdmissionReportCompile:
         report.add_record(_admitted_record("second_admitted"))
         stats = report.compile()
         assert stats["example_admitted_skill"]["skill_id"] == "first_admitted"
+
+    def test_example_pds_skill_is_first_pds_admission(self):
+        report = AdmissionReport()
+        report.add_record(_admitted_record("cds_skill", gate_type="CDS"))
+        report.add_record(_admitted_record("pds_skill", gate_type="PDS", epsilon=5.0))
+        stats = report.compile()
+        assert stats["example_pds_skill"]["skill_id"] == "pds_skill"
+        assert stats["example_pds_skill"]["epsilon"] == 5.0
 
     def test_example_rejected_skill_is_first_rejected(self):
         report = AdmissionReport()
@@ -257,6 +270,29 @@ class TestAdmissionReportSaveMarkdown:
             report.save_markdown(path)
             content = path.read_text(encoding="utf-8")
         assert "ppo_deterministic" in content
+
+    def test_markdown_mentions_pds_tradeoff_example(self):
+        report = AdmissionReport()
+        report.add_record(
+            AdmissionRecord(
+                skill_id="skill_002_tradeoff",
+                admitted=True,
+                gate_type="PDS",
+                delta_r=6.9,
+                delta_n=(-10.3, 17.2),
+                margin=1.6,
+                failure_reason=None,
+                candidate_policy="ppo_then_side_tradeoff",
+                epsilon=5.0,
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "report.md"
+            report.save_markdown(path)
+            content = path.read_text(encoding="utf-8")
+        assert "Example PDS Trade-Off Skill" in content
+        assert "ppo_then_side_tradeoff" in content
+        assert "CDS failed" in content
 
     def test_markdown_no_skills_admitted_message(self):
         report = AdmissionReport()
