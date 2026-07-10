@@ -14,9 +14,6 @@ from generator.skill_generator import SkillGenerator
 from generator.losses import GeneratorLoss
 
 # Hyperparameters
-DATA_DIR = "data/raw"
-MODEL_DIR = "models"
-PLOT_DIR = "plots"
 BATCH_SIZE = 32
 NUM_EPOCHS = 50
 LEARNING_RATE = 1e-3
@@ -83,15 +80,15 @@ def train_one_epoch(
     )
 
 
-def train() -> None:
+def train(data_dir: str, output: str) -> None:
     """Main training loop."""
     # Seed for reproducibility
     torch.manual_seed(SEED)
     np.random.seed(SEED)
 
-    print(f"Loading dataset from {DATA_DIR}/ ...")
+    print(f"Loading dataset from {data_dir}/ ...")
     try:
-        dataset = SkillDataset(DATA_DIR)
+        dataset = SkillDataset(data_dir)
     except FileNotFoundError as e:
         print(f"Error: {e}")
         return
@@ -116,14 +113,16 @@ def train() -> None:
                   f"(payoff: {p_loss:.6f}, motives: {m_loss:.6f})")
 
     # Save trained model weights
-    os.makedirs(MODEL_DIR, exist_ok=True)
-    model_path = os.path.join(MODEL_DIR, "generator.pt")
+    out_path = Path(output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path = str(out_path)
     model.save(model_path)
     print(f"\nModel saved -> {model_path}")
 
     # Generate and save loss plot
-    os.makedirs(PLOT_DIR, exist_ok=True)
-    plot_path = os.path.join(PLOT_DIR, "generator_training.png")
+    plot_dir = Path("plots")
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    plot_path = str(plot_dir / "generator_training.png")
     
     plt.figure(figsize=(8, 5))
     plt.plot(range(1, NUM_EPOCHS + 1), history_total, label="Total Loss (MSE)", color="blue")
@@ -138,5 +137,16 @@ def train() -> None:
     print(f"Plot saved  -> {plot_path}")
     print("Training complete.")
 
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser(description="Train SkillGenerator.")
+    parser.add_argument("--data-dir", type=str, default="data/raw", help="Path to input .npz data dir")
+    parser.add_argument("--output", type=str, default="models/generator.pt", help="Path to output model .pt file")
+    args = parser.parse_args()
+    
+    train(data_dir=args.data_dir, output=args.output)
+
+
 if __name__ == "__main__":
-    train()
+    main()

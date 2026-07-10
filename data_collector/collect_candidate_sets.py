@@ -76,6 +76,65 @@ def build_default_candidate_policies(
     )
 
 
+class PpoThenSideTradeoff:
+    def __init__(self, pilot: RLPilot, switch_step: int, side_action: int) -> None:
+        self.pilot = pilot
+        self.switch_step = switch_step
+        self.side_action = side_action
+        self._step_counter = 0
+
+    def reset(self, **kwargs) -> None:
+        self._step_counter = 0
+
+    def __call__(self, obs: np.ndarray) -> tuple[int, float]:
+        self._step_counter += 1
+        if self._step_counter < self.switch_step:
+            # We must handle pilot returning int or tuple.
+            res = self.pilot.predict(obs, deterministic=True, return_probability=True)
+            return res if isinstance(res, tuple) else (res, 1.0)
+        return int(self.side_action), 1.0
+
+
+class PpoNoisyActions:
+    def __init__(self, pilot: RLPilot, noise_std: float, action_space: object) -> None:
+        self.pilot = pilot
+        self.noise_std = noise_std
+        self.max_action = int(action_space.n) - 1
+        self.rng = np.random.default_rng(42)
+
+    def reset(self, seed: int | None = None, **kwargs) -> None:
+        if seed is not None:
+            self.rng = np.random.default_rng(seed)
+
+    def __call__(self, obs: np.ndarray) -> tuple[int, float]:
+        res = self.pilot.predict(obs, deterministic=True, return_probability=True)
+        action = res[0] if isinstance(res, tuple) else res
+        
+        noise = self.rng.normal(0, self.noise_std)
+        noisy_action = int(round(action + noise))
+        noisy_action = max(0, min(self.max_action, noisy_action))
+        
+        return noisy_action, 1.0
+
+
+def build_extended_candidate_policies(
+    env: SubRepEnv,
+    *,
+    pilot_checkpoint: str = "models/pilot_ppo.pt",
+    map_location: str = "cpu",
+) -> tuple[CandidatePolicy, ...]:
+    """Build the extended 9-policy candidate set for generator training."""
+    default_policies = build_default_candidate_policies(
+        env, pilot_checkpoint=pilot_checkpoint, map_location=map_location
+    )
+    pilot = RLPilot.load(pilot_checkpoint, map_location=map_location)
+    
+    return tuple(default_policies) + (
+        CandidatePolicy("ppo_then_side_tradeoff", PpoThenSideTradeoff(pilot, switch_step=30, side_action=1)),
+        CandidatePolicy("ppo_noisy_actions", PpoNoisyActions(pilot, noise_std=0.5, action_space=env.env.action_space)),
+    )
+
+
 class CandidateSetCollector:
     """Collect candidate outcomes from identical reset contexts."""
 
