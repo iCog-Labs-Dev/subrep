@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from data_collector.collect_probability_aware_runtime_logs import ProbabilityAwareRuntimeLogCollector
 from generator.train_mdn_probability_aware_logs import probability_aware_logs_to_training_records
 from utils.mdn_contracts import CandidateSkillRecord
 from utils.probability_aware_logs import (
@@ -126,3 +127,20 @@ def test_probability_aware_logs_convert_to_ips_auxiliary_records():
     assert selected_records[0].behavior_probability == pytest.approx(0.35)
     assert selected_records[0].selected_candidate_index == 1
     assert selected_records[0].candidate_delta_r == pytest.approx((4.0, 2.0))
+
+
+def test_runtime_log_collector_resume_state_uses_existing_files(tmp_path):
+    for index, context_seed in ((1, 43), (2, 44)):
+        record = _log_record()
+        record["metadata"] = {"context_seed": context_seed}
+        save_probability_aware_log(tmp_path / f"train_{index:05d}.npz", **record)
+
+    collector = ProbabilityAwareRuntimeLogCollector.__new__(ProbabilityAwareRuntimeLogCollector)
+    collector.save_dir = tmp_path
+    collector.seed = 42
+
+    existing_count, next_save_index, next_context_index = collector._resume_state(prefix="train")
+
+    assert existing_count == 2
+    assert next_save_index == 3
+    assert next_context_index == 3

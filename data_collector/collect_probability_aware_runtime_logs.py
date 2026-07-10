@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
@@ -140,37 +141,97 @@ class ProbabilityAwareRuntimeLogCollector:
 
     def save_decision(self, record: dict[str, Any], context_index: int, *, prefix: str = "runtime_log") -> str:
         path = self.save_dir / f"{prefix}_{context_index:05d}.npz"
+        if path.exists():
+            raise FileExistsError(
+                f"Refusing to overwrite existing runtime log {path}. "
+                "Use --resume to continue an interrupted collection."
+            )
         return save_probability_aware_log(path, **record)
 
-    def collect(self, decisions: int, *, prefix: str = "runtime_log", max_attempts: int | None = None) -> list[str]:
-        """Collect ``decisions`` saved logs, skipping contexts with no certified candidate."""
+    def collect(
+        self,
+        decisions: int,
+        *,
+        prefix: str = "runtime_log",
+        max_attempts: int | None = None,
+        resume: bool = False,
+    ) -> list[str]:
         if decisions <= 0:
             raise ValueError("decisions must be positive")
-        max_attempts = int(max_attempts or decisions * 5)
-        if max_attempts < decisions:
-            raise ValueError("max_attempts must be at least decisions")
+
+        existing_count = 0
+        next_save_index = 1
+        next_context_index = 1
+        if resume:
+            existing_count, next_save_index, next_context_index = self._resume_state(prefix=prefix)
+            if existing_count >= int(decisions):
+                print(
+                    f"[Done] Found {existing_count} existing logs for prefix {prefix!r}; "
+                    f"target is {decisions}."
+                )
+                return []
+
+        remaining_decisions = int(decisions) - existing_count
+        max_attempts = int(max_attempts or remaining_decisions * 5)
+        if max_attempts < remaining_decisions:
+            raise ValueError("max_attempts must be at least the remaining decisions")
 
         saved_paths: list[str] = []
         attempts = 0
-        while len(saved_paths) < int(decisions) and attempts < max_attempts:
+        while len(saved_paths) < remaining_decisions and attempts < max_attempts:
             attempts += 1
-            record = self.collect_decision(attempts)
+            context_index = next_context_index + attempts - 1
+            record = self.collect_decision(context_index)
             if record is None:
-                print(f"[{attempts:05d}] skipped context with no certified candidates")
+                print(f"[{context_index:05d}] skipped context with no certified candidates")
                 continue
-            path = self.save_decision(record, len(saved_paths) + 1, prefix=prefix)
+            save_index = next_save_index + len(saved_paths)
+            path = self.save_decision(record, save_index, prefix=prefix)
             saved_paths.append(path)
+            total_saved = existing_count + len(saved_paths)
             print(
-                f"[{len(saved_paths):05d}/{decisions:05d}] saved logged decision "
-                f"from context attempt {attempts:05d}"
+                f"[{total_saved:05d}/{decisions:05d}] saved logged decision "
+                f"from context attempt {context_index:05d}"
             )
 
-        if len(saved_paths) < int(decisions):
+        if len(saved_paths) < remaining_decisions:
             raise RuntimeError(
-                f"Collected {len(saved_paths)} decisions after {attempts} attempts; "
+                f"Collected {len(saved_paths)} additional decisions after {attempts} attempts; "
                 f"increase max_attempts or inspect candidate certification rate"
             )
         return saved_paths
+
+    def _resume_state(self, *, prefix: str) -> tuple[int, int, int]:
+        files = sorted(self.save_dir.glob(f"{prefix}_*.npz"))
+        if not files:
+            return 0, 1, 1
+
+        max_file_index = 0
+        max_context_index = 0
+        for path in files:
+            try:
+                max_file_index = max(max_file_index, int(path.stem.rsplit("_", 1)[-1]))
+            except ValueError:
+                continue
+            try:
+                data = np.load(path, allow_pickle=True)
+                metadata_json = data.get("metadata_json")
+                if metadata_json is None:
+                    continue
+                metadata = json.loads(str(np.asarray(metadata_json).reshape(()).item()))
+                context_seed = metadata.get("context_seed")
+                if context_seed is not None:
+                    max_context_index = max(max_context_index, int(context_seed) - self.seed)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+
+        next_save_index = max_file_index + 1
+        next_context_index = max(max_context_index, max_file_index) + 1
+        print(
+            f"[Resume] Found {len(files)} existing logs; next file index "
+            f"{next_save_index:05d}, next context attempt {next_context_index:05d}."
+        )
+        return len(files), next_save_index, next_context_index
 
     def _evaluate_candidates(self, *, context: np.ndarray, context_seed: int) -> list[dict[str, Any]]:
         outcomes: list[dict[str, Any]] = []
@@ -242,6 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--prefix", type=str, default="runtime_log")
     parser.add_argument("--max-attempts", type=int, default=None)
+    parser.add_argument("--resume", action="store_true", help="Continue an interrupted collection without overwriting files")
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--baseline-episodes", type=int, default=20)
@@ -273,7 +335,7 @@ def main() -> None:
             mdn_checkpoint=args.behavior_mdn_checkpoint,
         ),
     )
-    collector.collect(args.decisions, prefix=args.prefix, max_attempts=args.max_attempts)
+    collector.collect(args.decisions, prefix=args.prefix, max_attempts=args.max_attempts, resume=args.resume)
     print(f"[Done] Probability-aware runtime logs saved to '{args.save_dir}/'")
 
 
