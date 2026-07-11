@@ -8,10 +8,23 @@
 Learn to predict skill outcomes from state inputs to enable certification without full execution every time.
 
 ## Quickstart
+
+**Note:** The Generator is trained on a "mixed candidate set" (PPO variants, fixed engines, and random policies) to match the actual candidates encountered by the SubRep admission pipeline. The generator remains purely a **prediction pre-filter**. Final skill admission always requires a measured real-world execution.
+
 To reproduce or update the trained model (`models/generator.pt`):
 
-1. **Collect Data:** `python -m data_collector.collect` (outputs to `data/raw/`)
-2. **Train:** `python -m generator.train_generator` (outputs to `models/`)
+1. **Collect Mixed Data:** 
+   ```bash
+   python -m data_collector.collect_mixed_generator_data --episodes 1000 --save-dir data/raw_mixed --seed 42
+   ```
+2. **Train Generator:** 
+   ```bash
+   python -m generator.train_generator --data-dir data/raw_mixed --output models/generator.pt
+   ```
+3. **Evaluate Predictions:** 
+   ```bash
+   python -m generator.evaluate_generator_mse --model-path models/generator.pt --data-dirs data/raw data/raw_mixed
+   ```
 
 ## MDN Candidate-Set Training and Evaluation
 
