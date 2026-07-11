@@ -17,3 +17,4 @@ data/library.json
 # Generated pipeline outputs (run demo/run_full_pipeline.py to regenerate)
 data/certificates.metta
 demo/artifacts/*
+data/raw_mixed/

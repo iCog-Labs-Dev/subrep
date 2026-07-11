@@ -39,18 +39,20 @@ def temp_workspace(tmp_path, monkeypatch):
     
     create_synthetic_dataset(str(data_dir), num_episodes=50)
     
-    monkeypatch.setattr("generator.train_generator.DATA_DIR", str(data_dir))
-    monkeypatch.setattr("generator.train_generator.MODEL_DIR", str(model_dir))
-    monkeypatch.setattr("generator.train_generator.PLOT_DIR", str(plot_dir))
     monkeypatch.setattr("generator.train_generator.NUM_EPOCHS", 10)
+    monkeypatch.chdir(tmp_path)
     
     return tmp_path
 
 def test_training_runs_without_error(temp_workspace):
     """Verify the full train() function runs and completes."""
     from generator.train_generator import train
+    
+    data_dir = str(temp_workspace / "data" / "raw")
+    output = str(temp_workspace / "models" / "generator.pt")
+    
     try:
-        train()
+        train(data_dir=data_dir, output=output)
     except Exception as e:
         pytest.fail(f"train() raised {type(e).__name__} unexpectedly: {str(e)}")
 
@@ -129,7 +131,11 @@ def test_model_saves_and_loads(temp_workspace):
 def test_loss_plot_is_generated(temp_workspace):
     """Verify the plot gets saved correctly."""
     from generator.train_generator import train
-    train()
+    
+    data_dir = str(temp_workspace / "data" / "raw")
+    output = str(temp_workspace / "models" / "generator.pt")
+    
+    train(data_dir=data_dir, output=output)
     
     plot_file = os.path.join(temp_workspace, "plots", "generator_training.png")
     assert os.path.exists(plot_file), "Loss plot was not generated."

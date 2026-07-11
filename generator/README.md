@@ -17,15 +17,26 @@ The skill generator is a supervised rollout-outcome model.
 |---|---|
 | `skill_generator.py` | 2-head MLP: scalar payoff + motive vector |
 | `losses.py` | Weighted MSE loss for payoff and motives |
-| `train_generator.py` | Trains from `data/raw/*.npz` and writes `models/generator.pt` |
+| `train_generator.py` | Trains from `--data-dir` (default `data/raw`) and writes `models/generator.pt` |
 
-Train or refresh the generator checkpoint:
+### Quickstart (mixed candidate training)
 
+**Note:** The Generator is trained on a "mixed candidate set" (PPO variants, fixed engines, and random policies) to match the actual candidates encountered by the SubRep admission pipeline. The generator remains purely a **prediction pre-filter**. Final skill admission always requires a measured real-world execution.
+
+To reproduce or update the trained model (`models/generator.pt`):
+
+1. **Collect Mixed Data:**
 ```bash
-python -m data_collector.collect
-python -m generator.train_generator
+   python -m data_collector.collect_mixed_generator_data --episodes 1000 --save-dir data/raw_mixed --seed 42
 ```
-
+2. **Train Generator:**
+```bash
+   python -m generator.train_generator --data-dir data/raw_mixed --output models/generator.pt
+```
+3. **Evaluate Predictions:**
+```bash
+   python -m generator.evaluate_generator_mse --model-path models/generator.pt --data-dirs data/raw data/raw_mixed
+```
 The generator predicts collected rollout totals. It is not a bootstrapped TD
 learner in the current implementation.
 
