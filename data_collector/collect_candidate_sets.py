@@ -16,7 +16,7 @@ import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Tuple, Union
 
 import numpy as np
 import torch
@@ -26,7 +26,7 @@ from env.skill_executor import SkillExecutor
 from pilot.rl_pilot import RLPilot
 
 
-PolicyFn = Callable[[np.ndarray], int | tuple[int, float]]
+PolicyFn = Callable[[np.ndarray], Union[int, Tuple[int, float]]]
 
 
 @dataclass(frozen=True)

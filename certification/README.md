@@ -1,28 +1,34 @@
+# Certification
 
-# Certification Logic 
+`certification/` contains SubRep's mathematical admission gates and certificate
+storage layer.
 
-**Purpose:** Implements mathematical admission gates (CDS/PDS) to certify skills before storage.  
+## Gates
 
-
-## Goal
-Ensure only skills that improve backed-up value (without unacceptable harm) are admitted to the library.
-
-
-## Key Files
 | File | Purpose |
-|------|---------|
-| `cds_test.py` | Implements Cone-Dominant Subtask math (universal benefit) |
-| `pds_test.py` | Implements Pareto-Dominant Subtask math (acceptable trade-off) |
-| `gate.py` | Unified admission controller with logging |
+|---|---|
+| `cds_test.py` | Cone-Dominant Subtask gate: `delta_r + min(delta_n) >= 0` |
+| `pds_test.py` | Pareto-Dominant Subtask gate: `delta_r + min(delta_n) >= -epsilon` |
+| `cvar_test.py` | Optional distribution-aware CVaR gate using MDN alpha |
+| `gate.py` | Shared input validation base class |
 
+The gates support full-simplex certification and optional `WeightSet`-restricted
+certification used by contextual `W_x` flows.
 
-## Validation
-Run `python tests/test_certification.py` to verify:
-- Universally beneficial skills pass CDS
-- Harmful skills fail CDS
-- Trade-off skills pass PDS only within epsilon bounds
-- Gate returns clear admission reasons for debugging
+## Certificates
 
+| File | Purpose |
+|---|---|
+| `certificate_schema.py` | Validated immutable certificate dataclass |
+| `metta_bridge.py` | Certificate <-> Hyperon MeTTa atom conversion |
+| `metta_storage.py` | Hyperon space-backed certificate store |
 
+Certificates record gate metrics, baseline metadata, environment metadata, and
+optional MDN/W_x audit evidence for contextual certificates.
 
+## Tests
 
+```bash
+python -m pytest tests/test_certification_gates.py -v
+python -m pytest tests/test_certificate_storage.py tests/test_certificate_mdn_audit_storage.py -v
+```

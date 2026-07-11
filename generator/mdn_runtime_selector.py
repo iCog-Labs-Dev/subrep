@@ -12,6 +12,7 @@ from generator.mdn import MotiveDecompositionNetwork
 from library.skill_library import SkillLibrary
 from library.skill_metadata import SkillEntry
 from library.skill_selector import select_best_skill_entry
+from utils.mdn_checkpoint_loader import load_mdn_checkpoint
 from utils.mdn_contracts import CandidateSkillRecord, MDNDecisionRecord
 from utils.mdn_logging import build_decision_record
 from utils.mdn_reward import compute_mdn_utility
@@ -192,20 +193,24 @@ class MDNRuntimeSelector:
     def from_checkpoint(
         cls,
         checkpoint_path: str,
-        input_dim: int,
-        num_objectives: int,
-        num_skills: int = 128,
+        input_dim: int | None = None,
+        num_objectives: int | None = None,
+        num_skills: int | None = None,
         device: Optional[str] = None,
     ) -> "MDNRuntimeSelector":
-        """Load a trained MDN from a checkpoint file."""
-        model = MotiveDecompositionNetwork(
+        """Load a trained MDN from a checkpoint file.
+
+        The checkpoint architecture is inferred from saved tensor shapes so
+        candidate-set checkpoints with large skill embedding tables load
+        correctly. Optional dimensions are treated as caller-side assertions.
+        """
+        model = load_mdn_checkpoint(checkpoint_path, map_location="cpu")
+        _validate_loaded_model_shape(
+            model,
             input_dim=input_dim,
             num_objectives=num_objectives,
             num_skills=num_skills,
         )
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-        state = checkpoint.get("model_state_dict", checkpoint)
-        model.load_state_dict(state)
         return cls(model=model, device=device)
 
 
@@ -233,3 +238,25 @@ def _candidate_record_from_entry(entry: SkillEntry) -> CandidateSkillRecord:
         epsilon=entry.epsilon,
         baseline_id=entry.certificate.baseline_id,
     )
+
+
+def _validate_loaded_model_shape(
+    model: MotiveDecompositionNetwork,
+    *,
+    input_dim: int | None,
+    num_objectives: int | None,
+    num_skills: int | None,
+) -> None:
+    expected = {
+        "input_dim": input_dim,
+        "num_objectives": num_objectives,
+        "num_skills": num_skills,
+    }
+    for field, value in expected.items():
+        if value is None:
+            continue
+        actual = getattr(model, field)
+        if int(actual) != int(value):
+            raise ValueError(
+                f"Loaded MDN checkpoint has {field}={actual}, expected {value}"
+            )

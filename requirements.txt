@@ -8,3 +8,4 @@ hyperon>=0.2.0
 swig
 gymnasium[box2d]
 matplotlib>=3.7.0
+streamlit

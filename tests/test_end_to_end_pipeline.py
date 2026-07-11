@@ -9,13 +9,59 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from demo.run_full_pipeline import run_pipeline
+from demo.run_full_pipeline import (
+    PDS_EPSILON,
+    _noisy_ppo_policy,
+    _ppo_then_fixed_action_policy,
+    run_pipeline,
+)
+
+
+class _FakeActionSpace:
+    n = 4
+
+
+class _FakeWrappedEnv:
+    action_space = _FakeActionSpace()
+
+
+class _FakeEnv:
+    env = _FakeWrappedEnv()
 
 
 class TestEndToEndPipeline:
     """Validate the complete pipeline execution with MDN and report integration."""
+
+    def test_ppo_then_fixed_policy_resets_between_episodes(self):
+        """Stateful demo policy should start each episode from step zero."""
+        policy = _ppo_then_fixed_action_policy(
+            lambda obs: (2, 0.8),
+            switch_step=3,
+            fixed_action=1,
+        )
+        obs = np.zeros(8, dtype=np.float32)
+
+        assert policy(obs) == (2, 0.8)
+        assert policy(obs) == (2, 0.8)
+        assert policy(obs) == (1, 1.0)
+
+        policy.reset()
+
+        assert policy(obs) == (2, 0.8)
+
+    def test_noisy_policy_uses_unit_probability_when_base_probability_missing(self):
+        """Fallback probability should be 1.0 when the base policy returns only action."""
+        policy = _noisy_ppo_policy(
+            lambda obs: 2,
+            _FakeEnv(),
+            noise_probability=0.0,
+            seed=42,
+        )
+
+        assert policy(np.zeros(8, dtype=np.float32)) == (2, 1.0)
 
     def test_pipeline_returns_valid_stats(self):
         """Assert run_pipeline() returns a dict with all required keys."""
@@ -84,6 +130,36 @@ class TestEndToEndPipeline:
             f"Library contains {stats['library_size']} skills, but only "
             f"{stats['admitted']} were admitted"
         )
+
+    def test_mixed_candidate_pool_produces_natural_rejections(self):
+        """Assert the demo report covers both admitted and rejected candidates."""
+        stats = run_pipeline()
+
+        candidate_policies = {
+            record.get("candidate_policy") for record in stats["episode_records"]
+        }
+
+        assert len(candidate_policies) > 1
+        assert stats["admitted"] > 0
+        assert stats["rejected"] > 0
+        assert stats["library_size"] == stats["admitted"]
+
+    def test_mixed_candidate_pool_produces_pds_tradeoff_admission(self):
+        """Assert one perturbed candidate fails CDS but passes PDS."""
+        stats = run_pipeline()
+
+        pds_records = [
+            record for record in stats["episode_records"]
+            if record.get("gate_type") == "PDS"
+        ]
+
+        assert stats["pds_pass_count"] == len(pds_records)
+        assert pds_records
+
+        record = pds_records[0]
+        worst_case_score = record["delta_r"] + min(record["delta_n"])
+        assert worst_case_score < 0.0
+        assert worst_case_score + PDS_EPSILON >= 0.0
 
     def test_admission_rate_calculation(self):
         """Assert admission rate is calculated correctly."""
