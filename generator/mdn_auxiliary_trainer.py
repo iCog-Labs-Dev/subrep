@@ -83,12 +83,19 @@ class MDNAuxiliaryTrainerConfig:
     use_doubly_robust: bool = False
     q_loss: str = "mse"
     huber_delta: float = 1.0
+    verbose: bool = True
 
 
 class MDNAuxiliaryTrainer:
     """Train the proposal-conditioned auxiliary MDN model with BCE + configurable Q loss."""
 
-    def __init__(self, model: MotiveDecompositionNetwork, config: Optional[MDNAuxiliaryTrainerConfig] = None, device: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        model: MotiveDecompositionNetwork,
+        config: Optional[MDNAuxiliaryTrainerConfig] = None,
+        device: Optional[str] = None,
+        dr_baseline_model: Optional[MotiveDecompositionNetwork] = None,
+    ) -> None:
         self.model = model
         self.config = config or MDNAuxiliaryTrainerConfig()
         if self.config.use_ips and self.config.use_doubly_robust:
@@ -101,6 +108,12 @@ class MDNAuxiliaryTrainer:
         self.config.q_loss = q_loss
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model.to(self.device)
+        self.dr_baseline_model = dr_baseline_model
+        if self.dr_baseline_model is not None:
+            self.dr_baseline_model.to(self.device)
+            self.dr_baseline_model.eval()
+            for parameter in self.dr_baseline_model.parameters():
+                parameter.requires_grad_(False)
         self.gate_loss_fn = BCEWithLogitsLoss()
         self.q_loss_fn = MSELoss() if q_loss == "mse" else HuberLoss(delta=float(self.config.huber_delta))
         self.optimizer = torch.optim.AdamW(
@@ -219,6 +232,11 @@ class MDNAuxiliaryTrainer:
         total_gate_loss = 0.0
         total_q_loss = 0.0
         total_correct = 0.0
+        total_q_examples = 0
+        total_raw_weight = 0.0
+        total_ips_weight = 0.0
+        total_clipped = 0.0
+        total_dr_correction = 0.0
 
         for record in records:
             if record.behavior_probability is None:
@@ -257,10 +275,15 @@ class MDNAuxiliaryTrainer:
                 )
                 raw_weight = target_prob / max(float(record.behavior_probability), 1e-8)
                 ips_weight = min(raw_weight, float(self.config.ips_clip))
+                total_q_examples += 1
+                total_raw_weight += float(raw_weight)
+                total_ips_weight += float(ips_weight)
+                total_clipped += float(raw_weight > float(self.config.ips_clip))
 
                 if self.config.use_doubly_robust:
-                    baseline = q_hat.detach()
+                    baseline = self._dr_baseline_prediction(ctx, sid, q_hat)
                     dr_target = baseline + ips_weight * (q_tgt - baseline)
+                    total_dr_correction += float(torch.mean(torch.abs(dr_target - baseline)).item())
                     batch_loss, gate_loss, q_loss = self._compute_losses(
                         gate_logits,
                         q_hat,
@@ -292,12 +315,41 @@ class MDNAuxiliaryTrainer:
             total_q_loss += float(q_loss.item())
 
         n = len(records)
-        return {
+        metrics = {
             "loss": total_loss / n,
             "gate_loss": total_gate_loss / n,
             "q_loss": total_q_loss / n,
             "gate_accuracy": total_correct / n,
         }
+        if total_q_examples > 0:
+            metrics.update(
+                {
+                    "raw_importance_weight_mean": total_raw_weight / total_q_examples,
+                    "clipped_importance_weight_mean": total_ips_weight / total_q_examples,
+                    "importance_weight_clip_fraction": total_clipped / total_q_examples,
+                }
+            )
+            if self.config.use_doubly_robust:
+                metrics["dr_correction_mean_abs"] = total_dr_correction / total_q_examples
+        return metrics
+
+    def _dr_baseline_prediction(
+        self,
+        context: torch.Tensor,
+        skill_id: torch.Tensor,
+        fallback_q_hat: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return the frozen DR baseline Q estimate.
+
+        If no baseline model was provided, fall back to the previous behavior for
+        programmatic compatibility. The CLI requires a baseline checkpoint for
+        full DR runs.
+        """
+        if self.dr_baseline_model is None:
+            return fallback_q_hat.detach()
+        with torch.no_grad():
+            _, baseline = self.dr_baseline_model.forward_auxiliary(context, skill_id)
+        return baseline.detach()
 
     def online_step(self, record: AuxiliaryTrainingRecord) -> dict[str, float]:
         """Run one online gradient step on a single auxiliary training record.
@@ -362,7 +414,8 @@ class MDNAuxiliaryTrainer:
 
             self.scheduler.step(val_metrics["loss"])
 
-            if val_metrics["loss"] < best_val_loss:
+            improved = val_metrics["loss"] < best_val_loss
+            if improved:
                 best_val_loss = val_metrics["loss"]
                 epochs_without_improvement = 0
                 best_metrics = {"epoch": epoch, "train": train_metrics, "val": val_metrics}
@@ -378,6 +431,15 @@ class MDNAuxiliaryTrainer:
                 )
             else:
                 epochs_without_improvement += 1
+
+            self._log_epoch(
+                estimator="unweighted",
+                epoch=epoch,
+                train_metrics=train_metrics,
+                val_metrics=val_metrics,
+                improved=improved,
+                epochs_without_improvement=epochs_without_improvement,
+            )
 
             if epochs_without_improvement >= self.config.patience:
                 break
@@ -428,7 +490,8 @@ class MDNAuxiliaryTrainer:
 
             self.scheduler.step(val_metrics["loss"])
 
-            if val_metrics["loss"] < best_val_loss:
+            improved = val_metrics["loss"] < best_val_loss
+            if improved:
                 best_val_loss = val_metrics["loss"]
                 epochs_without_improvement = 0
                 best_metrics = {"epoch": epoch, "train": train_metrics, "val": val_metrics}
@@ -445,6 +508,16 @@ class MDNAuxiliaryTrainer:
             else:
                 epochs_without_improvement += 1
 
+            estimator = "dr" if self.config.use_doubly_robust else "ips" if self.config.use_ips else "probability-aware"
+            self._log_epoch(
+                estimator=estimator,
+                epoch=epoch,
+                train_metrics=train_metrics,
+                val_metrics=val_metrics,
+                improved=improved,
+                epochs_without_improvement=epochs_without_improvement,
+            )
+
             if epochs_without_improvement >= self.config.patience:
                 break
 
@@ -453,6 +526,31 @@ class MDNAuxiliaryTrainer:
             "best_metrics": best_metrics,
             "checkpoint_path": str(checkpoint_path),
         }
+
+    def _log_epoch(
+        self,
+        *,
+        estimator: str,
+        epoch: int,
+        train_metrics: dict[str, float],
+        val_metrics: dict[str, float],
+        improved: bool,
+        epochs_without_improvement: int,
+    ) -> None:
+        if not self.config.verbose:
+            return
+        marker = "*" if improved else " "
+        print(
+            f"[Aux:{estimator}] epoch {epoch:03d}/{self.config.max_epochs:03d} "
+            f"train_loss={train_metrics['loss']:.6f} val_loss={val_metrics['loss']:.6f} "
+            f"train_gate={train_metrics['gate_accuracy']:.4f} val_gate={val_metrics['gate_accuracy']:.4f} "
+            f"train_q={train_metrics['q_loss']:.6f} val_q={val_metrics['q_loss']:.6f} "
+            f"iw={val_metrics.get('clipped_importance_weight_mean', 0.0):.4f} "
+            f"clip={val_metrics.get('importance_weight_clip_fraction', 0.0):.4f} "
+            f"dr_corr={val_metrics.get('dr_correction_mean_abs', 0.0):.6f} "
+            f"best={marker} patience={epochs_without_improvement}/{self.config.patience}",
+            flush=True,
+        )
 
 
 def build_auxiliary_record(

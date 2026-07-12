@@ -419,6 +419,25 @@ def test_dr_baseline_has_no_gradient():
     assert q_hat.grad is not None
 
 
+def test_dr_uses_frozen_baseline_model_when_provided():
+    record = _probability_aware_record()
+    model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    baseline_model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
+    trainer = MDNAuxiliaryTrainer(
+        model,
+        config=MDNAuxiliaryTrainerConfig(use_doubly_robust=True, max_epochs=1, batch_size=1),
+        device="cpu",
+        dr_baseline_model=baseline_model,
+    )
+
+    metrics = trainer._run_probability_aware_epoch([record], training=True)
+
+    assert np.isfinite(metrics["loss"])
+    assert "dr_correction_mean_abs" in metrics
+    assert all(parameter.requires_grad is False for parameter in baseline_model.parameters())
+    assert baseline_model.training is False
+
+
 def test_dr_single_record_does_not_crash():
     model = MotiveDecompositionNetwork(input_dim=8, num_skills=4, num_objectives=2)
     trainer = MDNAuxiliaryTrainer(

@@ -243,6 +243,7 @@ The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy,
 - `docs/ZERO_SHOT_PROTOCOL.md`: full-simplex and MDN_WX reuse protocol
 - `docs/INTEGRATION_REPORT.md`: integration and validation report
 - `docs/METTA_INTEGRATION.md`: MeTTa and Hyperon integration notes
+- `docs/IPS_DR_LOGGED_TRAINING.md`: probability-aware logged-data workflow for IPS/DR checkpoints
 - [MeTTa Python Integration Guide](https://metta-lang.dev/docs/learn/tutorials/python_use/metta_python_basics.html)
 
 ## Future Work
