@@ -19,6 +19,7 @@ from generator.train_mdn_candidate_sets import (
     normalize_auxiliary_targets_in_records,
 )
 from utils.mdn_contracts import CandidateSkillRecord, MDNDecisionRecord
+from utils.mdn_checkpoint_loader import load_mdn_checkpoint
 from utils.probability_aware_logs import load_probability_aware_log, probability_aware_log_files
 
 
@@ -28,19 +29,45 @@ def train_mdn_from_probability_aware_logs(
     pattern: str = "*.npz",
     seed: int = 42,
     device: str | None = None,
-    policy_checkpoint_path: str = "models/mdn_policy_logged.pth",
-    auxiliary_checkpoint_path: str = "models/mdn_auxiliary_logged.pth",
+    policy_checkpoint_path: str | None = None,
+    auxiliary_checkpoint_path: str | None = None,
     use_ips: bool = False,
     use_doubly_robust: bool = False,
     skill_id_bucket_count: int = 100_000,
     normalize_auxiliary_targets: bool = True,
     q_loss: str = "mse",
     huber_delta: float = 1.0,
+    max_logs: int | None = None,
+    dr_baseline_checkpoint_path: str | None = None,
 ) -> dict[str, Any]:
     """Train policy and auxiliary heads from real probability-aware logs."""
     if use_ips and use_doubly_robust:
         raise ValueError("use_ips and use_doubly_robust cannot both be enabled")
-    logs = [load_probability_aware_log(path) for path in probability_aware_log_files(data_dir, pattern=pattern)]
+    estimator = estimator_name(use_ips=use_ips, use_doubly_robust=use_doubly_robust)
+    policy_checkpoint_path, auxiliary_checkpoint_path = resolve_checkpoint_paths(
+        policy_checkpoint_path=policy_checkpoint_path,
+        auxiliary_checkpoint_path=auxiliary_checkpoint_path,
+        estimator=estimator,
+    )
+    if use_doubly_robust and dr_baseline_checkpoint_path is None:
+        raise ValueError(
+            "DR training requires --dr-baseline-checkpoint with a frozen unweighted auxiliary checkpoint"
+        )
+    dr_baseline_model = None
+    if dr_baseline_checkpoint_path is not None:
+        dr_baseline_model = load_mdn_checkpoint(dr_baseline_checkpoint_path, map_location=device or "cpu")
+    log_files = probability_aware_log_files(data_dir, pattern=pattern)
+    if max_logs is not None:
+        if max_logs <= 0:
+            raise ValueError("max_logs must be positive when provided")
+        log_files = log_files[: int(max_logs)]
+    print(
+        f"[LoggedTrain] estimator={estimator} logs={len(log_files)} data_dir={data_dir} pattern={pattern!r} "
+        f"policy_checkpoint={policy_checkpoint_path} auxiliary_checkpoint={auxiliary_checkpoint_path} "
+        f"dr_baseline_checkpoint={dr_baseline_checkpoint_path}",
+        flush=True,
+    )
+    logs = [load_probability_aware_log(path) for path in log_files]
     decision_records, raw_auxiliary_records = probability_aware_logs_to_training_records(
         logs,
         skill_id_bucket_count=skill_id_bucket_count,
@@ -66,7 +93,13 @@ def train_mdn_from_probability_aware_logs(
         ),
         device=device,
     )
+    print(f"[LoggedTrain] training policy on {len(decision_records)} decision records", flush=True)
     policy_metrics = policy_trainer.train_records(decision_records)
+    print(
+        f"[LoggedTrain] policy complete loss={policy_metrics['loss']:.6f} "
+        f"utility={policy_metrics['utility']:.6f}",
+        flush=True,
+    )
 
     auxiliary_trainer = MDNAuxiliaryTrainer(
         model,
@@ -79,11 +112,21 @@ def train_mdn_from_probability_aware_logs(
             huber_delta=huber_delta,
         ),
         device=device,
+        dr_baseline_model=dr_baseline_model,
+    )
+    print(
+        f"[LoggedTrain] training auxiliary on {len(auxiliary_records)} records "
+        f"mode={estimator}",
+        flush=True,
     )
     if use_ips or use_doubly_robust:
         auxiliary_metrics = auxiliary_trainer.train_probability_aware_records(auxiliary_records)
     else:
         auxiliary_metrics = auxiliary_trainer.train_records(auxiliary_records)
+    print(
+        f"[LoggedTrain] auxiliary complete best_val_loss={auxiliary_metrics['best_val_loss']:.6f}",
+        flush=True,
+    )
 
     _restore_model_state(model, auxiliary_checkpoint_path, device=device)
     if target_normalization is not None:
@@ -97,11 +140,38 @@ def train_mdn_from_probability_aware_logs(
         "logged_decisions": len(logs),
         "decision_records": len(decision_records),
         "auxiliary_records": len(auxiliary_records),
-        "estimator": "dr" if use_doubly_robust else "ips" if use_ips else "unweighted",
+        "estimator": estimator,
         "policy": {**policy_metrics, "checkpoint_path": policy_checkpoint},
         "auxiliary": auxiliary_metrics,
         "auxiliary_target_normalization": target_normalization,
+        "dr_baseline_checkpoint_path": dr_baseline_checkpoint_path,
     }
+
+
+def estimator_name(*, use_ips: bool, use_doubly_robust: bool) -> str:
+    if use_ips and use_doubly_robust:
+        raise ValueError("use_ips and use_doubly_robust cannot both be enabled")
+    if use_doubly_robust:
+        return "dr"
+    if use_ips:
+        return "ips"
+    return "unweighted"
+
+
+def resolve_checkpoint_paths(
+    *,
+    policy_checkpoint_path: str | None,
+    auxiliary_checkpoint_path: str | None,
+    estimator: str,
+) -> tuple[str, str]:
+    """Use distinct default checkpoint names for each logged-data estimator."""
+    estimator = estimator.strip().lower()
+    if estimator not in {"unweighted", "ips", "dr"}:
+        raise ValueError(f"unsupported estimator {estimator!r}")
+    return (
+        policy_checkpoint_path or f"models/mdn_policy_{estimator}.pth",
+        auxiliary_checkpoint_path or f"models/mdn_auxiliary_{estimator}.pth",
+    )
 
 
 def probability_aware_logs_to_training_records(
@@ -215,14 +285,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pattern", type=str, default="*.npz")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--policy-checkpoint", type=str, default="models/mdn_policy_logged.pth")
-    parser.add_argument("--auxiliary-checkpoint", type=str, default="models/mdn_auxiliary_logged.pth")
+    parser.add_argument("--policy-checkpoint", type=str, default=None)
+    parser.add_argument("--auxiliary-checkpoint", type=str, default=None)
     parser.add_argument("--use-ips", action="store_true")
     parser.add_argument("--use-doubly-robust", action="store_true")
     parser.add_argument("--skill-id-bucket-count", type=int, default=100_000)
     parser.add_argument("--no-normalize-auxiliary-targets", action="store_true")
     parser.add_argument("--q-loss", choices=("mse", "huber"), default="mse")
     parser.add_argument("--huber-delta", type=float, default=1.0)
+    parser.add_argument("--max-logs", type=int, default=None, help="Use only the first N sorted runtime logs")
+    parser.add_argument(
+        "--dr-baseline-checkpoint",
+        type=str,
+        default=None,
+        help="Frozen unweighted auxiliary checkpoint used as the DR Q baseline",
+    )
     return parser.parse_args()
 
 
@@ -241,6 +318,8 @@ def main() -> None:
         normalize_auxiliary_targets=not args.no_normalize_auxiliary_targets,
         q_loss=args.q_loss,
         huber_delta=args.huber_delta,
+        max_logs=args.max_logs,
+        dr_baseline_checkpoint_path=args.dr_baseline_checkpoint,
     )
     print(result)
 

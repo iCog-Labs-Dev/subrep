@@ -79,8 +79,6 @@ python -m generator.train_mdn_probability_aware_logs \
   --pattern "train_*.npz" \
   --seed 42 \
   --device cpu \
-  --policy-checkpoint models/mdn_policy_logged.pth \
-  --auxiliary-checkpoint models/mdn_auxiliary_logged.pth \
   --q-loss mse
 ```
 
@@ -92,13 +90,12 @@ python -m generator.train_mdn_probability_aware_logs \
   --pattern "train_*.npz" \
   --seed 42 \
   --device cpu \
-  --policy-checkpoint models/mdn_policy_ips.pth \
-  --auxiliary-checkpoint models/mdn_auxiliary_ips.pth \
   --q-loss mse \
   --use-ips
 ```
 
-Train the DR checkpoint:
+Train the DR checkpoint using the frozen unweighted auxiliary checkpoint as the
+Q baseline:
 
 ```bash
 python -m generator.train_mdn_probability_aware_logs \
@@ -106,8 +103,18 @@ python -m generator.train_mdn_probability_aware_logs \
   --pattern "train_*.npz" \
   --seed 42 \
   --device cpu \
-  --policy-checkpoint models/mdn_policy_dr.pth \
-  --auxiliary-checkpoint models/mdn_auxiliary_dr.pth \
   --q-loss mse \
-  --use-doubly-robust
+  --use-doubly-robust \
+  --dr-baseline-checkpoint models/mdn_auxiliary_unweighted.pth
+```
+
+Default checkpoint names are estimator-specific:
+
+```text
+models/mdn_policy_unweighted.pth
+models/mdn_auxiliary_unweighted.pth
+models/mdn_policy_ips.pth
+models/mdn_auxiliary_ips.pth
+models/mdn_policy_dr.pth
+models/mdn_auxiliary_dr.pth
 ```

@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from data_collector.collect_probability_aware_runtime_logs import ProbabilityAwareRuntimeLogCollector
-from generator.train_mdn_probability_aware_logs import probability_aware_logs_to_training_records
+from generator.train_mdn_probability_aware_logs import (
+    probability_aware_logs_to_training_records,
+    resolve_checkpoint_paths,
+    train_mdn_from_probability_aware_logs,
+)
 from utils.mdn_contracts import CandidateSkillRecord
 from utils.probability_aware_logs import (
     SCHEMA_VERSION,
@@ -144,3 +148,51 @@ def test_runtime_log_collector_resume_state_uses_existing_files(tmp_path):
     assert existing_count == 2
     assert next_save_index == 3
     assert next_context_index == 3
+
+
+def test_train_probability_aware_logs_rejects_non_positive_max_logs(tmp_path):
+    save_probability_aware_log(tmp_path / "train_00001.npz", **_log_record())
+
+    with pytest.raises(ValueError, match="max_logs"):
+        train_mdn_from_probability_aware_logs(
+            data_dir=tmp_path,
+            pattern="train_*.npz",
+            max_logs=0,
+        )
+
+
+def test_dr_training_requires_baseline_checkpoint(tmp_path):
+    save_probability_aware_log(tmp_path / "train_00001.npz", **_log_record())
+
+    with pytest.raises(ValueError, match="dr-baseline-checkpoint"):
+        train_mdn_from_probability_aware_logs(
+            data_dir=tmp_path,
+            pattern="train_*.npz",
+            use_doubly_robust=True,
+        )
+
+
+def test_probability_aware_checkpoint_defaults_are_estimator_specific():
+    assert resolve_checkpoint_paths(
+        policy_checkpoint_path=None,
+        auxiliary_checkpoint_path=None,
+        estimator="unweighted",
+    ) == ("models/mdn_policy_unweighted.pth", "models/mdn_auxiliary_unweighted.pth")
+    assert resolve_checkpoint_paths(
+        policy_checkpoint_path=None,
+        auxiliary_checkpoint_path=None,
+        estimator="ips",
+    ) == ("models/mdn_policy_ips.pth", "models/mdn_auxiliary_ips.pth")
+    assert resolve_checkpoint_paths(
+        policy_checkpoint_path=None,
+        auxiliary_checkpoint_path=None,
+        estimator="dr",
+    ) == ("models/mdn_policy_dr.pth", "models/mdn_auxiliary_dr.pth")
+
+
+def test_probability_aware_checkpoint_explicit_paths_are_preserved():
+    assert resolve_checkpoint_paths(
+        policy_checkpoint_path="models/custom_policy.pth",
+        auxiliary_checkpoint_path="models/custom_aux.pth",
+        estimator="ips",
+    ) == ("models/custom_policy.pth", "models/custom_aux.pth")
