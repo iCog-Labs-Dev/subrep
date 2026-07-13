@@ -112,6 +112,25 @@ Runtime selection is conservative:
 - Infeasible support values exclude `MDN_WX` skills for that step.
 - Reuse checks are centralized in `SkillLibrary.query_admissible()`.
 
+## Mid-Episode Motive Shifts
+
+The zero-shot claim also covers the case where motive priorities change during
+an episode. The runtime behavior is to re-query the frozen certified library at
+the shift step:
+
+```text
+weights_before_shift -> query_admissible(...)
+weights_after_shift  -> query_admissible(...)
+```
+
+No skill is re-certified or retrained during the episode. A globally certified
+`FULL_SIMPLEX` skill can remain reusable after the shift, while a contextual
+`MDN_WX` skill can be rejected if the current support geometry no longer makes
+it admissible.
+
+`utils.mid_episode_reuse_demo.demonstrate_mid_episode_motive_shift()` provides a
+deterministic trace of this behavior for tests and reporting.
+
 ## Trained MDN Checkpoints
 
 `MDNRuntimeSelector.from_checkpoint()` can load a trained checkpoint from:
@@ -138,4 +157,5 @@ programming solver before claiming general higher-dimensional contextual reuse.
 ```bash
 python -m pytest tests/test_zero_shot_reuse.py tests/test_trained_mdn_zero_shot.py -v
 python -m pytest tests/test_mdn_skill_selection.py tests/test_mdn_runtime_selector.py -v
+python -m pytest tests/test_mid_episode_reuse_demo.py -v
 ```

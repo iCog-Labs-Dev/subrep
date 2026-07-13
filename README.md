@@ -51,6 +51,9 @@ python -m pytest tests/test_certification_gates.py -v
 
 # Run the full demo pipeline
 python -m demo.run_full_pipeline
+
+# Validate mid-episode motive-shift reuse behavior
+python -m pytest tests/test_mid_episode_reuse_demo.py -v
 ```
 
 ## Running the Demo Pipeline
@@ -69,6 +72,10 @@ The demo pipeline:
 - stores admitted certificates in MeTTa and `SkillLibrary`,
 - writes admission reports to `demo/artifacts/`,
 - runs MDN-based skill selection from the certified library.
+- demonstrates zero-shot reuse after a mid-episode motive-priority shift:
+  a previously certified global skill remains reusable without retraining,
+  while a contextual MDN_WX skill can be correctly rejected under shifted
+  runtime support geometry.
 
 To open the Streamlit demo app:
 
