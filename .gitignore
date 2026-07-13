@@ -8,6 +8,7 @@ doc/
 data/raw/
 data/mdn_candidate_sets/
 data/mdn_candidate_sets_eval/
+data/mdn_probability_aware_logs*/
 # Trained model weights (run train_generator locally to regenerate)
 models/*
 !models/pilot_ppo.pt
