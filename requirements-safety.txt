@@ -10,3 +10,4 @@
 #   python -m pip install -r requirements-safety.txt
 
 safety-gymnasium==1.0.0
+torch>=2.0.0

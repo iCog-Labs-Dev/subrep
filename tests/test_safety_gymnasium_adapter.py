@@ -7,6 +7,7 @@ from gymnasium.spaces import Box
 
 from data_collector.collect_safety_gymnasium_rollouts import SafetyGymnasiumRolloutCollector
 from env.safety_gymnasium_wrapper import SafeRLGymnasiumEnv
+from pilot.safety_gymnasium_ppo import SafetyPPOPilot
 
 
 class FakeSafetyEnv:
@@ -108,3 +109,31 @@ def test_safety_rollout_collector_saves_payoff_cost_and_motive_returns(tmp_path)
         "candidate_task_returns",
     ):
         assert key in saved
+
+
+def test_safety_rollout_collector_can_include_ppo_checkpoint(tmp_path):
+    checkpoint = tmp_path / "safety_ppo.pt"
+    pilot = SafetyPPOPilot(
+        observation_dim=4,
+        action_dim=2,
+        action_low=(-1.0, -1.0),
+        action_high=(1.0, 1.0),
+        hidden_sizes=(8,),
+    )
+    pilot.save(checkpoint)
+
+    collector = SafetyGymnasiumRolloutCollector(
+        env_id="FakeSafety-v0",
+        seed=42,
+        save_dir=str(tmp_path),
+        max_steps=3,
+        ppo_checkpoint=str(checkpoint),
+        env_factory=_fake_wrapper_factory,
+    )
+
+    record = collector.collect_context(1)
+    collector.close()
+
+    candidate_ids = set(record["candidate_skill_ids"].tolist())
+    assert "ppo_deterministic" in candidate_ids
+    assert record["candidate_motives"].shape == (8, 2)

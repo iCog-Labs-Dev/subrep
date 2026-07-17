@@ -130,11 +130,18 @@ PY
 Collect first-pass SafeRL candidate rollouts:
 
 ```bash
+python -m pilot.train_safety_gymnasium_ppo \
+  --env-id SafetyPointGoal1-v0 \
+  --total-updates 25 \
+  --output models/safety_ppo_point_goal.pt
+
 python -m data_collector.collect_safety_gymnasium_rollouts \
   --env-id SafetyPointGoal1-v0 \
   --contexts 25 \
+  --max-steps 200 \
   --save-dir data/safety_gymnasium_rollouts \
-  --seed 42
+  --seed 42 \
+  --ppo-checkpoint models/safety_ppo_point_goal.pt
 ```
 
 Then switch back to the main SubRep environment before certification. The
@@ -163,10 +170,11 @@ cost   -> safety motive, with larger values meaning safer behavior
 ```
 
 The SafeRL certification pilot uses `zero_action` as the same-context baseline.
-Every other candidate is compared against that baseline, certified with CDS/PDS,
-and only admitted certificates enter `CertificateStore` and `SkillLibrary`.
-The generated report also includes a zero-shot reuse query under task-focused and
-safety-focused weights without retraining.
+Every other candidate, including the trained PPO candidate when present, is
+compared against that baseline, certified with CDS/PDS, and only admitted
+certificates enter `CertificateStore` and `SkillLibrary`. The generated report
+also includes a zero-shot reuse query under task-focused and safety-focused
+weights without retraining.
 
 SafeRL report outputs:
 

@@ -109,12 +109,18 @@ data/safety_gymnasium_rollouts/*.npz
 Collect SafeRL candidate rollouts:
 
 ```bash
+python -m pilot.train_safety_gymnasium_ppo \
+  --env-id SafetyPointGoal1-v0 \
+  --total-updates 25 \
+  --output models/safety_ppo_point_goal.pt
+
 python -m data_collector.collect_safety_gymnasium_rollouts \
   --env-id SafetyPointGoal1-v0 \
   --contexts 25 \
   --max-steps 200 \
   --save-dir data/safety_gymnasium_rollouts \
-  --seed 42
+  --seed 42 \
+  --ppo-checkpoint models/safety_ppo_point_goal.pt
 ```
 
 Per-file schema:
@@ -131,6 +137,11 @@ Per-file schema:
 | `candidate_task_returns` | `(K,)` | Discounted task reward |
 | `step_counts` | `(K,)` | Executed step count per candidate |
 | `stop_reasons` | `(K,)` | Stop reason per candidate rollout |
+
+If `--ppo-checkpoint` is provided and the checkpoint exists,
+`ppo_deterministic` is included as an additional candidate. Without that
+checkpoint, the collector still runs the simple-policy pilot and the PPO
+baseline is reported as `n/a`.
 
 Certify collected SafeRL rollouts:
 

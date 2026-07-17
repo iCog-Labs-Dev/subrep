@@ -16,6 +16,7 @@ import numpy as np
 
 from env.safety_gymnasium_wrapper import SafeRLGymnasiumEnv
 from env.skill_executor import SkillExecutor
+from pilot.safety_gymnasium_ppo import SafetyPPOPilot
 
 
 PolicyFn = Callable[[np.ndarray], np.ndarray]
@@ -69,10 +70,23 @@ def _constant_axis_policy(action_space, *, axis: int, value: float) -> PolicyFn:
     return policy_fn
 
 
-def build_default_safety_candidate_policies(env: SafeRLGymnasiumEnv) -> tuple[SafetyCandidatePolicy, ...]:
+def _ppo_policy(checkpoint_path: str | Path) -> PolicyFn:
+    pilot = SafetyPPOPilot.load(checkpoint_path, map_location="cpu")
+
+    def policy_fn(obs: np.ndarray) -> np.ndarray:
+        return pilot.predict(obs, deterministic=True)
+
+    return policy_fn
+
+
+def build_default_safety_candidate_policies(
+    env: SafeRLGymnasiumEnv,
+    *,
+    ppo_checkpoint: str | Path | None = None,
+) -> tuple[SafetyCandidatePolicy, ...]:
     """Return simple continuous-control candidates for a first SafeRL pilot."""
     action_space = env.action_space
-    return (
+    policies = [
         SafetyCandidatePolicy("zero_action", _zero_policy(action_space)),
         SafetyCandidatePolicy("small_random", _scaled_random_policy(action_space, seed=17, scale=0.25)),
         SafetyCandidatePolicy("random", _random_policy(action_space, seed=23)),
@@ -80,7 +94,14 @@ def build_default_safety_candidate_policies(env: SafeRLGymnasiumEnv) -> tuple[Sa
         SafetyCandidatePolicy("axis0_negative", _constant_axis_policy(action_space, axis=0, value=-0.35)),
         SafetyCandidatePolicy("axis1_positive", _constant_axis_policy(action_space, axis=1, value=0.35)),
         SafetyCandidatePolicy("axis1_negative", _constant_axis_policy(action_space, axis=1, value=-0.35)),
-    )
+    ]
+    if ppo_checkpoint is not None:
+        checkpoint = Path(ppo_checkpoint)
+        if checkpoint.exists():
+            policies.append(SafetyCandidatePolicy("ppo_deterministic", _ppo_policy(checkpoint)))
+        else:
+            print(f"[Warning] PPO checkpoint not found: {checkpoint}. Skipping PPO candidate.")
+    return tuple(policies)
 
 
 class SafetyGymnasiumRolloutCollector:
@@ -94,6 +115,7 @@ class SafetyGymnasiumRolloutCollector:
         save_dir: str = "data/safety_gymnasium_rollouts",
         max_steps: int = 200,
         gamma: float = 0.99,
+        ppo_checkpoint: str | Path | None = None,
         env_factory: Optional[Callable[..., SafeRLGymnasiumEnv]] = None,
     ) -> None:
         self.env_id = env_id
@@ -102,9 +124,13 @@ class SafetyGymnasiumRolloutCollector:
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.max_steps = int(max_steps)
         self.gamma = float(gamma)
+        self.ppo_checkpoint = ppo_checkpoint
         factory = env_factory or SafeRLGymnasiumEnv
         self.env = factory(env_id=env_id, seed=seed)
-        self.candidate_policies = build_default_safety_candidate_policies(self.env)
+        self.candidate_policies = build_default_safety_candidate_policies(
+            self.env,
+            ppo_checkpoint=ppo_checkpoint,
+        )
 
     def collect_context(self, context_index: int) -> dict[str, object]:
         context_seed = self.seed + int(context_index)
@@ -192,6 +218,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prefix", type=str, default="safety_rollout")
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument(
+        "--ppo-checkpoint",
+        type=str,
+        default=None,
+        help="Optional SafetyPPOPilot checkpoint to include as ppo_deterministic candidate.",
+    )
     return parser.parse_args()
 
 
@@ -203,6 +235,7 @@ def main() -> None:
         save_dir=args.save_dir,
         max_steps=args.max_steps,
         gamma=args.gamma,
+        ppo_checkpoint=args.ppo_checkpoint,
     )
     try:
         collector.collect(args.contexts, prefix=args.prefix)
