@@ -127,15 +127,21 @@ print("cost:", cost)
 PY
 ```
 
-Collect first-pass SafeRL candidate rollouts:
+Train the lightweight PPO baseline and collect first-pass SafeRL candidate
+rollouts. `--no-capture-output` makes conda stream progress logs live:
 
 ```bash
-python -m pilot.train_safety_gymnasium_ppo \
+conda run --no-capture-output -n subrep-safety python -m pilot.train_safety_gymnasium_ppo \
   --env-id SafetyPointGoal1-v0 \
-  --total-updates 25 \
+  --total-updates 5 \
+  --rollout-steps 256 \
+  --update-epochs 2 \
+  --minibatch-size 128 \
+  --max-episode-steps 200 \
+  --eval-episodes 5 \
   --output models/safety_ppo_point_goal.pt
 
-python -m data_collector.collect_safety_gymnasium_rollouts \
+conda run --no-capture-output -n subrep-safety python -m data_collector.collect_safety_gymnasium_rollouts \
   --env-id SafetyPointGoal1-v0 \
   --contexts 25 \
   --max-steps 200 \

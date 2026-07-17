@@ -100,7 +100,10 @@ def build_default_safety_candidate_policies(
         if checkpoint.exists():
             policies.append(SafetyCandidatePolicy("ppo_deterministic", _ppo_policy(checkpoint)))
         else:
-            print(f"[Warning] PPO checkpoint not found: {checkpoint}. Skipping PPO candidate.")
+            print(
+                f"[Warning] PPO checkpoint not found: {checkpoint}. Skipping PPO candidate.",
+                flush=True,
+            )
     return tuple(policies)
 
 
@@ -201,7 +204,8 @@ class SafetyGymnasiumRolloutCollector:
             records.append(record)
             print(
                 f"[{index:05d}/{contexts:05d}] saved {len(record['candidate_skill_ids'])} "
-                f"SafeRL candidate outcomes for seed {record['context_seed']}"
+                f"SafeRL candidate outcomes for seed {record['context_seed']}",
+                flush=True,
             )
         return records
 
@@ -241,7 +245,7 @@ def main() -> None:
         collector.collect(args.contexts, prefix=args.prefix)
     finally:
         collector.close()
-    print(f"[Done] Safety-Gymnasium rollout files saved to '{args.save_dir}/'")
+    print(f"[Done] Safety-Gymnasium rollout files saved to '{args.save_dir}/'", flush=True)
 
 
 if __name__ == "__main__":

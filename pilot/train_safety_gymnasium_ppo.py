@@ -70,11 +70,11 @@ def main() -> None:
         device=args.device,
         eval_episodes=args.eval_episodes,
     )
-    print("Safety-Gymnasium PPO Training Complete")
-    print("======================================")
-    print(f"checkpoint: {args.output}")
+    print("Safety-Gymnasium PPO Training Complete", flush=True)
+    print("======================================", flush=True)
+    print(f"checkpoint: {args.output}", flush=True)
     for key, value in result["evaluation"].items():
-        print(f"{key}: {value}")
+        print(f"{key}: {value}", flush=True)
 
 
 def train_safety_ppo(
@@ -135,7 +135,8 @@ def train_safety_ppo(
             recent_cost = float(np.mean(completed_costs[-10:])) if completed_costs else 0.0
             print(
                 f"[{update:04d}/{config.total_updates:04d}] "
-                f"recent_return={recent_return:.4f} recent_cost={recent_cost:.4f}"
+                f"recent_return={recent_return:.4f} recent_cost={recent_cost:.4f}",
+                flush=True,
             )
 
     evaluation = evaluate_safety_ppo(
