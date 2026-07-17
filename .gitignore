@@ -1,6 +1,7 @@
 .env
 .venv
 .venv_linux
+.venv_safety*/
 __pycache__/
 *.pyc
 doc/
@@ -9,12 +10,15 @@ data/raw/
 data/mdn_candidate_sets/
 data/mdn_candidate_sets_eval/
 data/mdn_probability_aware_logs*/
+data/safety_gymnasium_rollouts/
 # Trained model weights (run train_generator locally to regenerate)
 models/*
 !models/pilot_ppo.pt
 # Generated training plots
 plots/
 data/library.json
+data/safety_gymnasium_library.json
+data/safety_gymnasium_certificates.metta
 # Generated pipeline outputs (run demo/run_full_pipeline.py to regenerate)
 data/certificates.metta
 demo/artifacts/*

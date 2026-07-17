@@ -1,0 +1,12 @@
+# Optional SafeRL benchmark dependencies.
+#
+# Use a separate Python 3.10 environment for these packages. Safety-Gymnasium
+# pins older Gymnasium/Pygame versions that conflict with the main
+# MO-LunarLander dependency stack.
+#
+# Example:
+#   conda create -n subrep-safety python=3.10 -y
+#   conda activate subrep-safety
+#   python -m pip install -r requirements-safety.txt
+
+safety-gymnasium==1.0.0

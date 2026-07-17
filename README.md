@@ -98,6 +98,86 @@ python -m pilot.train_pilot --seed 7 --output models/pilot_ppo.pt
 python -m pytest tests/test_pilot_performance.py -v
 ```
 
+## Optional SafeRL Benchmark Pilot
+
+Safety-Gymnasium uses older pinned Gymnasium/Pygame versions, so keep it in a
+separate Python 3.10 environment instead of the main SubRep `.venv`:
+
+```bash
+conda create -n subrep-safety python=3.10 -y
+conda activate subrep-safety
+python -m pip install -r requirements-safety.txt
+```
+
+Smoke-test the benchmark install:
+
+```bash
+python - <<'PY'
+import safety_gymnasium
+
+env = safety_gymnasium.make("SafetyPointGoal1-v0")
+obs, info = env.reset(seed=42)
+obs, reward, cost, terminated, truncated, info = env.step(env.action_space.sample())
+env.close()
+
+print("Safety-Gymnasium works")
+print("obs shape:", obs.shape)
+print("reward:", reward)
+print("cost:", cost)
+PY
+```
+
+Collect first-pass SafeRL candidate rollouts:
+
+```bash
+python -m data_collector.collect_safety_gymnasium_rollouts \
+  --env-id SafetyPointGoal1-v0 \
+  --contexts 25 \
+  --save-dir data/safety_gymnasium_rollouts \
+  --seed 42
+```
+
+Then switch back to the main SubRep environment before certification. The
+Safety-Gymnasium conda environment is only for collecting benchmark rollouts;
+the certification/report path uses the normal SubRep dependencies, including
+Hyperon/MeTTa:
+
+```bash
+conda deactivate
+source .venv/bin/activate
+```
+
+Certify the collected SafeRL rollouts and generate the admission/reuse report:
+
+```bash
+python -m demo.run_safety_gymnasium_pipeline \
+  --rollout-dir data/safety_gymnasium_rollouts \
+  --pds-epsilon 1.0
+```
+
+The SafeRL wrapper maps benchmark outputs into SubRep format:
+
+```text
+reward -> task payoff / task motive
+cost   -> safety motive, with larger values meaning safer behavior
+```
+
+The SafeRL certification pilot uses `zero_action` as the same-context baseline.
+Every other candidate is compared against that baseline, certified with CDS/PDS,
+and only admitted certificates enter `CertificateStore` and `SkillLibrary`.
+The generated report also includes a zero-shot reuse query under task-focused and
+safety-focused weights without retraining.
+
+SafeRL report outputs:
+
+- `demo/artifacts/safety_gymnasium_admission_report.json`
+- `demo/artifacts/safety_gymnasium_admission_report.md`
+- `data/safety_gymnasium_certificates.metta`
+- `data/safety_gymnasium_library.json`
+
+The written pilot summary is in
+[`docs/SAFERL_BENCHMARK_PILOT.md`](docs/SAFERL_BENCHMARK_PILOT.md).
+
 ## Admission Report Output
 
 After running the demo pipeline, admission statistics are generated at:

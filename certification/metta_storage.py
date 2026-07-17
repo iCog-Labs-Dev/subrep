@@ -23,6 +23,11 @@ class CertificateStore:
         self._metta = MeTTa()
         # Default to this runner's program space unless caller injects one.
         self._space = space if space is not None else self._metta.space()
+        # Keep a Python-side index for stable runtime access. Hyperon remains
+        # the backing audit space, but some Hyperon builds can be fragile when
+        # repeatedly scanning atoms through get_atoms().
+        self._certificates: dict[str, Certificate] = {}
+        self._atoms_by_skill: dict[str, Any] = {}
 
     def add(self, certificate: Certificate) -> bool:
         """Add a certificate if its skill_id is not already present."""
@@ -31,17 +36,16 @@ class CertificateStore:
             return False
         atom = cert_to_atom(certificate)
         self._space.add_atom(atom)
+        self._certificates[certificate.skill_id] = certificate
+        self._atoms_by_skill[certificate.skill_id] = atom
         return True
 
     def contains(self, skill_id: str) -> bool:
-        return self.get_certificate(skill_id) is not None
+        return skill_id in self._certificates
 
     def get_certificate(self, skill_id: str) -> Optional[Certificate]:
         """Return certificate by skill_id, or None when missing."""
-        atom = self._find_certificate_atom(skill_id)
-        if atom is None:
-            return None
-        return atom_to_cert(atom)
+        return self._certificates.get(skill_id)
 
     def query_by_gate_type(self, gate_type: str) -> list[Certificate]:
         """Return certificates matching gate type ('CDS' or 'PDS')."""
@@ -75,22 +79,19 @@ class CertificateStore:
 
     def remove_skill(self, skill_id: str) -> bool:
         """Remove a certificate by skill_id. Returns False when missing."""
-        atom = self._find_certificate_atom(skill_id)
+        atom = self._atoms_by_skill.pop(skill_id, None)
         if atom is None:
             return False
+        self._certificates.pop(skill_id, None)
         self._space.remove_atom(atom)
         return True
 
     def load_all(self) -> list[Certificate]:
         """Load all certificate atoms and convert them to certificate objects."""
-        certs: list[Certificate] = []
-        for atom in self._space.get_atoms():
-            if self._is_certificate_atom(atom):
-                certs.append(atom_to_cert(atom))
-        return certs
+        return list(self._certificates.values())
 
     def count(self) -> int:
-        return len(self.load_all())
+        return len(self._certificates)
 
     def save_to_file(self, path: str | Path) -> None:
         """Persist all certificates as one deterministic expression per line."""
@@ -125,10 +126,15 @@ class CertificateStore:
             parsed_certs.append(cert)
 
         # Replace semantics: remove all current certificate atoms, then add parsed.
-        for atom in self._certificate_atoms():
+        for atom in list(self._atoms_by_skill.values()):
             self._space.remove_atom(atom)
+        self._certificates.clear()
+        self._atoms_by_skill.clear()
         for cert in parsed_certs:
-            self._space.add_atom(cert_to_atom(cert))
+            atom = cert_to_atom(cert)
+            self._space.add_atom(atom)
+            self._certificates[cert.skill_id] = cert
+            self._atoms_by_skill[cert.skill_id] = atom
 
     def _certificate_atoms(self) -> list[Any]:
         return [atom for atom in self._space.get_atoms() if self._is_certificate_atom(atom)]
