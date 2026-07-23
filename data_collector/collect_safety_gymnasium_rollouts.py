@@ -83,6 +83,7 @@ def build_default_safety_candidate_policies(
     env: SafeRLGymnasiumEnv,
     *,
     ppo_checkpoint: str | Path | None = None,
+    ppo_lagrangian_checkpoint: str | Path | None = None,
 ) -> tuple[SafetyCandidatePolicy, ...]:
     """Return simple continuous-control candidates for a first SafeRL pilot."""
     action_space = env.action_space
@@ -104,6 +105,21 @@ def build_default_safety_candidate_policies(
                 f"[Warning] PPO checkpoint not found: {checkpoint}. Skipping PPO candidate.",
                 flush=True,
             )
+    if ppo_lagrangian_checkpoint is not None:
+        checkpoint = Path(ppo_lagrangian_checkpoint)
+        if checkpoint.exists():
+            policies.append(
+                SafetyCandidatePolicy(
+                    "ppo_lagrangian_deterministic",
+                    _ppo_policy(checkpoint),
+                )
+            )
+        else:
+            print(
+                f"[Warning] PPO-Lagrangian checkpoint not found: {checkpoint}. "
+                "Skipping PPO-Lagrangian candidate.",
+                flush=True,
+            )
     return tuple(policies)
 
 
@@ -119,6 +135,7 @@ class SafetyGymnasiumRolloutCollector:
         max_steps: int = 200,
         gamma: float = 0.99,
         ppo_checkpoint: str | Path | None = None,
+        ppo_lagrangian_checkpoint: str | Path | None = None,
         env_factory: Optional[Callable[..., SafeRLGymnasiumEnv]] = None,
     ) -> None:
         self.env_id = env_id
@@ -128,11 +145,13 @@ class SafetyGymnasiumRolloutCollector:
         self.max_steps = int(max_steps)
         self.gamma = float(gamma)
         self.ppo_checkpoint = ppo_checkpoint
+        self.ppo_lagrangian_checkpoint = ppo_lagrangian_checkpoint
         factory = env_factory or SafeRLGymnasiumEnv
         self.env = factory(env_id=env_id, seed=seed)
         self.candidate_policies = build_default_safety_candidate_policies(
             self.env,
             ppo_checkpoint=ppo_checkpoint,
+            ppo_lagrangian_checkpoint=ppo_lagrangian_checkpoint,
         )
 
     def collect_context(self, context_index: int) -> dict[str, object]:
@@ -228,6 +247,15 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional SafetyPPOPilot checkpoint to include as ppo_deterministic candidate.",
     )
+    parser.add_argument(
+        "--ppo-lagrangian-checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Optional SafetyPPOPilot checkpoint trained with Lagrangian cost "
+            "updates to include as ppo_lagrangian_deterministic candidate."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -240,6 +268,7 @@ def main() -> None:
         max_steps=args.max_steps,
         gamma=args.gamma,
         ppo_checkpoint=args.ppo_checkpoint,
+        ppo_lagrangian_checkpoint=args.ppo_lagrangian_checkpoint,
     )
     try:
         collector.collect(args.contexts, prefix=args.prefix)

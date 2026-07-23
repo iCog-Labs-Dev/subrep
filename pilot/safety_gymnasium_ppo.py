@@ -29,6 +29,11 @@ class SafetyPPOConfig:
     total_updates: int = 25
     max_episode_steps: int = 200
     cost_penalty: float = 1.0
+    use_lagrangian: bool = False
+    cost_limit: float = 1.0
+    lambda_lr: float = 0.05
+    initial_lagrange_multiplier: float = 1.0
+    max_lagrange_multiplier: float = 50.0
     seed: int = 42
 
 

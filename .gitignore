@@ -12,8 +12,12 @@ data/mdn_candidate_sets_eval/
 data/mdn_probability_aware_logs*/
 data/safety_gymnasium_rollouts/
 data/safety_gymnasium_rollouts_seed42/
+data/safety_gymnasium_rollouts_ppo_seed42/
 data/safety_gymnasium_rollouts_seed43/
 data/safety_gymnasium_rollouts_seed44/
+data/safety_gymnasium_rollouts_seed42_ctx100/
+data/safety_gymnasium_rollouts_seed43_ctx100/
+data/safety_gymnasium_rollouts_seed44_ctx100/
 # Trained model weights (run train_generator locally to regenerate)
 models/*
 !models/pilot_ppo.pt

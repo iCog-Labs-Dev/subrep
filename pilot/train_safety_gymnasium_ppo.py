@@ -41,6 +41,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--max-episode-steps", type=int, default=200)
     parser.add_argument("--cost-penalty", type=float, default=1.0)
+    parser.add_argument("--use-lagrangian", action="store_true")
+    parser.add_argument("--cost-limit", type=float, default=1.0)
+    parser.add_argument("--lambda-lr", type=float, default=0.05)
+    parser.add_argument("--initial-lagrange-multiplier", type=float, default=1.0)
+    parser.add_argument("--max-lagrange-multiplier", type=float, default=50.0)
     parser.add_argument("--eval-episodes", type=int, default=10)
     return parser.parse_args()
 
@@ -61,6 +66,11 @@ def main() -> None:
         total_updates=args.total_updates,
         max_episode_steps=args.max_episode_steps,
         cost_penalty=args.cost_penalty,
+        use_lagrangian=args.use_lagrangian,
+        cost_limit=args.cost_limit,
+        lambda_lr=args.lambda_lr,
+        initial_lagrange_multiplier=args.initial_lagrange_multiplier,
+        max_lagrange_multiplier=args.max_lagrange_multiplier,
         seed=args.seed,
     )
     result = train_safety_ppo(
@@ -109,6 +119,11 @@ def train_safety_ppo(
     episode_length = 0
     completed_returns: list[float] = []
     completed_costs: list[float] = []
+    lagrange_multiplier = (
+        float(config.initial_lagrange_multiplier)
+        if config.use_lagrangian
+        else float(config.cost_penalty)
+    )
 
     for update in range(1, config.total_updates + 1):
         rollout = _collect_rollout(
@@ -122,6 +137,7 @@ def train_safety_ppo(
             episode_length=episode_length,
             completed_returns=completed_returns,
             completed_costs=completed_costs,
+            current_cost_penalty=lagrange_multiplier,
         )
         obs = rollout.pop("next_obs")
         episode_return = rollout.pop("episode_return")
@@ -130,12 +146,23 @@ def train_safety_ppo(
 
         _ppo_update(model=model, optimizer=optimizer, rollout=rollout, config=config, device=device)
 
+        if config.use_lagrangian:
+            mean_episode_cost = float(rollout["rollout_mean_episode_cost"])
+            lagrange_multiplier = float(
+                np.clip(
+                    lagrange_multiplier + config.lambda_lr * (mean_episode_cost - config.cost_limit),
+                    0.0,
+                    config.max_lagrange_multiplier,
+                )
+            )
+
         if update == 1 or update % max(1, config.total_updates // 5) == 0:
             recent_return = float(np.mean(completed_returns[-10:])) if completed_returns else 0.0
             recent_cost = float(np.mean(completed_costs[-10:])) if completed_costs else 0.0
             print(
                 f"[{update:04d}/{config.total_updates:04d}] "
-                f"recent_return={recent_return:.4f} recent_cost={recent_cost:.4f}",
+                f"recent_return={recent_return:.4f} recent_cost={recent_cost:.4f} "
+                f"cost_penalty={lagrange_multiplier:.4f}",
                 flush=True,
             )
 
@@ -153,6 +180,7 @@ def train_safety_ppo(
         "environment": env_id,
         "config": config_to_dict(config),
         "evaluation": evaluation,
+        "final_lagrange_multiplier": lagrange_multiplier if config.use_lagrangian else None,
     }
     model.save(output_path, metadata=metadata)
     return {"evaluation": evaluation, "metadata": metadata}
@@ -170,6 +198,7 @@ def _collect_rollout(
     episode_length: int,
     completed_returns: list[float],
     completed_costs: list[float],
+    current_cost_penalty: float,
 ) -> dict[str, Any]:
     observations: list[np.ndarray] = []
     raw_actions: list[np.ndarray] = []
@@ -177,6 +206,7 @@ def _collect_rollout(
     values: list[float] = []
     rewards: list[float] = []
     dones: list[float] = []
+    rollout_completed_costs: list[float] = []
 
     current_obs = obs
     for _ in range(config.rollout_steps):
@@ -187,7 +217,7 @@ def _collect_rollout(
         )
         next_obs, reward, cost, terminated, truncated, _ = env.step(env_action)
         next_obs = np.asarray(next_obs, dtype=np.float32).reshape(-1)
-        reward_value = float(reward) - config.cost_penalty * float(cost)
+        reward_value = float(reward) - float(current_cost_penalty) * float(cost)
         done = bool(terminated or truncated)
 
         observations.append(current_obs)
@@ -205,6 +235,7 @@ def _collect_rollout(
         if done or episode_length >= config.max_episode_steps:
             completed_returns.append(float(episode_return))
             completed_costs.append(float(episode_cost))
+            rollout_completed_costs.append(float(episode_cost))
             current_obs, _ = env.reset()
             current_obs = np.asarray(current_obs, dtype=np.float32).reshape(-1)
             episode_return = 0.0
@@ -230,6 +261,11 @@ def _collect_rollout(
         "old_log_probs": np.asarray(log_probs, dtype=np.float32),
         "advantages": advantages,
         "returns": returns,
+        "rollout_mean_episode_cost": (
+            float(np.mean(rollout_completed_costs))
+            if rollout_completed_costs
+            else float(episode_cost)
+        ),
         "next_obs": current_obs,
         "episode_return": episode_return,
         "episode_cost": episode_cost,
