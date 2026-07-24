@@ -219,6 +219,93 @@ conda run --no-capture-output -n subrep-safety python -m data_collector.collect_
 Repeat for seeds `43` and `44`, then rerun
 `demo.plot_safety_gymnasium_pareto` on the new rollout directories.
 
+## Zero-Shot Reuse Curve
+
+A zero-shot reuse curve was added to show SubRep's unique reuse behavior when
+the motive weights shift after certification. The curve asks:
+
+```text
+After the task/safety priority changes, can SubRep reuse a previously certified
+skill without retraining and still beat the same-context zero-action baseline?
+```
+
+Generate the curve from the same three 100-context rollout directories:
+
+```bash
+.venv/bin/python -m demo.plot_safety_gymnasium_reuse_curve \
+  --rollout-dir data/safety_gymnasium_rollouts_seed42_ctx100 \
+  --rollout-dir data/safety_gymnasium_rollouts_seed43_ctx100 \
+  --rollout-dir data/safety_gymnasium_rollouts_seed44_ctx100 \
+  --pds-epsilon 1.0 \
+  --baseline-retraining-steps 51200 \
+  --output demo/artifacts/safety_gymnasium_zero_shot_reuse_curve.png \
+  --summary-json demo/artifacts/safety_gymnasium_zero_shot_reuse_curve.json
+```
+
+The reference retraining cost is `51,200` environment steps per shifted-weight
+setting, matching the PPO command used in this pilot (`50` updates x `1024`
+rollout steps). SubRep's cost is `0` new training steps because it only
+re-scores the already certified library under the new weights.
+
+Current zero-shot reuse summary from the 300-context rollout set:
+
+| Metric | Value |
+|---|---:|
+| Contexts | 300 |
+| Mean successful reuse rate | 94.2% |
+| Minimum successful reuse rate | 94.0% |
+| Maximum successful reuse rate | 94.3% |
+| Average certified candidates per context | 4.88 |
+| SubRep retraining steps per shift | 0 |
+| Baseline retraining steps per shift | 51,200 |
+
+Selected points from the curve:
+
+| Safety Weight | Task Weight | Successful Reuse | Mean Selected Score |
+|---:|---:|---:|---:|
+| 0.0 | 1.0 | 94.3% | 0.2991 |
+| 0.5 | 0.5 | 94.3% | 0.2195 |
+| 1.0 | 0.0 | 94.0% | 0.1455 |
+
+This supports the zero-shot claim in the SafeRL setting: when the priority moves
+from task-focused to safety-focused, the system can usually reuse an existing
+certified skill immediately instead of retraining a new policy for each weight.
+
+## Certification Ablation
+
+A certification ablation was added to show why the CDS/PDS gates matter. The
+ablation compares:
+
+```text
+SubRep with certification    = select only from CDS/PDS-admitted candidates
+SubRep without certification = select from all candidates using the same score
+```
+
+Generate the ablation summary from the three 100-context rollout directories:
+
+```bash
+.venv/bin/python -m demo.run_safety_gymnasium_certification_ablation \
+  --rollout-dir data/safety_gymnasium_rollouts_seed42_ctx100 \
+  --rollout-dir data/safety_gymnasium_rollouts_seed43_ctx100 \
+  --rollout-dir data/safety_gymnasium_rollouts_seed44_ctx100 \
+  --pds-epsilon 1.0 \
+  --summary-json demo/artifacts/safety_gymnasium_certification_ablation.json
+```
+
+Current ablation result from the 300-context rollout set:
+
+| Query | With Certification Cost | Without Certification Cost | Blocked Selection Rate | Safety-Cost Reduction |
+|---|---:|---:|---:|---:|
+| Task-focused | 0.0133 | 0.1259 | 2.0% | 0.1126 |
+| Safety-focused | 0.0000 | 0.0000 | 0.0% | 0.0000 |
+
+For the task-focused query, removing certification slightly increases score
+from `0.2828` to `0.2903`, but it also increases mean safety cost from `0.0133`
+to `0.1259`. In 6 out of 300 contexts, the best unfiltered candidate was one
+that CDS/PDS would block. This shows the intended tradeoff: certification gives
+up a small amount of task-focused score in exchange for substantially lower
+safety cost and prevents blocked candidates from entering the reusable path.
+
 ## Interpretation
 
 The scaled benchmark supports the same core conclusion as the smaller pilot:
@@ -235,6 +322,10 @@ Key observations:
   scoring.
 - The Pareto plot shows SubRep achieving higher mean task return than PPO with
   much lower safety cost in the current rollout set.
+- The zero-shot reuse curve shows that shifted task/safety priorities can be
+  handled by reusing certified skills with no additional policy training.
+- The certification ablation shows that removing CDS/PDS increases task-focused
+  safety cost and allows blocked candidates to be selected.
 - Certificate counts and SkillLibrary counts remained consistent, preserving the
   store/library safety invariant.
 
