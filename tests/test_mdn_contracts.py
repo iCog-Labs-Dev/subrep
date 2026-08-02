@@ -36,14 +36,33 @@ def test_candidate_skill_record_rejects_invalid_gate_type():
 
 
 def test_candidate_skill_record_rejects_invalid_delta_n_length():
+    """delta_n must describe at least two objectives.
+
+    Previously this pinned "exactly 2". The contract is now length >= 2 so
+    records can describe any objective count, matching the generalized
+    certificate schema and W_x solver.
+    """
     with pytest.raises(ValueError, match="delta_n"):
         CandidateSkillRecord(
             skill_id="skill_a",
             delta_r=0.5,
-            delta_n=(0.2, -0.1, 0.4),
+            delta_n=(0.2,),
             is_certified=True,
             gate_type="CDS",
         )
+
+
+def test_candidate_skill_record_accepts_more_than_two_objectives():
+    """Records must carry M > 2 motive vectors without complaint."""
+    record = CandidateSkillRecord(
+        skill_id="skill_a",
+        delta_r=0.5,
+        delta_n=(0.2, -0.1, 0.4, 0.3, 0.7),
+        is_certified=True,
+        gate_type="CDS",
+    )
+
+    assert record.delta_n == (0.2, -0.1, 0.4, 0.3, 0.7)
 
 
 def test_alpha_to_mean_weights_normalizes_single_vector():

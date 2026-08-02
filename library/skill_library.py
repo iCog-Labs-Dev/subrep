@@ -13,6 +13,7 @@ import numpy as np
 
 from .skill_metadata import SkillEntry, FULL_SIMPLEX, MDN_WX
 from utils.cone_utils import validate_simplex_weights
+from utils.support_geometry import greedy_support_function
 from utils.weight_set_store import WeightSet
 from certification.certificate_schema import Certificate
 from certification.cds_test import CDSGate
@@ -20,17 +21,27 @@ from certification.pds_test import PDSGate
 
 logger = logging.getLogger(__name__)
 
+# Tolerance for the sum(s) >= 1 feasibility test. Support values arrive from a
+# float32 network head, so an exact comparison would spuriously reject regions
+# that are feasible up to rounding.
+_FEAS_TOL = 1e-9
+
 def _validate_wx_geometry(support_directions: np.ndarray, support_values: np.ndarray,) -> tuple[np.ndarray, np.ndarray]:
-    """Validate W_x support geometry for M=2 standard basis"""
+    """Validate W_x support geometry for standard-basis directions, any M >= 2.
+
+    W_x = { w in simplex : w_i <= s_i } is non-empty if and only if every
+    s_i lies in [0, 1] and sum(s) >= 1. Both conditions hold for any M without
+    modification, so this validator carries no per-M special case.
+    """
     sd = np.asarray(support_directions, dtype=np.float64)
     sv = np.asarray(support_values, dtype=np.float64)
-    num_obj = len(sv)
 
-    if num_obj != 2:
+    if sv.ndim != 1 or sv.size < 2:
         raise ValueError(
-            f"W_x vertex reconstruction requires M=2, got M={num_obj}."
+            f"support_values must be a vector of length >= 2, got shape {sv.shape}"
         )
 
+    num_obj = sv.size
     expected_shape = (num_obj, num_obj)
     if sd.shape != expected_shape:
         raise ValueError(
@@ -40,48 +51,90 @@ def _validate_wx_geometry(support_directions: np.ndarray, support_values: np.nda
     basis = np.eye(num_obj, dtype=np.float64)
     if not np.allclose(sd, basis, atol=1e-6):
         raise ValueError(
-            f"W_x vertex reconstruction requires standard basis support directions (identity matrix), got {sd.tolist()}"
+            f"W_x evaluation requires standard basis support directions (identity matrix), got {sd.tolist()}"
         )
-    
+
+    if not np.all(np.isfinite(sv)):
+        raise ValueError(
+            f"support_values must be finite, got {sv.tolist()}"
+        )
+
     if not np.all((sv >= 0.0) & (sv <= 1.0)):
         raise ValueError(
             f"support_values must satisfy 0 ≤ s_i ≤ 1, got {sv.tolist()}"
         )
 
-    if float(np.sum(sv)) < 1.0:
+    if float(np.sum(sv)) < 1.0 - _FEAS_TOL:
         raise ValueError(
-            f"Support values must satisfy s₀ + s₁ ≥ 1, (otherwise W_x is empty), got sum={float(np.sum(sv)):.6f} from {sv.tolist()}"
+            f"support values must satisfy sum(s) ≥ 1, (otherwise W_x is empty), got sum={float(np.sum(sv)):.6f} from {sv.tolist()}"
         )
 
     return sd, sv
 
 def _support_values_feasible(support_values: np.ndarray) -> bool:
-    """Check runtime feasibility of MDN-predicted support values"""
+    """Check runtime feasibility of MDN-predicted support values.
+
+    Kept permanently as defense in depth. SASP makes infeasible output
+    mathematically impossible at the head, so a False here means a regression
+    somewhere else (a refactor, a new head, a checkpoint mismatch) -- which is
+    exactly why this check must not be deleted as unreachable.
+    """
     sv = np.asarray(support_values, dtype=np.float64)
+    if sv.ndim != 1 or sv.size < 2:
+        return False
+    if not np.all(np.isfinite(sv)):
+        return False
     if not np.all((sv >= 0.0) & (sv <= 1.0)):
         return False
-    if float(np.sum(sv)) < 1.0:
+    if float(np.sum(sv)) < 1.0 - _FEAS_TOL:
         return False
     return True
 
+def support_values_feasible(support_values: np.ndarray) -> bool:
+    """Public entry point for the W_x feasibility test.
+
+    Exists so consumers outside this package (the demo pipeline, the Streamlit
+    app) share one definition of feasibility instead of re-deriving the
+    expression inline or importing a private name.
+    """
+    return _support_values_feasible(support_values)
+
 def _compute_wx_worst_case(delta_n: np.ndarray, support_directions: np.ndarray, support_values: np.ndarray,) -> float:
-    """Compute h_{W_x}(-Δn) = max_{w ∈ W_x} w · (-Δn)"""
-    sd, sv = _validate_wx_geometry(support_directions, support_values)
-    neg_delta_n = -np.asarray(delta_n, dtype=np.float64)
+    """Compute h_{W_x}(-Δn) = max_{w ∈ W_x} w · (-Δn) exactly, for any M.
 
-    vertices = np.array([
-        [sv[0], 1.0 - sv[0]],
-        [1.0 - sv[1], sv[1]],
-    ], dtype=np.float64)
+    Delegates to the shared exact greedy solver (O(M log M)) instead of
+    enumerating vertices, whose count grows combinatorially with M.
 
-    scores = vertices @ neg_delta_n
-    return float(np.max(scores))
+    At M = 2 this returns exactly the same value as the legacy two-vertex
+    enumeration: with s_i in [0, 1], W_x is the segment w_0 in [1 - s_1, s_0],
+    whose endpoints are precisely the vertices [s_0, 1-s_0] and [1-s_1, s_1]
+    that the old code built by hand.
+    """
+    _, sv = _validate_wx_geometry(support_directions, support_values)
+    neg_delta_n = -np.asarray(delta_n, dtype=np.float64).reshape(-1)
+
+    if neg_delta_n.size != sv.size:
+        raise ValueError(
+            f"delta_n length {neg_delta_n.size} != support length {sv.size}"
+        )
+
+    return greedy_support_function(neg_delta_n, sv)
 
 def _build_wx_weight_set(support_directions: tuple[tuple[float, ...], ...], support_values: tuple[float, ...],) -> WeightSet:
-    """Reconstruct a WeightSet from W_x support geometry"""
+    """Reconstruct a two-vertex WeightSet from W_x support geometry.
+
+    Retained for M = 2 visualization and audit compatibility only. It is no
+    longer on any certification path: worst-case evaluation goes through
+    _compute_wx_worst_case, which is exact at every M.
+    """
     _, sv = _validate_wx_geometry(
         np.asarray(support_directions), np.asarray(support_values)
     )
+    if sv.size != 2:
+        raise ValueError(
+            f"_build_wx_weight_set is a two-objective visualization helper, "
+            f"got M={sv.size}. Use _compute_wx_worst_case for evaluation at any M."
+        )
 
     ws = WeightSet()
     ws.add_vertex(np.array([sv[0], 1.0 - sv[0]], dtype=np.float32))
@@ -95,6 +148,10 @@ class SkillLibrary:
         self.cert_store = cert_store
         self.save_path = save_path
         self._skills: Dict[str, SkillEntry] = {}
+        # Counted rather than merely logged: a silent exclusion of every
+        # MDN_WX skill was the original bug's worst property. Expected to stay
+        # at zero under SASP; any nonzero reading is a regression signal.
+        self.infeasible_support_events: int = 0
 
     def add_skill(
         self,
@@ -128,19 +185,29 @@ class SkillLibrary:
 
         delta_n_vec = np.asarray(certificate.delta_n, dtype=np.float64)
 
-        # Build the weight set for gate verification.
-        weight_set = None
+        # Re-verify the certificate's math at the library entry point.
+        #
+        # For MDN_WX we evaluate the region's support function directly rather
+        # than materializing vertices, so this works at any M. The gates test
+        # Δr + min_w(w·Δn) >= -ε, and min_w(w·Δn) = -h_{W_x}(-Δn), so the
+        # condition below is identical -- at M = 2 it is exactly the value the
+        # previous two-vertex WeightSet produced.
         if weight_region_type == MDN_WX:
             if wx_support_directions is None or wx_support_values is None:
                 raise ValueError(
                     f"MDN_WX skill '{skill_id}' requires wx_support_directions and wx_support_values for certificate verification."
                 )
-            weight_set = _build_wx_weight_set(
-                wx_support_directions, wx_support_values
+            h_wx = _compute_wx_worst_case(
+                delta_n_vec,
+                np.asarray(wx_support_directions, dtype=np.float64),
+                np.asarray(wx_support_values, dtype=np.float64),
             )
-
-        if not gate.admit(certificate.delta_r, delta_n_vec, weight_set):
-            return False
+            epsilon = float(certificate.epsilon) if certificate.gate_type == "PDS" else 0.0
+            if not float(certificate.delta_r) >= h_wx - epsilon:
+                return False
+        else:
+            if not gate.admit(certificate.delta_r, delta_n_vec, None):
+                return False
 
         entry = SkillEntry(
             skill_id=skill_id,
@@ -232,8 +299,12 @@ class SkillLibrary:
         wx_feasible = True
         if support_values is not None:
             if not _support_values_feasible(support_values):
+                self.infeasible_support_events += 1
                 logger.warning(
-                    "Infeasible support values (outside [0,1] or sum < 1): %s. Excluding MDN_WX skills for this step.",
+                    "Infeasible support values (event #%d, outside [0,1] or sum < 1): %s. "
+                    "Excluding MDN_WX skills for this step. "
+                    "This should be impossible under SASP - investigate immediately.",
+                    self.infeasible_support_events,
                     np.asarray(support_values).tolist(),
                 )
                 wx_feasible = False

@@ -82,8 +82,22 @@ def test_certificate_cds_nonzero_epsilon_fails():
 
 
 def test_certificate_wrong_delta_n_length_fails():
+    """delta_n must describe at least two objectives.
+
+    Previously this pinned "exactly 2" and used a length-3 vector as the
+    negative case. The certificate schema is now length-generic (M >= 2) so the
+    MDN's feasible support geometry can be certified at any objective count, so
+    the negative case is a vector that is too short to describe a trade-off.
+    """
     with pytest.raises(ValueError):
-        _sample_certificate(delta_n=(0.1, 0.2, 0.3))  # type: ignore[arg-type]
+        _sample_certificate(delta_n=(0.1,))  # type: ignore[arg-type]
+
+
+def test_certificate_accepts_more_than_two_objectives():
+    """A three-objective certificate must be constructible."""
+    cert = _sample_certificate(delta_n=(0.1, 0.2, 0.3))  # type: ignore[arg-type]
+
+    assert cert.delta_n == (0.1, 0.2, 0.3)
 
 
 def test_certificate_negative_admission_margin_fails():
@@ -218,7 +232,12 @@ def test_query_by_weights_invalid_values_raise():
     with pytest.raises(ValueError):
         store.query_by_weights([0.5, np.inf])  # non-finite
     with pytest.raises(ValueError):
-        store.query_by_weights([0.5, 0.3, 0.2])  # wrong shape
+        store.query_by_weights([1.0])  # too short to describe a trade-off
+
+    # A length-3 simplex vector is now VALID: the store must be queryable for
+    # certificates with more than two objectives. It used to be rejected on
+    # shape alone, which would have made M > 2 certificates unreachable.
+    assert store.query_by_weights([0.5, 0.3, 0.2]) is not None
 
 
 def test_query_by_weights_raises_even_when_store_empty():

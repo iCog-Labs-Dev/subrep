@@ -39,6 +39,72 @@ def compute_support_values_from_vertices(vertices: np.ndarray, query_directions:
     return np.max(scores, axis=1).astype(np.float32)
 
 
+def greedy_support_function(coefficients: np.ndarray, support_values: np.ndarray) -> float:
+    """Compute h_W(c) = max { w . c : w in simplex, w_i <= s_i } exactly.
+
+    This is a linear program with a closed-form greedy solution: sort the
+    coordinates by coefficient descending and allocate weight to each up to its
+    cap ``s_i`` until total mass 1 is placed. The greedy is exact because the
+    feasible set is the base polytope of a polymatroid (equivalently, the
+    problem is a fractional knapsack), for which greedy allocation is optimal.
+
+    Complexity is O(M log M), the computation is permutation-symmetric by
+    construction, and no vertices are ever materialized -- which is what makes
+    it usable at arbitrary M where explicit vertex enumeration grows
+    combinatorially.
+
+    Feasibility (``sum(s) >= 1``) guarantees the greedy always places full mass.
+    The full simplex is the ``s = 1``-vector special case, for which this
+    reduces to ``max_i(c_i)``.
+
+    Args:
+        coefficients: Objective coefficient vector c, shape (M,).
+        support_values: Per-objective caps s, shape (M,).
+
+    Returns:
+        The support-function value h_W(c).
+    """
+    c = np.asarray(coefficients, dtype=np.float64).reshape(-1)
+    sv = np.asarray(support_values, dtype=np.float64).reshape(-1)
+
+    if c.size != sv.size:
+        raise ValueError(
+            f"coefficients length {c.size} must match support_values length {sv.size}"
+        )
+    if c.size == 0:
+        raise ValueError("coefficients and support_values must be non-empty")
+    if not np.all(np.isfinite(c)):
+        raise ValueError(f"coefficients must be finite, got {c.tolist()}")
+    if not np.all(np.isfinite(sv)):
+        raise ValueError(f"support_values must be finite, got {sv.tolist()}")
+
+    # Stable sort keeps the result deterministic when coefficients tie.
+    order = np.argsort(-c, kind="stable")
+    remaining = 1.0
+    value = 0.0
+    for index in order:
+        take = min(float(sv[index]), remaining)
+        if take <= 0.0:
+            continue
+        value += take * float(c[index])
+        remaining -= take
+        if remaining <= 1e-12:
+            break
+
+    return float(value)
+
+
+def worst_case_over_support_region(delta_n: np.ndarray, support_values: np.ndarray) -> float:
+    """Return min_{w in W_x} w · Δn for W_x = { w in simplex : w_i <= s_i }.
+
+    This is the quantity both admission gates need. It is the negated support
+    function, so it inherits the greedy solver's exactness and O(M log M) cost:
+        min_w (w · Δn) = -max_w (w · (-Δn)) = -h_{W_x}(-Δn)
+    """
+    delta_n_arr = np.asarray(delta_n, dtype=np.float64).reshape(-1)
+    return -greedy_support_function(-delta_n_arr, support_values)
+
+
 def simplex_support_values(query_directions: np.ndarray) -> np.ndarray:
     """Compute support-function values for the full simplex.
     """

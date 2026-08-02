@@ -153,12 +153,20 @@ class CertificateStore:
 
     @staticmethod
     def _validated_weights_array(weights: list[float]) -> np.ndarray:
-        """Validate and return a 2D simplex weight array for this phase."""
+        """Validate and return a simplex weight array for any M >= 2.
+
+        Widened from an exactly-two-objective check so certificates carrying
+        M > 2 motive vectors can be queried. M = 2 behavior is unchanged: a
+        valid length-2 simplex vector still passes, and every previously
+        rejected length-2 input is still rejected by validate_simplex_weights.
+        """
         if weights is None:
             raise ValueError("weights must not be None")
         arr = np.asarray(weights, dtype=float)
-        if arr.shape != (2,):
-            raise ValueError(f"weights must be a length-2 vector, got shape {arr.shape}")
+        if arr.ndim != 1 or arr.shape[0] < 2:
+            raise ValueError(
+                f"weights must be a vector of length >= 2, got shape {arr.shape}"
+            )
         if not validate_simplex_weights(arr):
             raise ValueError(
                 "weights must be a valid simplex vector (finite, non-negative, sum to 1)"
