@@ -108,6 +108,99 @@ class TestLoadMDNOrStub:
             assert not isinstance(loaded_model, StubMDN)
             assert loaded_model.input_dim == 4
 
+    def test_m5_checkpoint_returns_real_mdn(self):
+        """SASP is feasible at any M, so loading must not be M=2-specific."""
+        real_model = MotiveDecompositionNetwork(input_dim=8, num_objectives=5)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ckpt_path = Path(tmpdir) / "valid_m5.pt"
+            torch.save(real_model.state_dict(), ckpt_path)
+
+            loaded = load_mdn_or_stub(ckpt_path, input_dim=8, num_objectives=5)
+
+            assert isinstance(loaded, MotiveDecompositionNetwork)
+            assert loaded.num_objectives == 5
+            assert loaded.support_head.out_features == 10
+
+
+class TestLegacyCheckpointMigration:
+    """Pre-SASP checkpoints must fail loudly, never be reinterpreted.
+
+    SASP widened the support head from M to 2M outputs. A legacy checkpoint's
+    weights are not a subset of the new head's meaning, so loading them would
+    silently produce wrong support geometry -- the exact class of invisible
+    failure this task exists to remove.
+    """
+
+    @staticmethod
+    def _write_legacy_checkpoint(path: Path, num_objectives: int = 2) -> None:
+        """Build a state dict whose support head has the pre-SASP width M."""
+        model = MotiveDecompositionNetwork(
+            input_dim=8, num_objectives=num_objectives, hidden_dim=16
+        )
+        state = dict(model.state_dict())
+        # Shrink the support head back to its legacy M-wide shape.
+        state["support_head.weight"] = state["support_head.weight"][:num_objectives]
+        state["support_head.bias"] = state["support_head.bias"][:num_objectives]
+        torch.save({"model_state_dict": state}, path)
+
+    def test_load_mdn_or_stub_falls_back_on_legacy_head(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "legacy.pth"
+            self._write_legacy_checkpoint(path)
+
+            model = load_mdn_or_stub(path, input_dim=8, num_objectives=2)
+
+            # Falls back rather than reinterpreting weights.
+            assert isinstance(model, StubMDN)
+
+    def test_load_mdn_checkpoint_raises_actionable_error(self):
+        from utils.mdn_checkpoint_loader import (
+            IncompatibleCheckpointError,
+            load_mdn_checkpoint,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "legacy.pth"
+            self._write_legacy_checkpoint(path)
+
+            # This loader has no stub contract, so it must propagate.
+            with pytest.raises(IncompatibleCheckpointError) as exc_info:
+                load_mdn_checkpoint(path)
+
+            message = str(exc_info.value)
+            assert "legacy support head" in message
+            assert "2*M=4" in message
+            # The message must tell the operator what to actually do.
+            assert "train_mdn_candidate_sets" in message
+
+    def test_sasp_checkpoint_passes_compatibility_check(self):
+        from utils.mdn_checkpoint_loader import (
+            assert_support_head_compatible,
+            load_mdn_checkpoint,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sasp.pth"
+            model = MotiveDecompositionNetwork(
+                input_dim=8, num_objectives=3, hidden_dim=16
+            )
+            torch.save({"model_state_dict": model.state_dict()}, path)
+
+            assert_support_head_compatible(model.state_dict())  # must not raise
+            loaded = load_mdn_checkpoint(path)
+
+            assert loaded.num_objectives == 3
+            assert loaded.support_head.out_features == 6
+
+    def test_compatibility_check_tolerates_partial_state_dicts(self):
+        """A state dict without the relevant keys is not our failure to report."""
+        from utils.mdn_checkpoint_loader import assert_support_head_compatible
+
+        assert_support_head_compatible({})  # must not raise
+        assert_support_head_compatible(
+            {"support_head.weight": torch.zeros(4, 8)}  # no distribution head
+        )
+
     def test_stub_functions_in_mdn_runtime_selector(self):
         """Prove that the stub is interface-compatible with the main runtime selector."""
         stub = StubMDN(fixed_alpha=[2.0, 2.0], fixed_support_values=[1.0, 1.0])

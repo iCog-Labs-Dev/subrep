@@ -95,3 +95,84 @@ def test_support_trainer_checkpoint_round_trip(tmp_path: Path):
         restored_output = restored_trainer.model.forward_inference(torch.tensor((0.1,) * 8, dtype=torch.float32))[1]
 
     assert torch.allclose(original_output, restored_output)
+
+
+def test_support_trainer_reports_zero_feasibility_violations():
+    """The train-time diagnostic must read exactly 0.0 under SASP.
+
+    This is Approach 2's penalty surviving as a regression tripwire rather than
+    a corrective term: feasibility is algebraic under SASP, so any nonzero
+    reading means a code regression (a new head, a bypassed decoder), not a
+    hyperparameter that needs tuning.
+    """
+    torch.manual_seed(0)
+    model = MotiveDecompositionNetwork()
+    trainer = MDNSupportTrainer(
+        model,
+        _store_with_targets(),
+        config=SupportTrainerConfig(),
+        device="cpu",
+    )
+
+    assert trainer.last_feasibility_violation_rate == 0.0
+
+    for _ in range(5):
+        trainer.training_step()
+        assert trainer.last_feasibility_violation_rate == 0.0
+
+
+def test_support_trainer_feasibility_diagnostic_detects_violations():
+    """The diagnostic must actually be able to fail, or it proves nothing."""
+    rate = MDNSupportTrainer._feasibility_violation_rate(
+        torch.tensor(
+            [
+                [0.8, 0.4],   # feasible
+                [0.4, 0.4],   # sum < 1 -> empty region
+                [1.4, 0.2],   # s_i > 1
+                [-0.1, 1.2],  # s_i < 0
+            ]
+        )
+    )
+
+    assert abs(rate - 0.75) < 1e-9
+
+
+def test_support_trainer_diagnostic_is_zero_for_feasible_batch():
+    rate = MDNSupportTrainer._feasibility_violation_rate(
+        torch.tensor([[0.8, 0.4], [1.0, 1.0], [0.5, 0.5]])
+    )
+
+    assert rate == 0.0
+
+
+def test_support_trainer_rejects_legacy_support_checkpoint(tmp_path: Path):
+    """SASP changed the head width, so optimizer state shapes changed too.
+
+    from_checkpoint restores optimizer_state_dict for an optimizer over
+    support_head.parameters(); a pre-SASP checkpoint must be rejected with the
+    shared migration error rather than failing opaquely inside Adam.
+    """
+    import pytest
+
+    from utils.mdn_checkpoint_loader import IncompatibleCheckpointError
+
+    model = MotiveDecompositionNetwork()
+    store = _store_with_targets()
+    trainer = MDNSupportTrainer(model, store, config=SupportTrainerConfig(), device="cpu")
+    trainer.training_step()
+
+    checkpoint_path = tmp_path / "legacy_support.pth"
+    trainer.save_checkpoint(checkpoint_path)
+
+    # Rewrite the saved head to its pre-SASP M-wide shape.
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state = payload["model_state_dict"]
+    state["support_head.weight"] = state["support_head.weight"][:2]
+    state["support_head.bias"] = state["support_head.bias"][:2]
+    torch.save(payload, checkpoint_path)
+
+    restored_model = MotiveDecompositionNetwork()
+    with pytest.raises(IncompatibleCheckpointError, match="legacy support head"):
+        MDNSupportTrainer.from_checkpoint(
+            checkpoint_path, restored_model, store, device="cpu"
+        )

@@ -20,7 +20,10 @@ from certification.cds_test import CDSGate
 from certification.metta_storage import CertificateStore
 from certification.pds_test import PDSGate
 from generator.mdn_runtime_selector import MDNRuntimeSelector
-from library.skill_library import SkillLibrary
+from library.skill_library import (
+    SkillLibrary,
+    support_values_feasible as library_support_values_feasible,
+)
 from utils.mdn_stub import StubMDN, load_mdn_or_stub
 
 
@@ -181,13 +184,19 @@ def build_mdn_selection_trace(
 
 
 def support_geometry_feasible(values: Any) -> bool:
-    """Return whether 2-objective support values define a non-empty region."""
+    """Return whether support values define a non-empty W_x region, any M >= 2.
+
+    Delegates to the library helper so the demo cannot drift from the
+    feasibility definition the runtime actually enforces. Previously this
+    duplicated the conditions inline and additionally required exactly two
+    objectives; the None-tolerance is kept because the Streamlit app calls this
+    with values read straight from a report that may not have them.
+    """
     if values is None:
         return False
-    support = np.asarray(values, dtype=np.float64).reshape(-1)
-    if support.shape != (2,):
-        return False
-    return bool(np.all(support >= 0.0) and np.all(support <= 1.0) and float(np.sum(support)) >= 1.0)
+    return library_support_values_feasible(
+        np.asarray(values, dtype=np.float64).reshape(-1)
+    )
 
 
 def build_failed_skill_rejection_probe() -> dict[str, Any]:

@@ -4,10 +4,12 @@ This directory contains two learning components:
 
 - `SkillGenerator`: a 2-head MLP that predicts rollout payoff and 2D motive returns.
 - `MotiveDecompositionNetwork` (MDN): a shared network that predicts motive weights,
-  2D support geometry, admission gates, and auxiliary motive returns.
+  support geometry, admission gates, and auxiliary motive returns.
 
-The current implementation targets MO-LunarLander with two objectives:
-`[Safety, Fuel]`.
+The shipping configuration targets MO-LunarLander with two objectives
+`[Safety, Fuel]`, but the MDN support head and the whole certification chain
+(validation, worst-case evaluation, certificate schema, MeTTa storage) are
+correct for any objective count `M >= 2`.
 
 ## Skill Generator
 
@@ -47,16 +49,85 @@ learner in the current implementation.
 - `forward_inference(context) -> (alpha, support_values)`
 - `forward_auxiliary(context, skill_id) -> (gate_logit, q_hat)`
 
-For `num_objectives == 2`, support values are decoded as feasible interval
-geometry by construction:
+### Support Geometry: SASP (Softmax-Anchored Slack Parameterization)
 
-- `0 <= s0 <= 1`
-- `0 <= s1 <= 1`
-- `s0 + s1 >= 1`
+Support values are decoded so that the admissible region
+`W_x = { w in simplex : w_i <= s_i }` is **feasible by construction at every
+objective count M**, not just at M = 2:
 
-For non-2D objective counts, the model preserves the older non-negative
-Softplus support path. General higher-dimensional `W_x` projection is future
-work.
+- `0 <= s_i <= 1` for every objective (boundedness)
+- `sum(s) >= 1` (non-emptiness — otherwise no weight vector can respect every
+  per-objective cap while summing to 1, and `W_x` describes nothing)
+
+The support head emits `2M` logits, split into two groups:
+
+```python
+p = softmax(raw[..., :M])                              # sums to 1, p_i in (0, 1)
+g = slack_floor + (1 - slack_floor) * sigmoid(raw[..., M:])  # g_i in (g_min, 1)
+s = p + (1 - p) * g
+```
+
+Each `s_i` interpolates between its base allocation `p_i` and the ceiling 1.
+Boundedness holds because `s_i` is a convex combination of `p_i` and 1;
+non-emptiness because `sum(s) = sum(p) + sum((1 - p_i) * g_i) >= sum(p) = 1`.
+Both are algebraic, so they hold for any network weights, at every training
+step and at inference — no penalty term or loss tuning is involved.
+
+The construction is **permutation-equivariant**: softmax is applied jointly and
+symmetrically across objectives and the gates are elementwise, so no objective
+is structurally privileged by its index. This is what a sequentially chained
+construction cannot offer, and SubRep's objectives have no natural ordering.
+
+`slack_floor` (default `0.02`, must lie in `[0, 1)`) keeps `W_x` from
+collapsing to the single point `s = p`. A collapsed region would certify skills
+against essentially one weighting — mathematically valid but a fragile
+certificate.
+
+> **Replaces the previous behavior.** Earlier versions decoded a feasible
+> interval only for `num_objectives == 2` and fell back to a raw Softplus path
+> (range `(0, inf)`) for every other M. Softplus enforces positivity but neither
+> constraint above, so support values could exceed 1 or sum below 1. The
+> downstream effect was silent: the skill library excluded every MDN_WX-certified
+> skill at that context and fell back to full-simplex skills behind a log line.
+
+### Checkpoint compatibility (breaking change)
+
+The support head widened from `M` to `2M` outputs, so **pre-SASP checkpoints
+cannot be loaded** — their weights are not a subset of the new head's meaning.
+Both loaders detect this and raise `IncompatibleCheckpointError` with a
+migration message:
+
+- `utils.mdn_stub.load_mdn_or_stub` — logs the message and falls back to
+  `StubMDN`; weights are never reinterpreted.
+- `utils.mdn_checkpoint_loader.load_mdn_checkpoint` — propagates, since callers
+  of this function have no stub contract.
+
+A legacy checkpoint must be retrained (see *Train the MDN* below).
+
+### Where support values are actually trained
+
+`train_mdn_candidate_sets` optimizes a **policy** loss
+(`compute_mdn_policy_loss(log_prob, advantage)`) that is a function of the
+Dirichlet `alpha` only, so **the support head receives no gradient from it**.
+Re-running candidate-set training after a SASP migration produces a
+shape-correct checkpoint with a freshly initialized support head — which is
+still feasible by construction, but not *fit*.
+
+Support values are trained separately by `MDNSupportTrainer`
+(`generator/mdn_support_trainer.py`), which regresses them against
+support-function targets from a `WeightSetStore`, driven via
+`utils.mdn_support_pipeline.observe_and_train_support`.
+
+Two things to know about that trainer:
+
+- It exposes `last_feasibility_violation_rate`, a **diagnostic only** — never
+  added to the loss. It must read exactly `0.0`; a nonzero value indicates a
+  code regression, not a hyperparameter to tune.
+- Targets are left at their measured values, including the exact `1.0` that the
+  full simplex produces. SASP yields `s_i < 1` strictly, so the support-head MSE
+  **plateaus slightly above zero** rather than converging to ~0, and slack-gate
+  logits grow large. This is expected, not a bug: gradient clipping is already
+  applied, and the feasibility guarantee is unaffected.
 
 ## Candidate-Set Data Collection
 
@@ -144,12 +215,14 @@ Reference held-out validation after the support-geometry fix:
 | Q/motive MSE | 601.65 |
 | Q/motive MAE | 13.37 |
 
-### 5. Validate 2-Objective Support Geometry
+### 5. Validate Support Geometry
 
-After training, the MDN should still produce valid 2-objective support values:
+After training, the MDN must still produce feasible support values. Under SASP
+this is guaranteed algebraically, so this check is a regression tripwire rather
+than a quality measurement — it should be impossible to fail:
 
 ```bash
-.venv/bin/python - <<'PY'
+python - <<'PY'
 from pathlib import Path
 import numpy as np
 import torch
@@ -163,6 +236,7 @@ with torch.no_grad():
     alpha, support = model.forward_inference(torch.tensor(contexts, dtype=torch.float32))
 
 print("contexts_checked:", len(files))
+print("objectives:", support.shape[-1])
 print("alpha_min:", float(alpha.min()))
 print("support_min:", float(support.min()))
 print("support_max:", float(support.max()))
@@ -176,11 +250,18 @@ print("MDN support geometry check passed")
 PY
 ```
 
+Note this reads `data/mdn_candidate_sets_eval`, which is **not** committed —
+collect it first with the held-out command under *Candidate-Set Data
+Collection* above. A legacy checkpoint will raise
+`IncompatibleCheckpointError` here rather than producing wrong geometry.
+
 ## Tests
 
 ```bash
 python -m pytest tests/test_generator.py tests/test_generator_training.py -v
 python -m pytest tests/test_mdn.py tests/test_mdn_skill_selection.py -v
+# SASP guarantees + downstream generalization
+python -m pytest tests/test_skill_library.py tests/test_mdn_support_trainer.py tests/test_mdn_stub.py -v
 python -m pytest tests/test_train_mdn_candidate_sets.py tests/test_evaluate_mdn_candidate_sets.py -v
 python -m pytest tests/test_trained_mdn_end_to_end.py tests/test_trained_mdn_zero_shot.py -v
 ```

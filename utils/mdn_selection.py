@@ -52,12 +52,22 @@ def score_candidate(candidate: CandidateSkillRecord, weights: np.ndarray) -> flo
         raise ValueError(f"candidate {candidate.skill_id!r} is not certified and cannot be scored")
 
     weights = np.asarray(weights, dtype=np.float64).reshape(-1)
-    if weights.shape != (2,):
-        raise ValueError(f"weights must have shape (2,), got {weights.shape}")
+    # Length is checked against the candidate's own objective count rather than
+    # pinned to 2, matching softmax_selection_probabilities below and the
+    # generalized W_x solver. A mismatch is still an error -- np.dot would
+    # otherwise broadcast or raise less clearly.
+    delta_n = np.asarray(candidate.delta_n, dtype=np.float64)
+    if weights.shape[0] < 2:
+        raise ValueError(f"weights must have length >= 2, got {weights.shape}")
+    if weights.shape[0] != delta_n.shape[0]:
+        raise ValueError(
+            f"weights length {weights.shape[0]} must match candidate delta_n "
+            f"length {delta_n.shape[0]}"
+        )
     if not np.all(np.isfinite(weights)):
         raise ValueError("weights must contain only finite values")
 
-    return float(candidate.delta_r + float(np.dot(weights, np.asarray(candidate.delta_n, dtype=np.float64))))
+    return float(candidate.delta_r + float(np.dot(weights, delta_n)))
 
 
 def select_best_candidate(candidates: tuple[CandidateSkillRecord, ...] | list[CandidateSkillRecord], weights: np.ndarray) -> tuple[str, float]:

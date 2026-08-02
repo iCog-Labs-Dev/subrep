@@ -44,8 +44,8 @@ class PreparedCandidateOutcome:
         object.__setattr__(self, "payoff", payoff)
 
         motives = np.asarray(self.motives, dtype=np.float32).reshape(-1)
-        if motives.shape != (2,):
-            raise ValueError(f"motives must have shape (2,), got {motives.shape}")
+        if motives.shape[0] < 2:
+            raise ValueError(f"motives must have length >= 2, got {motives.shape}")
         if not np.all(np.isfinite(motives)):
             raise ValueError("motives must contain only finite values")
         object.__setattr__(self, "motives", tuple(float(v) for v in motives))
