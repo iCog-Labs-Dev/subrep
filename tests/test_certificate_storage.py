@@ -128,6 +128,33 @@ def test_store_add_get_count_and_contains():
     assert store.get_certificate("skill_a") == cert
 
 
+def test_store_initializes_indices_from_existing_backing_space():
+    """A restarted store should see certificates already in the MeTTa space."""
+    owner = CertificateStore()
+    cert = _sample_certificate(skill_id="backing_existing")
+    owner._space.add_atom(cert_to_atom(cert))
+
+    restarted = CertificateStore(space=owner._space)
+
+    assert restarted.count() == 1
+    assert restarted.contains("backing_existing") is True
+    assert restarted.get_certificate("backing_existing") == cert
+    assert [item.skill_id for item in restarted.load_all()] == ["backing_existing"]
+
+
+def test_store_resync_removes_duplicate_backing_atoms_for_same_skill():
+    """Duplicate backing atoms should collapse to one Python certificate entry."""
+    owner = CertificateStore()
+    cert = _sample_certificate(skill_id="duplicate_backing")
+    owner._space.add_atom(cert_to_atom(cert))
+    owner._space.add_atom(cert_to_atom(cert))
+
+    restarted = CertificateStore(space=owner._space)
+
+    assert restarted.count() == 1
+    assert len(restarted._certificate_atoms()) == 1
+
+
 def test_store_duplicate_skill_rejected():
     store = CertificateStore()
     cert = _sample_certificate(skill_id="duplicate_case")
@@ -140,6 +167,20 @@ def test_store_get_and_remove_missing_skill():
     store = CertificateStore()
     assert store.get_certificate("missing") is None
     assert store.remove_skill("missing") is False
+
+
+def test_remove_skill_falls_back_to_untracked_backing_atom():
+    """Rollback must remove certificates even when Python indices missed them."""
+    store = CertificateStore()
+    cert = _sample_certificate(skill_id="untracked_remove")
+    store._space.add_atom(cert_to_atom(cert))
+
+    assert store.remove_skill("untracked_remove") is True
+    assert store.count() == 0
+
+    restarted = CertificateStore(space=store._space)
+    assert restarted.count() == 0
+    assert restarted.get_certificate("untracked_remove") is None
 
 
 def test_query_by_gate_type_filters_and_normalizes():
@@ -250,6 +291,32 @@ def test_save_and_load_file_roundtrip_replaces_store():
         assert loaded.count() == 1
         loaded.load_from_file(file_path)
         assert loaded.count() == 2
+    finally:
+        if file_path.exists():
+            file_path.unlink()
+
+
+def test_load_from_file_removes_untracked_backing_atoms():
+    """load_from_file replace semantics must clear stale atoms in backing space."""
+    stale = _sample_certificate(skill_id="stale_backing")
+    fresh = _sample_certificate(skill_id="fresh_from_file", gate_type="CDS")
+    store = CertificateStore()
+    store._space.add_atom(cert_to_atom(stale))
+
+    file_path = Path.cwd() / f"replace_{uuid4().hex}.metta"
+    try:
+        file_path.write_text(f"{serialize_atom(cert_to_atom(fresh))}\n", encoding="utf-8")
+
+        store.load_from_file(file_path)
+
+        assert store.count() == 1
+        assert store.contains("fresh_from_file") is True
+        assert store.contains("stale_backing") is False
+
+        restarted = CertificateStore(space=store._space)
+        assert restarted.count() == 1
+        assert restarted.contains("fresh_from_file") is True
+        assert restarted.contains("stale_backing") is False
     finally:
         if file_path.exists():
             file_path.unlink()

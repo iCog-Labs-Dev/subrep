@@ -138,3 +138,34 @@ def test_safety_gymnasium_pipeline_requires_baseline_candidate(tmp_path):
             report_json_path=tmp_path / "report.json",
             report_md_path=tmp_path / "report.md",
         )
+
+
+def test_safety_gymnasium_pipeline_rolls_back_when_library_rejects(tmp_path, monkeypatch):
+    """A library admission failure must not leak certificates into storage."""
+    rollout_dir = tmp_path / "rollouts"
+    rollout_dir.mkdir()
+    _write_rollout_file(rollout_dir / "safety_rollout_00001.npz")
+
+    def reject_skill(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(
+        "utils.safety_gymnasium_pipeline.SkillLibrary.add_skill",
+        reject_skill,
+    )
+
+    result = run_safety_gymnasium_certification_pipeline(
+        rollout_dir=rollout_dir,
+        pds_epsilon=1.0,
+        cert_file=tmp_path / "certificates.metta",
+        library_file=tmp_path / "library.json",
+        report_json_path=tmp_path / "report.json",
+        report_md_path=tmp_path / "report.md",
+    )
+
+    assert result.cert_store.count() == 0
+    assert result.library.count() == 0
+    assert result.stats["cert_store_count"] == 0
+    assert result.stats["library_size"] == 0
+    assert result.stats["admitted"] == 0
+    assert result.stats["rejected"] == 4

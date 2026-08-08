@@ -134,19 +134,15 @@ def run_safety_gymnasium_certification_pipeline(
                     environment=record["env_id"],
                     episode_length=int(record["step_counts"][candidate_idx]),
                 )
-                store_added = cert_store.add(certificate)
-                lib_added = False
-                if store_added:
-                    lib_added = library.add_skill(
-                        skill_id,
-                        certificate,
-                        _replay_only_policy,
-                    )
-                if not (store_added and lib_added):
-                    if store_added:
-                        cert_store.remove_skill(skill_id)
+                admitted_to_store, admission_error = _add_skill_transactionally(
+                    cert_store=cert_store,
+                    library=library,
+                    skill_id=skill_id,
+                    certificate=certificate,
+                )
+                if not admitted_to_store:
                     admitted = False
-                    failure_reason = "library.add_skill() rejected after math re-verification"
+                    failure_reason = admission_error
 
             episode_dict = {
                 "skill_id": skill_id,
@@ -177,11 +173,7 @@ def run_safety_gymnasium_certification_pipeline(
                 }
             )
 
-            if cert_store.count() != library.count():
-                raise AssertionError(
-                    "SafeRL certification invariant failed: "
-                    f"cert_store.count()={cert_store.count()} != library.count()={library.count()}"
-                )
+            _verify_store_library_invariant(cert_store, library, context=f"skill_id={skill_id}")
 
         context_comparisons.append(
             _compile_context_comparison(
@@ -287,6 +279,61 @@ def _make_certificate(
         episode_length=max(1, int(episode_length)),
         version="safety-gymnasium-0.1.0",
         weight_region_type="FULL_SIMPLEX",
+    )
+
+
+def _add_skill_transactionally(
+    *,
+    cert_store: CertificateStore,
+    library: SkillLibrary,
+    skill_id: str,
+    certificate: Certificate,
+) -> tuple[bool, str | None]:
+    """Add a certificate and runtime skill with rollback on any library failure."""
+    store_added = cert_store.add(certificate)
+    if not store_added:
+        return False, "cert_store.add() rejected duplicate or stale certificate"
+
+    try:
+        lib_added = library.add_skill(skill_id, certificate, _replay_only_policy)
+    except Exception as exc:
+        removed = cert_store.remove_skill(skill_id)
+        if not removed:
+            cert_store.resync()
+        raise RuntimeError(
+            f"library.add_skill() raised after cert_store.add(); rollback_removed={removed}"
+        ) from exc
+
+    if lib_added:
+        return True, None
+
+    removed = cert_store.remove_skill(skill_id)
+    if not removed:
+        cert_store.resync()
+    _verify_store_library_invariant(
+        cert_store,
+        library,
+        context=f"rollback after library.add_skill() rejection for {skill_id}",
+    )
+    return False, "library.add_skill() rejected after math re-verification"
+
+
+def _verify_store_library_invariant(
+    cert_store: CertificateStore,
+    library: SkillLibrary,
+    *,
+    context: str,
+) -> None:
+    """Ensure the certificate store and runtime library stay synchronized."""
+    if cert_store.count() == library.count():
+        return
+    cert_store.resync()
+    if cert_store.count() == library.count():
+        return
+    raise RuntimeError(
+        "SafeRL certification invariant failed after resync: "
+        f"cert_store.count()={cert_store.count()} != library.count()={library.count()} "
+        f"({context})"
     )
 
 
