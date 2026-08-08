@@ -23,25 +23,51 @@ class CertificateStore:
         self._metta = MeTTa()
         # Default to this runner's program space unless caller injects one.
         self._space = space if space is not None else self._metta.space()
+        # Keep a Python-side index for stable runtime access. Hyperon remains
+        # the backing audit space, but some Hyperon builds can be fragile when
+        # repeatedly scanning atoms through get_atoms().
+        self._certificates: dict[str, Certificate] = {}
+        self._atoms_by_skill: dict[str, Any] = {}
+        self.resync()
+
+    def resync(self) -> None:
+        """Refresh Python indices from the Hyperon backing space."""
+        self._certificates.clear()
+        self._atoms_by_skill.clear()
+
+        for atom in self._certificate_atoms():
+            try:
+                cert = atom_to_cert(atom)
+            except ValueError:
+                continue
+            if cert.skill_id in self._certificates:
+                # Skill IDs are unique store keys. Keep the first valid backing
+                # atom and remove stale duplicates so future scans stay clean.
+                self._space.remove_atom(atom)
+                continue
+            self._certificates[cert.skill_id] = cert
+            self._atoms_by_skill[cert.skill_id] = atom
 
     def add(self, certificate: Certificate) -> bool:
         """Add a certificate if its skill_id is not already present."""
         # Skill IDs are treated as unique store keys.
         if self.contains(certificate.skill_id):
             return False
+        if self._find_certificate_atom(certificate.skill_id) is not None:
+            self.resync()
+            return False
         atom = cert_to_atom(certificate)
         self._space.add_atom(atom)
+        self._certificates[certificate.skill_id] = certificate
+        self._atoms_by_skill[certificate.skill_id] = atom
         return True
 
     def contains(self, skill_id: str) -> bool:
-        return self.get_certificate(skill_id) is not None
+        return skill_id in self._certificates
 
     def get_certificate(self, skill_id: str) -> Optional[Certificate]:
         """Return certificate by skill_id, or None when missing."""
-        atom = self._find_certificate_atom(skill_id)
-        if atom is None:
-            return None
-        return atom_to_cert(atom)
+        return self._certificates.get(skill_id)
 
     def query_by_gate_type(self, gate_type: str) -> list[Certificate]:
         """Return certificates matching gate type ('CDS' or 'PDS')."""
@@ -75,22 +101,23 @@ class CertificateStore:
 
     def remove_skill(self, skill_id: str) -> bool:
         """Remove a certificate by skill_id. Returns False when missing."""
-        atom = self._find_certificate_atom(skill_id)
+        atom = self._atoms_by_skill.pop(skill_id, None)
         if atom is None:
-            return False
+            atom = self._find_certificate_atom(skill_id)
+            if atom is None:
+                self._certificates.pop(skill_id, None)
+                return False
+        self._certificates.pop(skill_id, None)
         self._space.remove_atom(atom)
+        self.resync()
         return True
 
     def load_all(self) -> list[Certificate]:
         """Load all certificate atoms and convert them to certificate objects."""
-        certs: list[Certificate] = []
-        for atom in self._space.get_atoms():
-            if self._is_certificate_atom(atom):
-                certs.append(atom_to_cert(atom))
-        return certs
+        return list(self._certificates.values())
 
     def count(self) -> int:
-        return len(self.load_all())
+        return len(self._certificates)
 
     def save_to_file(self, path: str | Path) -> None:
         """Persist all certificates as one deterministic expression per line."""
@@ -124,11 +151,18 @@ class CertificateStore:
             seen.add(cert.skill_id)
             parsed_certs.append(cert)
 
-        # Replace semantics: remove all current certificate atoms, then add parsed.
+        # Replace semantics: remove all current certificate atoms from the
+        # backing space, including any atoms not tracked by Python indices.
         for atom in self._certificate_atoms():
             self._space.remove_atom(atom)
+        self._certificates.clear()
+        self._atoms_by_skill.clear()
         for cert in parsed_certs:
-            self._space.add_atom(cert_to_atom(cert))
+            atom = cert_to_atom(cert)
+            self._space.add_atom(atom)
+            self._certificates[cert.skill_id] = cert
+            self._atoms_by_skill[cert.skill_id] = atom
+        self.resync()
 
     def _certificate_atoms(self) -> list[Any]:
         return [atom for atom in self._space.get_atoms() if self._is_certificate_atom(atom)]

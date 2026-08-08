@@ -98,8 +98,77 @@ python -m demo.run_full_pipeline
 If `models/mdn_policy_best.pth` is present, the admission report records
 `mdn_source: trained_checkpoint`. Otherwise it records `mdn_source: stub`.
 
+## Optional Safety-Gymnasium Rollout Records
+
+Default path:
+
+```text
+data/safety_gymnasium_rollouts/*.npz
+```
+
+Collect SafeRL candidate rollouts:
+
+```bash
+conda run --no-capture-output -n subrep-safety python -m pilot.train_safety_gymnasium_ppo \
+  --env-id SafetyPointGoal1-v0 \
+  --total-updates 5 \
+  --rollout-steps 256 \
+  --update-epochs 2 \
+  --minibatch-size 128 \
+  --max-episode-steps 200 \
+  --eval-episodes 5 \
+  --output models/safety_ppo_point_goal.pt
+
+conda run --no-capture-output -n subrep-safety python -m data_collector.collect_safety_gymnasium_rollouts \
+  --env-id SafetyPointGoal1-v0 \
+  --contexts 25 \
+  --max-steps 200 \
+  --save-dir data/safety_gymnasium_rollouts \
+  --seed 42 \
+  --ppo-checkpoint models/safety_ppo_point_goal.pt
+```
+
+Per-file schema:
+
+| Key | Shape | Description |
+|---|---:|---|
+| `env_id` | scalar/string | Safety-Gymnasium environment ID |
+| `context` | `(obs_dim,)` | Shared initial observation |
+| `context_seed` | scalar/int | Reset seed used for the shared context |
+| `candidate_skill_ids` | `(K,)` | Candidate policy identifiers |
+| `candidate_payoffs` | `(K,)` | Discounted task payoff per candidate |
+| `candidate_motives` | `(K, 2)` | Discounted `[Safety, Task]` returns, where `Safety = -cost` |
+| `candidate_safety_costs` | `(K,)` | Positive discounted safety cost |
+| `candidate_task_returns` | `(K,)` | Discounted task reward |
+| `step_counts` | `(K,)` | Executed step count per candidate |
+| `stop_reasons` | `(K,)` | Stop reason per candidate rollout |
+
+If `--ppo-checkpoint` is provided and the checkpoint exists,
+`ppo_deterministic` is included as an additional candidate. Without that
+checkpoint, the collector still runs the simple-policy pilot and the PPO
+baseline is reported as `n/a`.
+
+Certify collected SafeRL rollouts:
+
+```bash
+python -m demo.run_safety_gymnasium_pipeline \
+  --rollout-dir data/safety_gymnasium_rollouts \
+  --pds-epsilon 1.0
+```
+
+This uses `zero_action` as the same-context baseline, computes `delta_r` and
+`delta_n` for the remaining candidates, runs CDS/PDS, stores only admitted
+certificates, and writes:
+
+```text
+data/safety_gymnasium_certificates.metta
+data/safety_gymnasium_library.json
+demo/artifacts/safety_gymnasium_admission_report.json
+demo/artifacts/safety_gymnasium_admission_report.md
+```
+
 ## Tests
 
 ```bash
-python -m pytest tests/test_data_collector.py tests/test_mdn_data_adapter.py -v
+python -m pytest tests/test_data_collector.py tests/test_mdn_data_adapter.py tests/test_safety_gymnasium_pipeline.py -v
 ```

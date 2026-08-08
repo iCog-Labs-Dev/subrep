@@ -12,6 +12,7 @@ from utils.subrep_demo_data import (
     build_failed_skill_rejection_probe,
     build_mdn_selection_trace,
     build_skill_rows,
+    build_zero_shot_performance_rows,
     count_metta_certificates,
     load_demo_artifacts,
     support_geometry_feasible,
@@ -84,6 +85,41 @@ def test_build_mdn_selection_trace_uses_stub_when_checkpoint_missing(tmp_path: P
     assert trace["decisions"][0]["status"] == "selected"
     assert trace["decisions"][0]["selected_skill_id"] == "skill_a"
     assert trace["decisions"][0]["no_retraining"] is True
+
+
+def test_build_zero_shot_performance_rows_scores_against_baseline():
+    trace = {
+        "decisions": [
+            {
+                "observation": "Context 1",
+                "status": "selected",
+                "selected_skill_id": "skill_a",
+                "score": 1.25,
+                "no_retraining": True,
+            },
+            {
+                "observation": "Context 2",
+                "status": "failed",
+                "selected_skill_id": None,
+                "score": None,
+                "no_retraining": True,
+            },
+        ]
+    }
+
+    rows = build_zero_shot_performance_rows(trace)
+
+    assert rows == [
+        {
+            "context": "Context 1",
+            "selected_skill_id": "skill_a",
+            "selected_score": 1.25,
+            "baseline_score": 0.0,
+            "improvement_vs_baseline": 1.25,
+            "beats_baseline": True,
+            "no_retraining": True,
+        }
+    ]
 
 
 def test_support_geometry_feasible_for_two_objective_interval():

@@ -50,6 +50,7 @@ from utils.subrep_demo_data import (
     REPORT_PATH,
     build_failed_skill_rejection_probe,
     build_mdn_selection_trace,
+    build_zero_shot_performance_rows,
     load_demo_artifacts,
     support_geometry_feasible,
 )
@@ -401,6 +402,29 @@ def _mdn_and_zero_shot(report: dict[str, Any], selection_trace: dict[str, Any]) 
 
     decisions = selection_trace.get("decisions", [])
     if decisions:
+        performance_rows = build_zero_shot_performance_rows(selection_trace)
+        if performance_rows:
+            st.markdown("**Zero-shot performance vs baseline**")
+            st.caption(
+                "Scores are stored improvements over the same-context baseline. "
+                "A positive improvement means the reused certified skill beats baseline without retraining."
+            )
+            st.dataframe(
+                performance_rows,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "context": "Context",
+                    "selected_skill_id": "Reused Skill",
+                    "selected_score": st.column_config.NumberColumn("Selected Score", format="%.3f"),
+                    "baseline_score": st.column_config.NumberColumn("Baseline Score", format="%.3f"),
+                    "improvement_vs_baseline": st.column_config.NumberColumn("Improvement", format="%.3f"),
+                    "beats_baseline": "Beats Baseline",
+                    "no_retraining": "No Retraining",
+                },
+            )
+
+        st.markdown("**MDN selection trace**")
         st.dataframe(
             decisions,
             width="stretch",

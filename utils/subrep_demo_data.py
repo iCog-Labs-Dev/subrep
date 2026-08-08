@@ -180,6 +180,34 @@ def build_mdn_selection_trace(
     }
 
 
+def build_zero_shot_performance_rows(selection_trace: dict[str, Any]) -> list[dict[str, Any]]:
+    """Summarize zero-shot selected-skill scores against the baseline score.
+
+    The runtime selector reports scores as improvements over the same-context
+    baseline, so the baseline score is 0.0 and positive selected scores mean the
+    reused certified skill beats that baseline under the current MDN weights.
+    """
+    rows: list[dict[str, Any]] = []
+    for decision in selection_trace.get("decisions", []) or []:
+        score = decision.get("score")
+        if decision.get("status") != "selected" or score is None:
+            continue
+        selected_score = float(score)
+        baseline_score = 0.0
+        rows.append(
+            {
+                "context": decision.get("observation", "Context"),
+                "selected_skill_id": decision.get("selected_skill_id"),
+                "selected_score": selected_score,
+                "baseline_score": baseline_score,
+                "improvement_vs_baseline": selected_score - baseline_score,
+                "beats_baseline": selected_score > baseline_score,
+                "no_retraining": bool(decision.get("no_retraining", False)),
+            }
+        )
+    return rows
+
+
 def support_geometry_feasible(values: Any) -> bool:
     """Return whether 2-objective support values define a non-empty region."""
     if values is None:
