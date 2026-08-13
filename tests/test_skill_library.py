@@ -1030,6 +1030,80 @@ def test_gates_support_values_path_matches_weight_set_path_at_m2():
         checked += 1
 
 
+def test_greedy_solver_rejects_infeasible_support_values():
+    """The solver must reject a region that has no maximum, not approximate one.
+
+    An empty region (sum(s) < 1) cannot have full mass placed on it. Allocating
+    only what the caps allow would return a value computed over partial mass --
+    smaller than any true worst case -- which makes an admission gate strictly
+    MORE permissive. Rejecting is the only safe behavior.
+    """
+    from utils.support_geometry import greedy_support_function
+
+    coefficients = np.array([-0.5, 2.0])
+
+    with pytest.raises(ValueError, match=r"sum\(s\) >= 1"):
+        greedy_support_function(coefficients, np.array([0.4, 0.4]))   # sum 0.8
+
+    with pytest.raises(ValueError, match="0 <= s_i <= 1"):
+        greedy_support_function(coefficients, np.array([1.4, 0.2]))   # s_i > 1
+
+    with pytest.raises(ValueError, match="0 <= s_i <= 1"):
+        greedy_support_function(coefficients, np.array([-0.1, 1.2]))  # s_i < 0
+
+    with pytest.raises(ValueError, match="finite"):
+        greedy_support_function(coefficients, np.array([np.nan, 1.0]))
+
+    # A feasible region is still evaluated normally.
+    assert greedy_support_function(coefficients, np.array([1.0, 1.0])) == 2.0
+
+
+def test_gates_reject_infeasible_support_values_instead_of_over_admitting():
+    """Regression: an empty W_x must not make the gates more permissive.
+
+    Before validation reached the greedy solver, delta_n=(0.5, -2.0) with the
+    empty region s=(0.4, 0.4) produced h_Wx = 0.6, so CDS admitted at
+    delta_r >= 0.6 -- while the correct full-simplex bound requires
+    delta_r >= 2.0. The empty region was strictly easier to pass than the whole
+    simplex, which is exactly backwards for a safety gate.
+    """
+    from certification.cds_test import CDSGate
+    from certification.pds_test import PDSGate
+
+    delta_n = np.array([0.5, -2.0])
+    empty_region = np.array([0.4, 0.4])  # sum 0.8 < 1
+
+    for gate in (CDSGate(), PDSGate(epsilon=0.1)):
+        with pytest.raises(ValueError, match=r"sum\(s\) >= 1"):
+            gate.admit(1.0, delta_n, None, empty_region)
+        with pytest.raises(ValueError, match=r"sum\(s\) >= 1"):
+            gate.get_admission_margin(1.0, delta_n, None, empty_region)
+
+    # The full simplex is the honest comparison point and still works.
+    assert CDSGate().admit(2.0, delta_n, None, np.array([1.0, 1.0])) is True
+    assert CDSGate().admit(1.9, delta_n, None, np.array([1.0, 1.0])) is False
+
+
+def test_wx_worst_case_and_greedy_agree_on_rejection():
+    """Both entry points must reject the same inputs.
+
+    _compute_wx_worst_case validates via _validate_wx_geometry; the gates reach
+    the solver directly. Both must refuse an empty region so there is no path
+    into the worst-case computation that accepts one.
+    """
+    from library.skill_library import _compute_wx_worst_case
+    from utils.support_geometry import worst_case_over_support_region
+
+    delta_n = np.array([0.5, -2.0])
+    empty_region = np.array([0.4, 0.4])
+
+    with pytest.raises(ValueError):
+        _compute_wx_worst_case(delta_n, np.eye(2), empty_region)
+
+    with pytest.raises(ValueError):
+        worst_case_over_support_region(delta_n, empty_region)
+
+
 def test_gates_support_values_path_works_at_m5():
     """Both gates must evaluate a five-objective region without vertices."""
     from certification.cds_test import CDSGate

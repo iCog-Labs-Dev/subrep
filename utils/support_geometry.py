@@ -5,6 +5,12 @@ from __future__ import annotations
 
 import numpy as np
 
+# Tolerance for the sum(s) >= 1 feasibility test. Support values arrive from a
+# float32 network head, so an exact comparison would spuriously reject regions
+# that are feasible up to rounding. Single source of truth: library.skill_library
+# imports this rather than defining its own copy.
+FEASIBILITY_TOLERANCE = 1e-9
+
 
 def make_basis_query_directions(num_objectives: int) -> np.ndarray:
     """Return standard basis query directions for the objective space.
@@ -53,9 +59,16 @@ def greedy_support_function(coefficients: np.ndarray, support_values: np.ndarray
     it usable at arbitrary M where explicit vertex enumeration grows
     combinatorially.
 
-    Feasibility (``sum(s) >= 1``) guarantees the greedy always places full mass.
-    The full simplex is the ``s = 1``-vector special case, for which this
-    reduces to ``max_i(c_i)``.
+    Feasibility is validated, not assumed. `W` is non-empty exactly when every
+    ``s_i`` lies in [0, 1] and ``sum(s) >= 1``; only then is full mass placeable
+    and the maximum well defined. An infeasible region has no maximum at all, so
+    silently allocating whatever mass the caps allow would return a value that is
+    too small -- and a too-small worst case makes an admission gate strictly more
+    permissive, which is the dangerous direction. Rejecting is the only safe
+    behavior.
+
+    The full simplex is the ``s = 1``-vector special case, for which this reduces
+    to ``max_i(c_i)``.
 
     Args:
         coefficients: Objective coefficient vector c, shape (M,).
@@ -63,6 +76,10 @@ def greedy_support_function(coefficients: np.ndarray, support_values: np.ndarray
 
     Returns:
         The support-function value h_W(c).
+
+    Raises:
+        ValueError: on mismatched lengths, non-finite input, or a support vector
+            that does not describe a non-empty region.
     """
     c = np.asarray(coefficients, dtype=np.float64).reshape(-1)
     sv = np.asarray(support_values, dtype=np.float64).reshape(-1)
@@ -78,6 +95,21 @@ def greedy_support_function(coefficients: np.ndarray, support_values: np.ndarray
     if not np.all(np.isfinite(sv)):
         raise ValueError(f"support_values must be finite, got {sv.tolist()}")
 
+    # Feasibility of W = { w in simplex : w_i <= s_i }. Validated here rather
+    # than at each call site so every caller inherits it -- the admission gates
+    # reach this function directly, without passing through the skill library's
+    # validator.
+    if not np.all((sv >= 0.0) & (sv <= 1.0)):
+        raise ValueError(
+            f"support_values must satisfy 0 <= s_i <= 1, got {sv.tolist()}"
+        )
+    if float(np.sum(sv)) < 1.0 - FEASIBILITY_TOLERANCE:
+        raise ValueError(
+            f"support_values must satisfy sum(s) >= 1 (otherwise the region is "
+            f"empty and has no maximum), got sum={float(np.sum(sv)):.6f} from "
+            f"{sv.tolist()}"
+        )
+
     # Stable sort keeps the result deterministic when coefficients tie.
     order = np.argsort(-c, kind="stable")
     remaining = 1.0
@@ -85,7 +117,7 @@ def greedy_support_function(coefficients: np.ndarray, support_values: np.ndarray
     for index in order:
         take = min(float(sv[index]), remaining)
         if take <= 0.0:
-            continue
+            continue  # zero cap contributes nothing; s_i < 0 is already rejected
         value += take * float(c[index])
         remaining -= take
         if remaining <= 1e-12:

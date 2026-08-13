@@ -13,18 +13,17 @@ import numpy as np
 
 from .skill_metadata import SkillEntry, FULL_SIMPLEX, MDN_WX
 from utils.cone_utils import validate_simplex_weights
-from utils.support_geometry import greedy_support_function
-from utils.weight_set_store import WeightSet
+from utils.support_geometry import FEASIBILITY_TOLERANCE, greedy_support_function
 from certification.certificate_schema import Certificate
 from certification.cds_test import CDSGate
 from certification.pds_test import PDSGate
 
 logger = logging.getLogger(__name__)
 
-# Tolerance for the sum(s) >= 1 feasibility test. Support values arrive from a
-# float32 network head, so an exact comparison would spuriously reject regions
-# that are feasible up to rounding.
-_FEAS_TOL = 1e-9
+# Tolerance for the sum(s) >= 1 feasibility test, shared with the greedy solver
+# so the library and utils.support_geometry cannot drift apart on what counts as
+# feasible.
+_FEAS_TOL = FEASIBILITY_TOLERANCE
 
 def _validate_wx_geometry(support_directions: np.ndarray, support_values: np.ndarray,) -> tuple[np.ndarray, np.ndarray]:
     """Validate W_x support geometry for standard-basis directions, any M >= 2.
@@ -120,26 +119,11 @@ def _compute_wx_worst_case(delta_n: np.ndarray, support_directions: np.ndarray, 
 
     return greedy_support_function(neg_delta_n, sv)
 
-def _build_wx_weight_set(support_directions: tuple[tuple[float, ...], ...], support_values: tuple[float, ...],) -> WeightSet:
-    """Reconstruct a two-vertex WeightSet from W_x support geometry.
-
-    Retained for M = 2 visualization and audit compatibility only. It is no
-    longer on any certification path: worst-case evaluation goes through
-    _compute_wx_worst_case, which is exact at every M.
-    """
-    _, sv = _validate_wx_geometry(
-        np.asarray(support_directions), np.asarray(support_values)
-    )
-    if sv.size != 2:
-        raise ValueError(
-            f"_build_wx_weight_set is a two-objective visualization helper, "
-            f"got M={sv.size}. Use _compute_wx_worst_case for evaluation at any M."
-        )
-
-    ws = WeightSet()
-    ws.add_vertex(np.array([sv[0], 1.0 - sv[0]], dtype=np.float32))
-    ws.add_vertex(np.array([1.0 - sv[1], sv[1]], dtype=np.float32))
-    return ws
+# _build_wx_weight_set was removed here. It reconstructed the two vertices of a
+# two-objective W_x, and existed only to hand a WeightSet to the admission gates.
+# Certificate re-verification now evaluates the support function directly via
+# _compute_wx_worst_case, which is exact at every M, so no vertex enumeration
+# remains on any certification path.
 
 class SkillLibrary:
     """ In-memory store of certified skills """
