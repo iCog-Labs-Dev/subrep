@@ -14,6 +14,7 @@ class VillageState:
     reputation: float = 0.5          # 0-1
     raid_active: bool = False
     raid_intensity: float = 0.0
+    task_completed: bool = False  # delivery target reached before the deadline
 
     # facts(x) - discrete world facts
     facts: set = field(default_factory=set)  # e.g. {"GateOpen", "GolemPresent"}
