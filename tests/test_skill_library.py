@@ -637,3 +637,484 @@ def test_certification_to_library_flow():
     selector = SkillSelector(library=lib, seed=42)
     chosen = selector.select_random(np.zeros(8))
     assert chosen in {"cert-int-a", "cert-int-b"}
+
+
+# Exact Greedy W_x Solver Tests (SASP downstream generalization)
+def test_greedy_solver_matches_legacy_vertices_at_M2():
+    """The greedy LP must reproduce the retired two-vertex enumeration exactly.
+
+    This is the backward-compatibility guarantee: at M = 2 the region
+    { w in simplex : w_i <= s_i } is the segment whose endpoints are precisely
+    the vertices [s0, 1-s0] and [1-s1, s1] the old code built by hand, so the
+    two computations must agree to floating-point exactness.
+    """
+    from library.skill_library import _compute_wx_worst_case
+
+    def legacy_two_vertex(delta_n: np.ndarray, support: np.ndarray) -> float:
+        neg_delta_n = -np.asarray(delta_n, dtype=np.float64)
+        vertices = np.array(
+            [[support[0], 1.0 - support[0]], [1.0 - support[1], support[1]]],
+            dtype=np.float64,
+        )
+        return float(np.max(vertices @ neg_delta_n))
+
+    rng = np.random.default_rng(42)
+    checked = 0
+    max_difference = 0.0
+    while checked < 20000:
+        support = rng.random(2)
+        if support.sum() < 1.0:
+            continue  # infeasible region: rejected before evaluation
+        delta_n = rng.normal(size=2) * 2.0
+
+        greedy = _compute_wx_worst_case(delta_n, np.eye(2), support)
+        legacy = legacy_two_vertex(delta_n, support)
+
+        max_difference = max(max_difference, abs(greedy - legacy))
+        checked += 1
+
+    assert max_difference < 1e-12, f"max difference {max_difference:.3e}"
+
+
+def test_full_simplex_greedy_matches_compute_worst_case_motive():
+    """The full simplex is the s = 1-vector special case of the same greedy.
+
+    Confirms the two code paths agree instead of silently diverging, so the
+    full-simplex branch needs no separate worst-case implementation.
+    """
+    from utils.cone_utils import compute_worst_case_motive
+    from utils.support_geometry import worst_case_over_support_region
+
+    rng = np.random.default_rng(11)
+    for num_objectives in (2, 3, 5, 10):
+        for _ in range(50):
+            delta_n = rng.normal(size=num_objectives) * 3.0
+
+            greedy = worst_case_over_support_region(
+                delta_n, np.ones(num_objectives)
+            )
+            reference = compute_worst_case_motive(delta_n)
+
+            assert abs(greedy - reference) < 1e-12
+
+
+def test_greedy_solver_is_permutation_symmetric():
+    """Relabelling objectives must not change the worst-case value."""
+    from library.skill_library import _compute_wx_worst_case
+
+    rng = np.random.default_rng(5)
+    for num_objectives in (3, 5, 8):
+        support = rng.random(num_objectives) * 0.5 + 0.5  # sum >= 1 by construction
+        delta_n = rng.normal(size=num_objectives)
+        permutation = rng.permutation(num_objectives)
+
+        original = _compute_wx_worst_case(delta_n, np.eye(num_objectives), support)
+        permuted = _compute_wx_worst_case(
+            delta_n[permutation], np.eye(num_objectives), support[permutation]
+        )
+
+        assert abs(original - permuted) < 1e-12
+
+
+# Runtime Feasibility Telemetry Tests
+def test_infeasible_support_counter_increments_and_excludes_wx():
+    """Infeasible support must be counted, not silently logged and dropped.
+
+    Invisibility was the worst property of the original bug: MDN_WX skills
+    disappeared from selection with only a log line. The counter makes any
+    recurrence loud.
+    """
+    from library.skill_metadata import MDN_WX
+
+    lib = SkillLibrary()
+    cert = make_cds_certificate("fs-skill")
+    lib.add_skill(cert.skill_id, cert, make_dummy_policy())
+
+    wx_cert = Certificate(
+        skill_id="wx-skill",
+        gate_type="CDS",
+        delta_r=0.8,
+        delta_n=(0.1, 0.6),
+        admission_margin=0.9,
+        epsilon=0.0,
+        timestamp=datetime.now().isoformat(),
+        seed=42,
+        gamma=0.99,
+        baseline_id="baseline-noop",
+        environment="MO-LunarLander-v2",
+        episode_length=200,
+        version="0.1.0",
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 8,
+        mdn_alpha=(3.0, 2.0),
+        wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
+        wx_support_values=(0.8, 0.4),
+    )
+    assert lib.add_skill(
+        wx_cert.skill_id,
+        wx_cert,
+        make_dummy_policy(),
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 8,
+        mdn_alpha=(3.0, 2.0),
+        wx_support_directions=((1.0, 0.0), (0.0, 1.0)),
+        wx_support_values=(0.8, 0.4),
+    ) is True
+
+    assert lib.infeasible_support_events == 0
+
+    # sum(s) = 0.8 < 1 -> empty region, MDN_WX must be excluded and counted.
+    admissible = lib.query_admissible(
+        current_weight=np.array([0.5, 0.5]),
+        support_directions=np.eye(2),
+        support_values=np.array([0.4, 0.4]),
+    )
+
+    assert lib.infeasible_support_events == 1
+    assert {entry.skill_id for entry in admissible} == {"fs-skill"}
+
+    # Feasible support: no further events, MDN_WX becomes eligible again.
+    lib.query_admissible(
+        current_weight=np.array([0.5, 0.5]),
+        support_directions=np.eye(2),
+        support_values=np.array([0.8, 0.7]),
+    )
+    assert lib.infeasible_support_events == 1
+
+
+def test_public_support_values_feasible_helper():
+    """One shared definition of feasibility, exported for outside consumers."""
+    from library import support_values_feasible
+
+    assert support_values_feasible(np.array([0.8, 0.4])) is True
+    assert support_values_feasible(np.array([0.4, 0.4])) is False   # sum < 1
+    assert support_values_feasible(np.array([1.4, 0.4])) is False   # s_i > 1
+    assert support_values_feasible(np.array([-0.1, 1.2])) is False  # s_i < 0
+    assert support_values_feasible(np.array([np.nan, 1.0])) is False
+    assert support_values_feasible(np.array([1.0])) is False        # M < 2
+    assert support_values_feasible(np.array([[0.8, 0.4]])) is False  # not 1D
+    # Generalizes past two objectives.
+    assert support_values_feasible(np.array([0.4, 0.4, 0.4, 0.4, 0.4])) is True
+
+
+# M > 2 Certification Path Tests
+def _make_m5_wx_certificate(skill_id: str = "wx-m5") -> Certificate:
+    """A five-objective MDN_WX certificate that passes CDS under its region.
+
+    delta_n is all-positive, so the worst case over any W_x is positive and any
+    non-negative delta_r admits. This exercises the greedy path end to end.
+    """
+    from library.skill_metadata import MDN_WX
+
+    return Certificate(
+        skill_id=skill_id,
+        gate_type="CDS",
+        delta_r=0.9,
+        delta_n=(0.3, 0.4, 0.5, 0.2, 0.6),
+        admission_margin=1.1,
+        epsilon=0.0,
+        timestamp=datetime.now().isoformat(),
+        seed=42,
+        gamma=0.99,
+        baseline_id="baseline-noop",
+        environment="MO-LunarLander-v2",
+        episode_length=200,
+        version="0.1.0",
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 8,
+        mdn_alpha=(2.0, 2.0, 2.0, 2.0, 2.0),
+        wx_support_directions=tuple(
+            tuple(float(v) for v in row) for row in np.eye(5)
+        ),
+        wx_support_values=(0.5, 0.5, 0.5, 0.5, 0.5),
+    )
+
+
+def test_add_skill_accepts_m5_mdn_wx_certificate():
+    """add_skill must certify an M=5 MDN_WX skill, not raise.
+
+    Regression guard for the real gap: add_skill used to reconstruct a
+    two-vertex WeightSet for every MDN_WX skill, so fixing only the network
+    head would still have hard-failed here at M > 2.
+    """
+    from library.skill_metadata import MDN_WX
+
+    lib = SkillLibrary()
+    cert = _make_m5_wx_certificate()
+
+    added = lib.add_skill(
+        cert.skill_id,
+        cert,
+        make_dummy_policy(),
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 8,
+        mdn_alpha=(2.0, 2.0, 2.0, 2.0, 2.0),
+        wx_support_directions=tuple(
+            tuple(float(v) for v in row) for row in np.eye(5)
+        ),
+        wx_support_values=(0.5, 0.5, 0.5, 0.5, 0.5),
+    )
+
+    assert added is True
+    assert lib.count() == 1
+
+
+def test_query_admissible_at_m5():
+    """Runtime admissibility must work at M = 5 through the greedy solver."""
+    from library.skill_metadata import MDN_WX
+
+    lib = SkillLibrary()
+    cert = _make_m5_wx_certificate()
+    lib.add_skill(
+        cert.skill_id,
+        cert,
+        make_dummy_policy(),
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 8,
+        mdn_alpha=(2.0, 2.0, 2.0, 2.0, 2.0),
+        wx_support_directions=tuple(
+            tuple(float(v) for v in row) for row in np.eye(5)
+        ),
+        wx_support_values=(0.5, 0.5, 0.5, 0.5, 0.5),
+    )
+
+    admissible = lib.query_admissible(
+        current_weight=np.full(5, 0.2),
+        support_directions=np.eye(5),
+        support_values=np.full(5, 0.5),
+    )
+
+    assert {entry.skill_id for entry in admissible} == {"wx-m5"}
+    assert lib.infeasible_support_events == 0
+
+
+def test_add_skill_rejects_m5_wx_certificate_that_fails_its_gate():
+    """The chain of safety must still reject bad math at M > 2.
+
+    Generalizing the solver must not weaken verification: delta_n has a
+    strongly negative coordinate the region can put full allowed mass on, so a
+    small delta_r cannot cover the worst case.
+    """
+    from library.skill_metadata import MDN_WX
+
+    directions = tuple(tuple(float(v) for v in row) for row in np.eye(5))
+    support = (0.5, 0.5, 0.5, 0.5, 0.5)
+    delta_n = (0.3, 0.4, 0.5, 0.2, -2.0)
+
+    cert = Certificate(
+        skill_id="wx-m5-bad",
+        gate_type="CDS",
+        delta_r=0.05,
+        delta_n=delta_n,
+        admission_margin=0.0,
+        epsilon=0.0,
+        timestamp=datetime.now().isoformat(),
+        seed=42,
+        gamma=0.99,
+        baseline_id="baseline-noop",
+        environment="MO-LunarLander-v2",
+        episode_length=200,
+        version="0.1.0",
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 8,
+        mdn_alpha=(2.0,) * 5,
+        wx_support_directions=directions,
+        wx_support_values=support,
+    )
+
+    lib = SkillLibrary()
+    added = lib.add_skill(
+        cert.skill_id,
+        cert,
+        make_dummy_policy(),
+        weight_region_type=MDN_WX,
+        certification_context=(0.0,) * 8,
+        mdn_alpha=(2.0,) * 5,
+        wx_support_directions=directions,
+        wx_support_values=support,
+    )
+
+    assert added is False
+    assert lib.count() == 0
+
+
+def test_certificate_schema_rejects_empty_wx_region():
+    """An empty W_x must be impossible to certify at construction."""
+    from library.skill_metadata import MDN_WX
+
+    with pytest.raises(ValueError, match="sum"):
+        Certificate(
+            skill_id="wx-empty",
+            gate_type="CDS",
+            delta_r=0.5,
+            delta_n=(0.3, 0.2, 0.1),
+            admission_margin=0.5,
+            epsilon=0.0,
+            timestamp=datetime.now().isoformat(),
+            seed=42,
+            gamma=0.99,
+            baseline_id="baseline-noop",
+            environment="MO-LunarLander-v2",
+            episode_length=200,
+            version="0.1.0",
+            weight_region_type=MDN_WX,
+            certification_context=(0.0,) * 8,
+            mdn_alpha=(2.0, 2.0, 2.0),
+            wx_support_directions=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            wx_support_values=(0.2, 0.2, 0.2),  # sum 0.6 < 1
+        )
+
+
+def test_certificate_schema_rejects_length_mismatch():
+    """All MDN_WX vectors must describe the same objective count."""
+    from library.skill_metadata import MDN_WX
+
+    with pytest.raises(ValueError, match="mdn_alpha must have length"):
+        Certificate(
+            skill_id="wx-mismatch",
+            gate_type="CDS",
+            delta_r=0.5,
+            delta_n=(0.3, 0.2, 0.1),
+            admission_margin=0.5,
+            epsilon=0.0,
+            timestamp=datetime.now().isoformat(),
+            seed=42,
+            gamma=0.99,
+            baseline_id="baseline-noop",
+            environment="MO-LunarLander-v2",
+            episode_length=200,
+            version="0.1.0",
+            weight_region_type=MDN_WX,
+            certification_context=(0.0,) * 8,
+            mdn_alpha=(2.0, 2.0),  # length 2 against M = 3
+            wx_support_directions=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            wx_support_values=(0.5, 0.5, 0.5),
+        )
+
+
+# Gate Support-Geometry Path Tests
+def test_gates_support_values_path_matches_weight_set_path_at_m2():
+    """The new support_values keyword must agree with the legacy vertex path."""
+    from certification.cds_test import CDSGate
+    from certification.pds_test import PDSGate
+    from utils.weight_set_store import WeightSet
+
+    cds_gate = CDSGate()
+    pds_gate = PDSGate(epsilon=0.1)
+
+    rng = np.random.default_rng(3)
+    checked = 0
+    while checked < 2000:
+        support = rng.random(2)
+        if support.sum() < 1.0:
+            continue
+        delta_n = rng.normal(size=2)
+        delta_r = float(rng.normal())
+
+        weight_set = WeightSet()
+        weight_set.add_vertex(
+            np.array([support[0], 1.0 - support[0]], dtype=np.float32)
+        )
+        weight_set.add_vertex(
+            np.array([1.0 - support[1], support[1]], dtype=np.float32)
+        )
+
+        for gate in (cds_gate, pds_gate):
+            assert gate.admit(
+                delta_r, delta_n, weight_set
+            ) == gate.admit(delta_r, delta_n, None, support)
+            assert abs(
+                gate.get_admission_margin(delta_r, delta_n, weight_set)
+                - gate.get_admission_margin(delta_r, delta_n, None, support)
+            ) < 1e-6
+        checked += 1
+
+
+def test_greedy_solver_rejects_infeasible_support_values():
+    """The solver must reject a region that has no maximum, not approximate one.
+
+    An empty region (sum(s) < 1) cannot have full mass placed on it. Allocating
+    only what the caps allow would return a value computed over partial mass --
+    smaller than any true worst case -- which makes an admission gate strictly
+    MORE permissive. Rejecting is the only safe behavior.
+    """
+    from utils.support_geometry import greedy_support_function
+
+    coefficients = np.array([-0.5, 2.0])
+
+    with pytest.raises(ValueError, match=r"sum\(s\) >= 1"):
+        greedy_support_function(coefficients, np.array([0.4, 0.4]))   # sum 0.8
+
+    with pytest.raises(ValueError, match="0 <= s_i <= 1"):
+        greedy_support_function(coefficients, np.array([1.4, 0.2]))   # s_i > 1
+
+    with pytest.raises(ValueError, match="0 <= s_i <= 1"):
+        greedy_support_function(coefficients, np.array([-0.1, 1.2]))  # s_i < 0
+
+    with pytest.raises(ValueError, match="finite"):
+        greedy_support_function(coefficients, np.array([np.nan, 1.0]))
+
+    # A feasible region is still evaluated normally.
+    assert greedy_support_function(coefficients, np.array([1.0, 1.0])) == 2.0
+
+
+def test_gates_reject_infeasible_support_values_instead_of_over_admitting():
+    """Regression: an empty W_x must not make the gates more permissive.
+
+    Before validation reached the greedy solver, delta_n=(0.5, -2.0) with the
+    empty region s=(0.4, 0.4) produced h_Wx = 0.6, so CDS admitted at
+    delta_r >= 0.6 -- while the correct full-simplex bound requires
+    delta_r >= 2.0. The empty region was strictly easier to pass than the whole
+    simplex, which is exactly backwards for a safety gate.
+    """
+    from certification.cds_test import CDSGate
+    from certification.pds_test import PDSGate
+
+    delta_n = np.array([0.5, -2.0])
+    empty_region = np.array([0.4, 0.4])  # sum 0.8 < 1
+
+    for gate in (CDSGate(), PDSGate(epsilon=0.1)):
+        with pytest.raises(ValueError, match=r"sum\(s\) >= 1"):
+            gate.admit(1.0, delta_n, None, empty_region)
+        with pytest.raises(ValueError, match=r"sum\(s\) >= 1"):
+            gate.get_admission_margin(1.0, delta_n, None, empty_region)
+
+    # The full simplex is the honest comparison point and still works.
+    assert CDSGate().admit(2.0, delta_n, None, np.array([1.0, 1.0])) is True
+    assert CDSGate().admit(1.9, delta_n, None, np.array([1.0, 1.0])) is False
+
+
+def test_wx_worst_case_and_greedy_agree_on_rejection():
+    """Both entry points must reject the same inputs.
+
+    _compute_wx_worst_case validates via _validate_wx_geometry; the gates reach
+    the solver directly. Both must refuse an empty region so there is no path
+    into the worst-case computation that accepts one.
+    """
+    from library.skill_library import _compute_wx_worst_case
+    from utils.support_geometry import worst_case_over_support_region
+
+    delta_n = np.array([0.5, -2.0])
+    empty_region = np.array([0.4, 0.4])
+
+    with pytest.raises(ValueError):
+        _compute_wx_worst_case(delta_n, np.eye(2), empty_region)
+
+    with pytest.raises(ValueError):
+        worst_case_over_support_region(delta_n, empty_region)
+
+
+def test_gates_support_values_path_works_at_m5():
+    """Both gates must evaluate a five-objective region without vertices."""
+    from certification.cds_test import CDSGate
+    from certification.pds_test import PDSGate
+
+    support = np.full(5, 0.5)
+    delta_n = np.array([0.3, 0.4, 0.5, 0.2, 0.6])
+
+    assert CDSGate().admit(0.9, delta_n, None, support) is True
+    assert PDSGate(epsilon=0.1).admit(0.9, delta_n, None, support) is True
+
+    # A coordinate the region can load mass onto defeats a small delta_r.
+    hostile = np.array([0.3, 0.4, 0.5, 0.2, -2.0])
+    assert CDSGate().admit(0.05, hostile, None, support) is False

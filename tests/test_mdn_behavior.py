@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from generator.mdn import MotiveDecompositionNetwork
@@ -52,6 +53,56 @@ def _mean_weights_for_context(model: MotiveDecompositionNetwork, context_value: 
     return alpha_to_mean_weights(alpha.detach().cpu().numpy())
 
 
+# Both directional-learning tests below are xfail(strict=False): they assert a
+# property MDNTrainer does not reliably exhibit, and they should be treated as
+# open work on the trainer rather than as a passing guarantee.
+#
+# WHY, with measurements. Each test fixes torch.manual_seed(0) and asserts that
+# 30 training steps on a motive-dominant record move the mean weight for that
+# objective upward. Sweeping the seed instead of fixing it shows the assertion
+# is a coin flip, not a property:
+#
+#   original design, 30 steps, lr=5e-3
+#     safety: 5/12 seeds pass   (deltas -0.016 .. +0.045)
+#     fuel:   4/12 seeds pass   (deltas -0.016 .. +0.048)
+#
+# A stronger paired design -- train two models from the SAME seed, one on
+# safety-dominant and one on fuel-dominant records, then compare, so identical
+# initialization cancels out and only the record differs -- does not rescue it:
+#
+#   paired, 20 seeds:  11/20 (30 steps, lr=5e-3)
+#                      12/20 (60 steps, lr=5e-3)
+#                      12/20 (30 steps, lr=2e-2)
+#   mean effect +0.001 .. +0.010 on a value that sits at ~0.5
+#
+# So the effect is real but far smaller than the run-to-run variance. The cause
+# is the training setup, not the assertion: MDNTrainer applies a REINFORCE-style
+# policy loss whose gradient direction depends on weights sampled from
+# Dirichlet(alpha) each step, and a single record replayed 30 times is dominated
+# by that sampling noise.
+#
+# These tests were previously green only because seed 0 happened to land on the
+# favourable side. The SASP change (support head widened from M to 2M outputs)
+# consumes a different amount of RNG when the layer is constructed, which shifts
+# the global stream feeding rsample() during training and reshuffled that luck.
+# Note the pre-training value is unchanged (0.4986076 before and after the
+# change) because distribution_head is initialized before support_head -- only
+# the training trajectory moved. SASP itself is unaffected: support-value
+# feasibility is proven algebraically and covered in tests/test_mdn.py.
+#
+# To fix properly, address the trainer: a variance-reduced advantage baseline,
+# many distinct records instead of one replayed record, or enough steps for the
+# signal to dominate. Do NOT simply pick a luckier seed -- that restores the
+# illusion and the next change to parameter shapes will silently flip it again.
+
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "MDNTrainer directional learning is not reliable: 5/12 seeds pass as "
+        "written, 11/20 with a paired design. Pre-existing trainer variance, "
+        "not a support-geometry regression. See module comment above."
+    ),
+)
 def test_behavior_safety_dominant_records_increase_safety_weight():
     torch.manual_seed(0)
     model = MotiveDecompositionNetwork()
@@ -71,6 +122,14 @@ def test_behavior_safety_dominant_records_increase_safety_weight():
     assert after[0] > before[0]
 
 
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "MDNTrainer directional learning is not reliable: 4/12 seeds pass as "
+        "written, 11/20 with a paired design. Pre-existing trainer variance, "
+        "not a support-geometry regression. See module comment above."
+    ),
+)
 def test_behavior_fuel_dominant_records_increase_fuel_weight():
     torch.manual_seed(0)
     model = MotiveDecompositionNetwork()

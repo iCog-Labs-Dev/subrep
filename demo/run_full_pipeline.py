@@ -24,7 +24,7 @@ from certification.cds_test import CDSGate
 from certification.pds_test import PDSGate
 from certification.certificate_schema import Certificate
 from certification.metta_storage import CertificateStore
-from library.skill_library import SkillLibrary
+from library.skill_library import SkillLibrary, support_values_feasible
 from library.skill_selector import SkillSelector
 from generator.skill_generator import SkillGenerator
 from utils.admission_report import AdmissionReport, AdmissionRecord
@@ -413,14 +413,17 @@ def run_pipeline() -> dict:
             support_list = support.tolist()
             weights = alpha_to_mean_weights(alpha).tolist()
             
-            # Check support geometry feasibility
-            support_geometry_feasible = (
-                torch.all(alpha > 0).item() and
-                torch.all(support >= 0).item() and
-                torch.all(support <= 1).item() and
-                torch.all(support.sum(dim=-1) >= 1.0).item()
+            # Check support geometry feasibility. The W_x conditions come from
+            # the shared library helper so there is one definition of
+            # feasibility; the alpha positivity check is additional and must be
+            # kept -- the helper only covers support values.
+            support_geometry_feasible = bool(
+                torch.all(alpha > 0).item()
+                and support_values_feasible(
+                    support.detach().cpu().numpy().reshape(-1)
+                )
             )
-        
+
         report.set_mdn_metadata(
             source=mdn_source,
             checkpoint_path=MDN_CHECKPOINT_PATH,
@@ -428,6 +431,7 @@ def run_pipeline() -> dict:
             derived_weights=weights,
             support_values=support_list,
             support_geometry_feasible=support_geometry_feasible,
+            infeasible_support_events=library.infeasible_support_events,
         )
         print(f"[Report] MDN source: {mdn_source}")
     

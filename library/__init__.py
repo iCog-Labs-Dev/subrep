@@ -8,5 +8,12 @@ Public API:
 """
 
 from .skill_metadata import SkillEntry
-from .skill_library import SkillLibrary
+from .skill_library import SkillLibrary, support_values_feasible
 from .skill_selector import SkillSelector
+
+__all__ = [
+    "SkillEntry",
+    "SkillLibrary",
+    "SkillSelector",
+    "support_values_feasible",
+]

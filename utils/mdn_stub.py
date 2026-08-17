@@ -14,6 +14,11 @@ from typing import Optional, Union
 import torch
 from torch import Tensor, nn
 
+from utils.mdn_checkpoint_loader import (
+    IncompatibleCheckpointError,
+    assert_support_head_compatible,
+)
+
 
 class StubMDN(nn.Module):
     """A deterministic wrapper mocking MotiveDecompositionNetwork's API.
@@ -124,6 +129,10 @@ def load_mdn_or_stub(
             num_skills = int(skill_embedding.shape[0]) if skill_embedding is not None else 128
             skill_embedding_dim = int(skill_embedding.shape[1]) if skill_embedding is not None else 8
             
+            # Reject pre-SASP support heads with an actionable message before
+            # load_state_dict turns it into a bare size-mismatch error.
+            assert_support_head_compatible(state)
+
             # Create model with inferred dimensions
             from generator.mdn import MotiveDecompositionNetwork
             model = MotiveDecompositionNetwork(
@@ -141,6 +150,13 @@ def load_mdn_or_stub(
             print(f"[MDN Loader] Successfully loaded checkpoint from: {path}")
             print(f"[MDN Loader] Inferred dimensions: input={inferred_input_dim}, objectives={inferred_num_objectives}, skills={num_skills}")
             return model
+        except IncompatibleCheckpointError as e:
+            # Distinguished from generic load failures: this one has a known
+            # cause and a known remedy, so say so instead of burying it in a
+            # "failed to load" warning.
+            print(f"[MDN Loader] MIGRATION REQUIRED for checkpoint '{path}'.")
+            print(f"             {e}")
+            print(f"             Falling back to StubMDN (weights are never reinterpreted).")
         except Exception as e:
             print(f"[MDN Loader] Warning: Failed to load existing checkpoint from '{path}'.")
             print(f"             Exception: {e}")

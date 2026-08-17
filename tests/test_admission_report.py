@@ -302,3 +302,90 @@ class TestAdmissionReportSaveMarkdown:
             report.save_markdown(path)
             content = path.read_text(encoding="utf-8")
         assert "No skills were admitted" in content
+
+
+class TestMDNFeasibilityTelemetry:
+    """The infeasible-support counter must be recorded and surfaced.
+
+    The original support-geometry bug excluded every MDN_WX skill from runtime
+    selection behind a single log line. Counting and displaying the events is
+    what converts that silent failure class into a loud one.
+    """
+
+    def _report_with_mdn_metadata(self, **overrides) -> AdmissionReport:
+        report = AdmissionReport()
+        report.add_record(_admitted_record())
+        kwargs = {
+            "source": "stub",
+            "checkpoint_path": "models/mdn_policy_best.pth",
+            "alpha_values": [2.0, 2.0],
+            "derived_weights": [0.5, 0.5],
+            "support_values": [0.8, 0.4],
+            "support_geometry_feasible": True,
+        }
+        kwargs.update(overrides)
+        report.set_mdn_metadata(**kwargs)
+        return report
+
+    def test_defaults_to_zero_when_caller_omits_it(self):
+        """Existing callers pass every arg by keyword and know nothing of it."""
+        stats = self._report_with_mdn_metadata().compile()
+
+        assert stats["infeasible_support_events"] == 0
+
+    def test_records_supplied_count(self):
+        stats = self._report_with_mdn_metadata(
+            infeasible_support_events=3
+        ).compile()
+
+        assert stats["infeasible_support_events"] == 3
+
+    def test_json_exposes_counter_at_top_level(self):
+        """compile() flattens MDN metadata, so the key is not nested."""
+        report = self._report_with_mdn_metadata(infeasible_support_events=0)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "report.json"
+            report.save_json(path)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        assert payload["infeasible_support_events"] == 0
+        assert "mdn_metadata" not in payload
+
+    def test_markdown_reports_ok_when_zero(self):
+        report = self._report_with_mdn_metadata(infeasible_support_events=0)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "report.md"
+            report.save_markdown(path)
+            content = path.read_text(encoding="utf-8")
+
+        assert "Infeasible Support Events" in content
+        assert "0 (OK)" in content
+
+    def test_markdown_flags_regression_when_nonzero(self):
+        report = self._report_with_mdn_metadata(infeasible_support_events=7)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "report.md"
+            report.save_markdown(path)
+            content = path.read_text(encoding="utf-8")
+
+        assert "7 (REGRESSION - investigate)" in content
+
+    def test_markdown_omits_line_for_legacy_metadata_without_counter(self):
+        """A report compiled before this field existed must still render."""
+        report = AdmissionReport()
+        report.add_record(_admitted_record())
+        report._mdn_metadata = {
+            "mdn_source": "stub",
+            "checkpoint_path": "x",
+            "alpha_values": [2.0, 2.0],
+            "derived_weights": [0.5, 0.5],
+            "support_values": [0.8, 0.4],
+            "support_geometry_feasible": True,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "report.md"
+            report.save_markdown(path)
+            content = path.read_text(encoding="utf-8")
+
+        assert "MDN Selection Metadata" in content
+        assert "Infeasible Support Events" not in content

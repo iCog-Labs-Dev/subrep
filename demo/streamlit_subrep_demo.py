@@ -386,11 +386,21 @@ def _mdn_and_zero_shot(report: dict[str, Any], selection_trace: dict[str, Any]) 
     support_values = report.get("support_values")
     feasible = bool(report.get("support_geometry_feasible", support_geometry_feasible(support_values)))
 
-    cols = st.columns(4)
+    infeasible_events = int(report.get("infeasible_support_events", 0) or 0)
+
+    cols = st.columns(5)
     cols[0].metric("MDN Source", "trained" if source == "trained_checkpoint" else source)
     cols[1].metric("MDN alpha", _vector_text(report.get("alpha_values")))
     cols[2].metric("Scoring weights", _vector_text(report.get("derived_weights")))
     cols[3].metric("Reuse region valid", "yes" if feasible else "check")
+    # Permanent telemetry: SASP makes an empty reuse region algebraically
+    # impossible, so anything above zero is a regression, not a tuning issue.
+    cols[4].metric(
+        "Infeasible support events",
+        str(infeasible_events),
+        delta=None if infeasible_events == 0 else "regression",
+        delta_color="normal" if infeasible_events == 0 else "inverse",
+    )
 
     st.info(
         "Zero-shot reuse queries the frozen certified library: globally valid skills stay reusable, "

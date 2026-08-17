@@ -18,6 +18,7 @@ class MotiveDecompositionNetwork(nn.Module):
         alpha_epsilon: float = 1e-6,
         num_skills: int = 128,
         skill_embedding_dim: int = 8,
+        slack_floor: float = 0.02,
     ) -> None:
         super().__init__()
 
@@ -27,6 +28,13 @@ class MotiveDecompositionNetwork(nn.Module):
             )
         if num_skills <= 0:
             raise ValueError(f"Expected num_skills > 0, got {num_skills}")
+        # num_objectives is deliberately not floored at 2: the auxiliary
+        # gate/Q path is used at M = 1, and SASP is well defined there too
+        # (softmax over one logit is 1.0, giving s = 1.0, which satisfies both
+        # feasibility constraints). W_x geometry in the skill library requires
+        # M >= 2, and that constraint is enforced there.
+        if not (0.0 <= slack_floor < 1.0):
+            raise ValueError(f"slack_floor must be in [0, 1), got {slack_floor}")
 
         self.input_dim = input_dim
         self.num_objectives = num_objectives
@@ -35,6 +43,7 @@ class MotiveDecompositionNetwork(nn.Module):
         self.alpha_epsilon = alpha_epsilon
         self.num_skills = num_skills
         self.skill_embedding_dim = skill_embedding_dim
+        self.slack_floor = float(slack_floor)
 
         trunk_layers: list[nn.Module] = [
             nn.Linear(input_dim, hidden_dim),
@@ -50,7 +59,8 @@ class MotiveDecompositionNetwork(nn.Module):
 
         self.trunk = nn.Sequential(*trunk_layers)
         self.distribution_head = nn.Linear(hidden_dim, num_objectives)
-        self.support_head = nn.Linear(hidden_dim, num_objectives)
+        # SASP: first M logits are the base allocation, last M are the slack gates.
+        self.support_head = nn.Linear(hidden_dim, 2 * num_objectives)
         self.skill_embedding = nn.Embedding(num_skills, skill_embedding_dim)
         self.auxiliary_fusion = nn.Sequential(
             nn.Linear(hidden_dim + skill_embedding_dim, hidden_dim),
@@ -58,8 +68,9 @@ class MotiveDecompositionNetwork(nn.Module):
         )
         self.gate_head = nn.Linear(hidden_dim, 1)
         self.motive_head = nn.Linear(hidden_dim, num_objectives)
+        # Used by the Dirichlet distribution head only. The old
+        # `support_activation` Softplus is deleted: SASP replaces it.
         self.softplus = nn.Softplus()
-        self.support_activation = nn.Softplus()
 
         self._initialize_weights()
 
@@ -96,13 +107,37 @@ class MotiveDecompositionNetwork(nn.Module):
         return features, is_single_input
 
     def _support_values_from_raw(self, raw_support: Tensor) -> Tensor:
-        if self.num_objectives != 2:
-            return self.support_activation(raw_support)
+        """Softmax-Anchored Slack Parameterization (SASP).
 
-        lower = torch.sigmoid(raw_support[..., 0])
-        width_fraction = torch.sigmoid(raw_support[..., 1])
-        upper = lower + width_fraction * (1.0 - lower)
-        return torch.stack((upper, 1.0 - lower), dim=-1)
+        s_i = p_i + (1 - p_i) * g_i, where
+          p = softmax(base logits)                -> sum(p) == 1, p_i in (0, 1)
+          g = g_min + (1 - g_min) * sigmoid(...)  -> g_i in (g_min, 1)
+
+        Guarantees, for ANY num_objectives M and ANY network weights, at every
+        training step and at inference:
+          - boundedness:   s_i is a convex combination of p_i and 1, so
+                           s_i in [p_i, 1] subset of [0, 1].
+          - non-emptiness: sum(s) = sum(p) + sum((1 - p_i) * g_i) >= sum(p) = 1.
+
+        Both properties are algebraic, not learned, so W_x can never be an
+        empty region. The slack floor keeps W_x from collapsing to a point.
+        The construction is permutation-equivariant: softmax is applied jointly
+        and symmetrically, the gates are elementwise, so no objective index is
+        structurally privileged.
+        """
+        num_objectives = self.num_objectives
+        expected_width = 2 * num_objectives
+        if raw_support.shape[-1] != expected_width:
+            raise ValueError(
+                f"support head must emit 2*M={expected_width} logits, "
+                f"got {raw_support.shape[-1]}"
+            )
+
+        base_allocation = torch.softmax(raw_support[..., :num_objectives], dim=-1)
+        slack_gate = self.slack_floor + (1.0 - self.slack_floor) * torch.sigmoid(
+            raw_support[..., num_objectives:]
+        )
+        return base_allocation + (1.0 - base_allocation) * slack_gate
 
     def forward_inference(self, context: Tensor) -> tuple[Tensor, Tensor]:
         features, is_single_input = self._encode_context(context)

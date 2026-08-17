@@ -486,14 +486,88 @@ def test_mdn_wx_without_audit_fields_raises_at_construction():
     for field in ["certification_context", "wx_support_directions", "wx_support_values"]:
         assert field in msg, f"Expected '{field}' in error message, got: {msg}"
 
-def test_wx_worst_case_rejects_non_2d():
-    """Vertex reconstruction should reject M != 2."""
-    with pytest.raises(ValueError, match="M=2"):
+def test_wx_worst_case_supports_more_than_two_objectives():
+    """The exact greedy solver must evaluate any M >= 2.
+
+    Replaces test_wx_worst_case_rejects_non_2d, which pinned the two-objective
+    vertex-enumeration restriction as if it were intended behavior.
+
+    M=3 with s = [0.5, 0.5, 0.5] and -delta_n = [-0.1, -0.2, -0.3]:
+    greedy fills the largest coefficient first, so it places 0.5 on
+    coordinate 0 and the remaining 0.5 on coordinate 1:
+        0.5*(-0.1) + 0.5*(-0.2) = -0.15
+    """
+    h_wx = _compute_wx_worst_case(
+        delta_n=np.array([0.1, 0.2, 0.3]),
+        support_directions=np.eye(3),
+        support_values=np.array([0.5, 0.5, 0.5]),
+    )
+
+    assert abs(h_wx - (-0.15)) < 1e-12
+
+
+def test_wx_worst_case_rejects_empty_region():
+    """sum(s) < 1 describes no weighting at all and must be rejected."""
+    with pytest.raises(ValueError, match="sum"):
         _compute_wx_worst_case(
             delta_n=np.array([0.1, 0.2, 0.3]),
             support_directions=np.eye(3),
-            support_values=np.array([0.5, 0.5, 0.5]),
+            support_values=np.array([0.2, 0.2, 0.2]),
         )
+
+
+def test_wx_worst_case_rejects_out_of_range_support_values():
+    """s_i > 1 is not a valid per-objective cap on a simplex weight."""
+    with pytest.raises(ValueError, match="0 ≤ s_i ≤ 1"):
+        _compute_wx_worst_case(
+            delta_n=np.array([0.1, 0.2, 0.3]),
+            support_directions=np.eye(3),
+            support_values=np.array([1.4, 0.5, 0.5]),
+        )
+
+
+def test_wx_worst_case_matches_brute_force_vertices_at_higher_m():
+    """Greedy must equal explicit vertex enumeration at M = 3 and M = 5.
+
+    Every vertex of { w in simplex : w_i <= s_i } is produced by filling
+    coordinates to their caps in some order, so enumerating orderings gives an
+    independent reference for the greedy result (paper E5).
+    """
+    import itertools
+
+    def brute_force(delta_n: np.ndarray, support: np.ndarray) -> float:
+        coefficients = -np.asarray(delta_n, dtype=np.float64)
+        best = -np.inf
+        for order in itertools.permutations(range(len(support))):
+            weight = np.zeros(len(support))
+            remaining = 1.0
+            for index in order:
+                take = min(support[index], remaining)
+                weight[index] = take
+                remaining -= take
+                if remaining <= 1e-15:
+                    break
+            if remaining > 1e-9:
+                continue
+            best = max(best, float(weight @ coefficients))
+        return best
+
+    rng = np.random.default_rng(7)
+    for num_objectives in (3, 5):
+        checked = 0
+        while checked < 200:
+            support = rng.random(num_objectives)
+            if support.sum() < 1.0:
+                continue
+            delta_n = rng.normal(size=num_objectives) * 2.0
+
+            greedy = _compute_wx_worst_case(
+                delta_n, np.eye(num_objectives), support
+            )
+            reference = brute_force(delta_n, support)
+
+            assert abs(greedy - reference) < 1e-12
+            checked += 1
 
 def test_wx_worst_case_rejects_non_basis_directions():
     """Vertex reconstruction should reject non-standard-basis directions."""
@@ -611,11 +685,16 @@ def test_construction_rejects_out_of_range_support_values():
         )
 
 def test_construction_rejects_empty_region_support_values():
-    """add_skill should reject support values where s₀ + s₁ < 1 (empty W_x)."""
+    """add_skill should reject support values where sum(s) < 1 (empty W_x).
+
+    The rejection is unchanged; only the diagnostic message generalized from
+    the two-objective "s₀ + s₁ ≥ 1" wording to "sum(s) ≥ 1" now that the
+    validator accepts any M >= 2.
+    """
     lib = SkillLibrary()
     cert = _make_cert(skill_id="bad-sv", delta_r=1.0, delta_n=(-0.2, 0.1))
 
-    with pytest.raises(ValueError, match="s₀ \\+ s₁ ≥ 1"):
+    with pytest.raises(ValueError, match=r"sum\(s\) ≥ 1"):
         lib.add_skill(
             "bad-sv", cert, lambda obs: 0,
             weight_region_type=MDN_WX,

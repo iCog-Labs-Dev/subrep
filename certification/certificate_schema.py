@@ -36,7 +36,7 @@ class Certificate:
     skill_id: str
     gate_type: str
     delta_r: float
-    delta_n: tuple[float, float]
+    delta_n: tuple[float, ...]
     admission_margin: float
     epsilon: float
     timestamp: str
@@ -73,10 +73,12 @@ class Certificate:
                 f"got {self.weight_region_type!r}"
             )
 
-        # In this phase, motive vector is fixed to 2D: [Safety, Fuel].
+        # The motive vector length M defines this certificate's objective count.
+        # M = 2 ([Safety, Fuel]) is the shipping configuration, but the schema
+        # is length-generic so certification works at any M >= 2.
         dn = tuple(float(v) for v in self.delta_n)
-        if len(dn) != 2:
-            raise ValueError(f"delta_n must have length 2, got {len(dn)}")
+        if len(dn) < 2:
+            raise ValueError(f"delta_n must have length >= 2, got {len(dn)}")
         if not all(isfinite(v) for v in dn):
             raise ValueError(f"delta_n must contain only finite values, got {dn}")
         object.__setattr__(self, "delta_n", dn)
@@ -206,6 +208,39 @@ def validate_mdn_certificate(cert: Certificate) -> None:
         raise ValueError(
             "wx_support_values must have the same number of items as "
             "wx_support_directions rows"
+        )
+
+    # Every MDN_WX vector describes the same objective space, so all lengths
+    # must agree with M inferred from delta_n.
+    num_objectives = len(cert.delta_n)
+    if len(values) != num_objectives:
+        raise ValueError(
+            f"wx_support_values must have length M={num_objectives} to match "
+            f"delta_n, got {len(values)}"
+        )
+    if len(alpha) != num_objectives:
+        raise ValueError(
+            f"mdn_alpha must have length M={num_objectives} to match delta_n, "
+            f"got {len(alpha)}"
+        )
+    if any(len(row) != num_objectives for row in directions):
+        raise ValueError(
+            f"wx_support_directions must be square with shape "
+            f"({num_objectives}, {num_objectives}), got "
+            f"({len(directions)}, {len(directions[0])})"
+        )
+
+    # W_x = { w in simplex : w_i <= s_i } is non-empty if and only if every
+    # s_i lies in [0, 1] and sum(s) >= 1. Enforcing it at construction means an
+    # empty region can never be certified in the first place.
+    if any(v > 1.0 for v in values):
+        raise ValueError(
+            f"wx_support_values must satisfy s_i <= 1, got {list(values)}"
+        )
+    if sum(values) < 1.0 - 1e-9:
+        raise ValueError(
+            f"wx_support_values must satisfy sum(s) >= 1 (otherwise W_x is "
+            f"empty), got sum={sum(values):.6f} from {list(values)}"
         )
 
     object.__setattr__(cert, "certification_context", context)

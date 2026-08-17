@@ -77,9 +77,10 @@ class AdmissionReport:
         derived_weights: list[float],
         support_values: list[float],
         support_geometry_feasible: bool,
+        infeasible_support_events: int = 0,
     ) -> None:
         """Record which MDN was used and its outputs.
-        
+
         Args:
             source: "trained_checkpoint" or "stub"
             checkpoint_path: Path to the MDN checkpoint file
@@ -87,6 +88,11 @@ class AdmissionReport:
             derived_weights: Mean weights derived from alpha
             support_values: MDN support output (support geometry)
             support_geometry_feasible: Whether support values satisfy constraints
+            infeasible_support_events: Count of runtime steps where the library
+                had to exclude MDN_WX skills because support values described an
+                empty region. Expected to be 0 under SASP; any nonzero value
+                signals a regression rather than a tuning problem. Defaults to 0
+                so existing callers keep working.
         """
         self._mdn_metadata = {
             "mdn_source": source,
@@ -95,6 +101,7 @@ class AdmissionReport:
             "derived_weights": derived_weights,
             "support_values": support_values,
             "support_geometry_feasible": support_geometry_feasible,
+            "infeasible_support_events": int(infeasible_support_events),
         }
 
     def compile(self) -> dict:
@@ -255,6 +262,13 @@ def _render_markdown(stats: dict) -> list[str]:
             f"- **Support Values**: {stats['support_values']}",
             f"- **Support Geometry Feasible**: {stats['support_geometry_feasible']}",
         ]
+        # Permanent feasibility telemetry. The original support-geometry bug was
+        # invisible: MDN_WX skills vanished from selection behind a log line.
+        # Surfacing the count makes any recurrence loud.
+        events = stats.get("infeasible_support_events")
+        if events is not None:
+            status = "OK" if int(events) == 0 else "REGRESSION - investigate"
+            lines.append(f"- **Infeasible Support Events**: {events} ({status})")
         lines.append("")
 
     return lines

@@ -10,7 +10,7 @@ This project validates the core mechanism in **MO-LunarLander**, storing certifi
 
 | Objective | Goal | Implemented Capabilities |
 | :--- | :--- | :--- |
-| **1. Neural Skill Generator + MDN** | Generate skill summaries and learn motive geometry from experience | 2-head MLP for payoff/motives; MDN input/output contract; candidate-set MDN training and evaluation; auxiliary gate/Q heads |
+| **1. Neural Skill Generator + MDN** | Generate skill summaries and learn motive geometry from experience | 2-head MLP for payoff/motives; MDN input/output contract with **feasibility guaranteed by construction at any objective count** (SASP); candidate-set MDN training and evaluation; auxiliary gate/Q heads |
 | **2. Core Certification** | Implement CDS/PDS admission tests | CDS test; PDS-epsilon test; MO-LunarLander integration |
 | **3. MeTTa Certificate Storage** | Store certificates as native atoms | Certificate schema; Hyperon-backed MeTTa bridge; store/retrieve/query operations |
 | **4. Validation** | Demonstrate the certificate-driven mechanism works | Certified skills pass; unsafe skills are rejected; admission reports document pass/fail behavior |
@@ -49,12 +49,21 @@ python -m pytest -v
 # Run certification tests only
 python -m pytest tests/test_certification_gates.py -v
 
+# Validate the MDN support-value feasibility guarantee at M = 2, 3, 5, 10, 50
+python -m pytest tests/test_mdn.py -v
+
+# Validate the exact greedy W_x solver and the M >= 2 certification chain
+python -m pytest tests/test_skill_library.py -v
+
 # Run the full demo pipeline
 python -m demo.run_full_pipeline
 
 # Validate mid-episode motive-shift reuse behavior
 python -m pytest tests/test_mid_episode_reuse_demo.py -v
 ```
+
+> MeTTa-backed tests require the `hyperon` package, which is Linux/macOS only. On Windows they are
+> skipped automatically via `pytest.importorskip`; run the suite under WSL to exercise them.
 
 ## Running the Demo Pipeline
 
@@ -206,7 +215,10 @@ The report includes:
 - CDS and PDS pass counts,
 - failure reasons for rejected skills,
 - example admitted/rejected records,
-- MDN source and support-geometry metadata.
+- MDN source and support-geometry metadata,
+- `infeasible_support_events`: a permanent feasibility counter, expected to read `0`. SASP makes an
+  empty `W_x` algebraically impossible, so any nonzero value signals a code regression rather than a
+  tuning problem.
 
 A representative mixed-candidate run produces both accepted and
 rejected skills:
@@ -233,13 +245,30 @@ The pipeline looks for the trained MDN checkpoint at:
 models/mdn_policy_best.pth
 ```
 
-If that file is present, the pipeline uses the trained MDN and records:
+If a **SASP-compatible** checkpoint is present, the pipeline uses the trained MDN and records:
 
 ```text
 mdn_source: trained_checkpoint
 ```
 
-If the checkpoint is missing, the pipeline falls back to `StubMDN` so tests and smoke runs still work. The stub returns fixed alpha/support values and should not be confused with the trained MDN.
+The pipeline falls back to `StubMDN` in two cases, so tests and smoke runs always work. The stub
+returns fixed alpha/support values and should not be confused with the trained MDN.
+
+1. **The checkpoint is missing.**
+2. **The checkpoint predates SASP.** The support head widened from `M` to `2M` outputs, so older
+   weights cannot be reinterpreted — the first `M` logits are now softmax base-allocation logits and
+   the last `M` are slack gates, which is not what the old weights meant. Both loaders detect this
+   and raise `IncompatibleCheckpointError` rather than silently producing wrong support geometry.
+
+> **The checkpoint currently committed to this repository is pre-SASP.** Running the demo today
+> therefore prints `MIGRATION REQUIRED` and reports `mdn_source: stub`. **This is correct behavior,
+> not a failure.** Retrain to restore `trained_checkpoint` — see *MDN Training and Evaluation* below.
+
+Note that `train_mdn_candidate_sets` optimizes a policy loss that is a function of the Dirichlet
+`alpha` alone, so it does **not** train the support head. Support values are trained separately by
+`MDNSupportTrainer` (`generator/mdn_support_trainer.py`) against `WeightSetStore` targets. A retrain
+produces a shape-correct checkpoint with a freshly initialized support head — still feasible by
+construction, but not fitted.
 
 ## MDN Training and Evaluation
 
@@ -321,14 +350,40 @@ The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy,
 ### MDN
 
 - **Input:** context vector `(8,)`
-- **Outputs:** Dirichlet alpha, 2D support values, auxiliary gate logit, auxiliary Q prediction
-- **2D Support Contract:** support values satisfy `0 <= s0,s1 <= 1` and `s0 + s1 >= 1`
+- **Outputs:** Dirichlet alpha, support values, auxiliary gate logit, auxiliary Q prediction
+- **Support head width:** `2M` logits — first `M` are base-allocation, last `M` are slack gates
+- **Support Contract (any M):** `0 <= s_i <= 1` and `sum(s) >= 1`
+
+Support values define the admissible weighting region `W_x = { w in simplex : w_i <= s_i }` that the
+CDS and PDS gates evaluate against. Both constraints are required for that region to be non-empty:
+if `sum(s) < 1`, no weight vector can respect every per-objective cap while summing to 1.
+
+They are decoded by **SASP** (Softmax-Anchored Slack Parameterization), which makes both constraints
+hold **by construction at any objective count**:
+
+```python
+p = softmax(raw[..., :M])                                     # sums to 1
+g = slack_floor + (1 - slack_floor) * sigmoid(raw[..., M:])   # in (g_min, 1)
+s = p + (1 - p) * g
+```
+
+`s_i` is a convex combination of `p_i` and 1, so `s_i` is in `[0, 1]`; and
+`sum(s) = sum(p) + sum((1 - p_i) * g_i) >= 1`. Both are algebraic, so they hold for any network
+weights at every training step and at inference — no penalty term or coefficient tuning is involved.
+The construction is permutation-equivariant, so no objective is privileged by its index, and
+`slack_floor` prevents `W_x` collapsing to a single point.
 
 ### Certification
 
 - **CDS:** Cone-Dominant Subtask, universal-benefit admission
 - **PDS-epsilon:** Pareto-Dominant Subtask, bounded trade-off admission
-- **Supported regions:** `FULL_SIMPLEX` and 2D `MDN_WX`
+- **Supported regions:** `FULL_SIMPLEX` and `MDN_WX` at any `M >= 2`
+- **Worst-case evaluation:** exact `O(M log M)` greedy support function, no vertex enumeration
+
+The gates need `h_Wx(c) = max { w . c : w in simplex, w_i <= s_i }`. This is a linear program with a
+closed-form greedy solution — sort coordinates by coefficient descending and fill each to its cap
+until total mass 1 is placed — exact because the feasible set is the base polytope of a polymatroid.
+Vertex enumeration was retired because its cost grows combinatorially with M.
 
 ### MeTTa Integration
 
@@ -349,7 +404,10 @@ The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy,
 
 ## Future Work
 
-- Extend candidate-set MDN evaluation beyond the current 2-objective MO-LunarLander testbed.
+- Retrain the MDN under SASP and validate held-out metrics; the committed checkpoint is pre-SASP.
+- Exercise the MDN on a testbed with more than two objectives. The support head, certification chain,
+  certificate schema and MeTTa storage are all correct at any `M >= 2`, but MO-LunarLander only
+  provides `[Safety, Fuel]`, so M > 2 is currently covered by tests rather than by a live environment.
 - Add MetaMo integration for dynamic weight management and risk budgets.
 - Explore cross-paradigm skill sources through logic macros and evolutionary programs.
 - Expand benchmark comparisons against MORL baselines.
