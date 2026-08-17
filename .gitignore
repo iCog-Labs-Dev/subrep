@@ -19,3 +19,28 @@ data/library.json
 data/certificates.metta
 demo/artifacts/*
 data/raw_mixed/
+data/safety_gymnasium_rollouts/
+data/safety_gymnasium_rollouts_seed42/
+data/safety_gymnasium_rollouts_ppo_seed42/
+data/safety_gymnasium_rollouts_seed43/
+data/safety_gymnasium_rollouts_seed44/
+data/safety_gymnasium_rollouts_seed42_ctx100/
+data/safety_gymnasium_rollouts_seed43_ctx100/
+data/safety_gymnasium_rollouts_seed44_ctx100/
+data/safety_gymnasium_rollouts*_lagrangian/
+# Trained model weights (run train_generator locally to regenerate)
+models/*
+!models/pilot_ppo.pt
+# Generated training plots
+plots/
+data/library.json
+data/safety_gymnasium_library.json
+data/safety_gymnasium_certificates.metta
+data/safety_gymnasium_library.json
+data/safety_gymnasium_certificates.metta
+data/safety_gymnasium_certificates_seed42_lagrangian.metta
+data/safety_gymnasium_certificates_seed43_lagrangian.metta
+data/safety_gymnasium_certificates_seed44_lagrangian.metta
+data/safety_gymnasium_library_seed42_lagrangian.json
+data/safety_gymnasium_library_seed43_lagrangian.json
+data/safety_gymnasium_library_seed44_lagrangian.json
