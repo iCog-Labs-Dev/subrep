@@ -32,6 +32,24 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="demo/artifacts/safety_gymnasium_admission_report.md",
     )
+    parser.add_argument(
+        "--no-metta-store",
+        action="store_true",
+        help=(
+            "Use a Python/JSON certificate store for scaled benchmark reporting. "
+            "This avoids native Hyperon crashes on some local builds while keeping "
+            "CDS/PDS and SkillLibrary validation unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--mdn-checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Optional compatible MDN checkpoint. When provided, certificates are "
+            "issued as MDN_WX using MDN support geometry instead of FULL_SIMPLEX."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -47,18 +65,23 @@ def main() -> None:
         library_file=args.library_file,
         report_json_path=args.report_json,
         report_md_path=args.report_md,
+        use_metta_store=not args.no_metta_store,
+        mdn_checkpoint=args.mdn_checkpoint,
     )
 
     stats = result.stats
     print("SubRep Safety-Gymnasium Certification Complete")
     print("============================================")
     print(f"contexts processed: {stats['contexts_processed']}")
+    print(f"objective count: {stats['num_objectives']} ({', '.join(stats['objective_names'])})")
+    print(f"certification region: {stats['certification_region']}")
     print(f"candidate outcomes certified: {stats['candidate_outcomes_certified']}")
     print(f"admitted: {stats['admitted']}")
     print(f"rejected: {stats['rejected']}")
     print(f"CDS admissions: {stats['cds_pass_count']}")
     print(f"PDS admissions: {stats['pds_pass_count']}")
     print(f"certificate store count: {stats['cert_store_count']}")
+    print(f"certificate store backend: {stats['certificate_store_backend']}")
     print(f"skill library size: {stats['library_size']}")
     print(f"zero-shot task selection: {stats['zero_shot_reuse']['task_focused_selected_skill']}")
     print(f"zero-shot safety selection: {stats['zero_shot_reuse']['safety_focused_selected_skill']}")

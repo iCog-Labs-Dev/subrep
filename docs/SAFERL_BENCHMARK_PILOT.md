@@ -93,6 +93,40 @@ name, rollout directory, prefix, and report paths.
 Generated rollout data, checkpoints, and reports are ignored by git and should
 be regenerated locally or attached externally when needed.
 
+## Stronger Multi-Objective Benchmark Mode
+
+After the M-objective support-geometry update, the same Safety-Gymnasium
+collector can run beyond the original two-objective pilot by adding control
+motives derived from the continuous action stream:
+
+```text
+2d: [Safety, Task]
+3d: [Safety, Task, ControlEfficiency]
+4d: [Safety, Task, ControlEfficiency, ActionSmoothness]
+```
+
+This is intended for stronger follow-up benchmarking across multiple
+Safety-Gymnasium environments such as `SafetyPointGoal1-v0`,
+`SafetyPointButton1-v0`, and `SafetyPointPush1-v0`. The certification pipeline
+infers the objective count from the rollout files and applies CDS/PDS over the
+full motive vector, so the same run can test whether SubRep's generalized
+support-geometry path remains valid past two objectives.
+
+Example 3-objective collection command:
+
+```bash
+conda run --no-capture-output -n subrep-safety python -m data_collector.collect_safety_gymnasium_rollouts \
+  --env-id SafetyPointGoal1-v0 \
+  --contexts 100 \
+  --max-steps 200 \
+  --save-dir data/safety_gymnasium_point_goal_3d_seed42 \
+  --prefix point_goal_3d_seed42 \
+  --seed 42 \
+  --objective-mode 3d \
+  --ppo-checkpoint models/safety_ppo_point_goal_seed42_updates50.pt \
+  --ppo-lagrangian-checkpoint models/safety_ppo_lagrangian_point_goal_seed42_updates50.pt
+```
+
 ## Aggregate Results
 
 Across seeds 42, 43, and 44:

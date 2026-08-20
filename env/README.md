@@ -1,7 +1,7 @@
 # Environment and Skill Execution
 
-`env/` adapts MO-LunarLander to the 2-objective SubRep implementation and provides
-the rollout executor used by data collection and certification.
+`env/` adapts benchmark environments to SubRep's motive-vector interface and
+provides the rollout executor used by data collection and certification.
 
 ## MO-LunarLander Wrapper
 
@@ -27,7 +27,7 @@ or `policy(obs) -> (action, behavior_probability)`.
 It returns:
 
 - discounted scalar payoff,
-- discounted 2D motive returns,
+- discounted motive returns,
 - terminal flag,
 - run metadata in `last_run_info`.
 
@@ -37,12 +37,24 @@ The executor also supports loading the trained PPO pilot with
 ## Optional Safety-Gymnasium Wrapper
 
 `safety_gymnasium_wrapper.py` adapts Safety-Gymnasium benchmark environments to
-the same SubRep 2-objective interface:
+SubRep motives. The default `objective_mode="2d"` interface is:
 
 ```text
 Safety = -cost
 Task   = reward
 ```
+
+For stronger benchmarks after the M-objective support-geometry update, use:
+
+```text
+objective_mode="3d": [Safety, Task, ControlEfficiency]
+objective_mode="4d": [Safety, Task, ControlEfficiency, ActionSmoothness]
+```
+
+Control efficiency is `-control_scale * ||action||`, and action smoothness is
+`-smoothness_scale * ||action_t - action_{t-1}||`, so larger values are better
+for every motive. Both scales default to `0.01` so the extra objectives do not
+dominate reward/cost by raw magnitude.
 
 This keeps safety costs compatible with the rest of the SubRep code, where
 larger motive values are better. The first recommended pilot environment is

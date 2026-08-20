@@ -28,6 +28,16 @@ class SafetyCandidatePolicy:
     policy_fn: PolicyFn
 
 
+def _objective_names(objective_mode: str) -> tuple[str, ...]:
+    if objective_mode == "2d":
+        return ("Safety", "Task")
+    if objective_mode == "3d":
+        return ("Safety", "Task", "ControlEfficiency")
+    if objective_mode == "4d":
+        return ("Safety", "Task", "ControlEfficiency", "ActionSmoothness")
+    raise ValueError(f"unknown objective_mode {objective_mode!r}")
+
+
 def _zero_policy(action_space) -> PolicyFn:
     def policy_fn(_obs: np.ndarray) -> np.ndarray:
         return np.zeros(action_space.shape, dtype=np.float32)
@@ -136,6 +146,9 @@ class SafetyGymnasiumRolloutCollector:
         gamma: float = 0.99,
         ppo_checkpoint: str | Path | None = None,
         ppo_lagrangian_checkpoint: str | Path | None = None,
+        objective_mode: str = "2d",
+        control_scale: float = 0.01,
+        smoothness_scale: float = 0.01,
         env_factory: Optional[Callable[..., SafeRLGymnasiumEnv]] = None,
     ) -> None:
         self.env_id = env_id
@@ -146,8 +159,17 @@ class SafetyGymnasiumRolloutCollector:
         self.gamma = float(gamma)
         self.ppo_checkpoint = ppo_checkpoint
         self.ppo_lagrangian_checkpoint = ppo_lagrangian_checkpoint
+        self.objective_mode = objective_mode
+        self.control_scale = float(control_scale)
+        self.smoothness_scale = float(smoothness_scale)
         factory = env_factory or SafeRLGymnasiumEnv
-        self.env = factory(env_id=env_id, seed=seed)
+        self.env = factory(
+            env_id=env_id,
+            seed=seed,
+            objective_mode=objective_mode,
+            control_scale=control_scale,
+            smoothness_scale=smoothness_scale,
+        )
         self.candidate_policies = build_default_safety_candidate_policies(
             self.env,
             ppo_checkpoint=ppo_checkpoint,
@@ -196,6 +218,10 @@ class SafetyGymnasiumRolloutCollector:
 
         return {
             "env_id": np.asarray(self.env_id),
+            "objective_mode": np.asarray(self.objective_mode),
+            "objective_names": np.asarray(_objective_names(self.objective_mode)),
+            "control_scale": np.asarray(self.control_scale, dtype=np.float32),
+            "smoothness_scale": np.asarray(self.smoothness_scale, dtype=np.float32),
             "context": context,
             "context_seed": np.asarray(context_seed, dtype=np.int32),
             "candidate_skill_ids": np.asarray(skill_ids),
@@ -242,6 +268,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument(
+        "--objective-mode",
+        choices=("2d", "3d", "4d"),
+        default="2d",
+        help=(
+            "SubRep motive mapping: 2d=[Safety,Task], "
+            "3d=+[ControlEfficiency], 4d=+[ActionSmoothness]."
+        ),
+    )
+    parser.add_argument(
+        "--control-scale",
+        type=float,
+        default=0.01,
+        help="Scale applied to the 3D/4D ControlEfficiency motive: -scale * ||action||.",
+    )
+    parser.add_argument(
+        "--smoothness-scale",
+        type=float,
+        default=0.01,
+        help="Scale applied to the 4D ActionSmoothness motive: -scale * ||action_t-action_t-1||.",
+    )
+    parser.add_argument(
         "--ppo-checkpoint",
         type=str,
         default=None,
@@ -269,6 +316,9 @@ def main() -> None:
         gamma=args.gamma,
         ppo_checkpoint=args.ppo_checkpoint,
         ppo_lagrangian_checkpoint=args.ppo_lagrangian_checkpoint,
+        objective_mode=args.objective_mode,
+        control_scale=args.control_scale,
+        smoothness_scale=args.smoothness_scale,
     )
     try:
         collector.collect(args.contexts, prefix=args.prefix)

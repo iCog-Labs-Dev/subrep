@@ -95,12 +95,12 @@ class SkillExecutor:
 
         initial_obs = np.array(obs, copy=True)
         total_payoff = 0.0
-        motive_deltas = np.zeros(2, dtype=np.float32)
+        motive_deltas = None
         discount = 1.0
         steps = 0
         terminated = False
         truncated = False
-        final_reward = np.zeros(2, dtype=np.float32)
+        final_reward = None
         stop_reason = "unknown"
         behavior_probability = None
 
@@ -114,8 +114,10 @@ class SkillExecutor:
             action, behavior_probability = self._parse_policy_output(action_output)
             obs, reward_vec, terminated, truncated, _ = self.env.step(action)
             reward_vec = np.asarray(reward_vec, dtype=np.float32)
+            if motive_deltas is None:
+                motive_deltas = np.zeros_like(reward_vec, dtype=np.float32)
 
-            # Apply discounting to both scalar payoff and 2D motive totals.
+            # Apply discounting to both scalar payoff and motive totals.
             total_payoff += discount * float(self.payoff_fn(reward_vec))
             motive_deltas += discount * reward_vec
             final_reward = reward_vec
@@ -135,6 +137,12 @@ class SkillExecutor:
         print("Episode summary:")
         print(f"  steps: {steps}")
         print(f"  total_payoff: {total_payoff:.6f}")
+        if motive_deltas is None:
+            reward_dim = int(getattr(getattr(self.env, "reward_space", None), "shape", (2,))[0])
+            motive_deltas = np.zeros(reward_dim, dtype=np.float32)
+        if final_reward is None:
+            final_reward = np.zeros_like(motive_deltas, dtype=np.float32)
+
         print(f"  motive_deltas: {motive_deltas}")
         print(f"  final_reward: {final_reward}")
         print(f"  end_reason: {stop_reason}")

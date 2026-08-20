@@ -5,7 +5,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
+from generator.mdn import MotiveDecompositionNetwork
 from utils.safety_gymnasium_pipeline import run_safety_gymnasium_certification_pipeline
 
 
@@ -33,6 +35,43 @@ def _write_rollout_file(path: Path) -> None:
     np.savez(
         path,
         env_id=np.asarray("SafetyPointGoal1-v0"),
+        context=np.zeros(4, dtype=np.float32),
+        context_seed=np.asarray(101, dtype=np.int32),
+        candidate_skill_ids=candidate_skill_ids,
+        candidate_payoffs=candidate_payoffs,
+        candidate_motives=candidate_motives,
+        candidate_safety_costs=-candidate_motives[:, 0],
+        candidate_task_returns=candidate_motives[:, 1],
+        terminated_flags=np.asarray([False] * len(candidate_skill_ids)),
+        step_counts=np.asarray([50] * len(candidate_skill_ids), dtype=np.int32),
+        stop_reasons=np.asarray(["max_steps"] * len(candidate_skill_ids)),
+    )
+
+
+def _write_three_objective_rollout_file(path: Path) -> None:
+    candidate_skill_ids = np.asarray(
+        [
+            "zero_action",
+            "safe_balanced",
+            "task_heavy",
+            "unsafe_costly",
+        ]
+    )
+    candidate_payoffs = np.asarray([1.0, 2.0, 4.0, 1.2], dtype=np.float32)
+    candidate_motives = np.asarray(
+        [
+            [-1.0, 1.0, 0.0],
+            [-0.5, 2.0, -0.1],
+            [-3.5, 4.0, -0.2],
+            [-4.0, 1.2, -0.8],
+        ],
+        dtype=np.float32,
+    )
+    np.savez(
+        path,
+        env_id=np.asarray("SafetyPointGoal1-v0"),
+        objective_mode=np.asarray("3d"),
+        objective_names=np.asarray(["Safety", "Task", "ControlEfficiency"]),
         context=np.zeros(4, dtype=np.float32),
         context_seed=np.asarray(101, dtype=np.int32),
         candidate_skill_ids=candidate_skill_ids,
@@ -84,6 +123,75 @@ def test_safety_gymnasium_rollouts_are_certified_and_reported(tmp_path):
     assert report_json["baseline_comparison"]["task_focused"]["mean_lift_vs_random_candidate"] > 0.0
     assert report_json["failure_reasons"]
     assert (tmp_path / "report.md").exists()
+
+
+def test_safety_gymnasium_pipeline_certifies_three_objective_rollouts(tmp_path):
+    rollout_dir = tmp_path / "rollouts"
+    rollout_dir.mkdir()
+    _write_three_objective_rollout_file(rollout_dir / "safety_rollout_00001.npz")
+
+    result = run_safety_gymnasium_certification_pipeline(
+        rollout_dir=rollout_dir,
+        pds_epsilon=1.0,
+        cert_file=tmp_path / "certificates.metta",
+        library_file=tmp_path / "library.json",
+        report_json_path=tmp_path / "report.json",
+        report_md_path=tmp_path / "report.md",
+    )
+
+    stats = result.stats
+    assert stats["num_objectives"] == 3
+    assert stats["objective_names"] == ["Safety", "Task", "ControlEfficiency"]
+    assert stats["candidate_outcomes_certified"] == 3
+    assert stats["admitted"] >= 1
+    assert result.cert_store.count() == result.library.count() == stats["admitted"]
+
+    cert = result.cert_store.load_all()[0]
+    assert len(cert.delta_n) == 3
+    assert len(stats["zero_shot_reuse"]["task_focused_weight"]) == 3
+
+
+def test_safety_gymnasium_pipeline_can_issue_mdn_wx_certificates(tmp_path):
+    rollout_dir = tmp_path / "rollouts"
+    rollout_dir.mkdir()
+    _write_three_objective_rollout_file(rollout_dir / "safety_rollout_00001.npz")
+
+    checkpoint = tmp_path / "mdn_3d.pt"
+    model = MotiveDecompositionNetwork(input_dim=4, num_objectives=3, hidden_dim=16)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        model.support_head.bias[:3] = torch.tensor([-10.0, 5.0, 5.0])
+        model.support_head.bias[3:] = torch.tensor([-10.0, 10.0, 10.0])
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint)
+
+    result = run_safety_gymnasium_certification_pipeline(
+        rollout_dir=rollout_dir,
+        pds_epsilon=1.0,
+        cert_file=tmp_path / "certificates.jsonl",
+        library_file=tmp_path / "library.json",
+        report_json_path=tmp_path / "report.json",
+        report_md_path=tmp_path / "report.md",
+        use_metta_store=False,
+        mdn_checkpoint=checkpoint,
+    )
+
+    stats = result.stats
+    assert stats["certification_region"] == "FULL_SIMPLEX_THEN_MDN_WX"
+    assert stats["mdn_checkpoint"] == str(checkpoint)
+    assert stats["admitted"] >= 1
+    assert stats["mdn_wx_admissions"] >= 1
+    assert stats["zero_shot_reuse"]["runtime_support_values"] is not None
+    mdn_certs = [
+        cert for cert in result.cert_store.load_all() if cert.weight_region_type == "MDN_WX"
+    ]
+    assert mdn_certs
+    for cert in mdn_certs:
+        assert len(cert.delta_n) == 3
+        assert len(cert.mdn_alpha) == 3
+        assert len(cert.wx_support_values) == 3
+    for cert in result.cert_store.load_all():
+        assert len(cert.delta_n) == 3
 
 
 def test_safety_gymnasium_zero_shot_reuse_changes_with_motive_weights(tmp_path):

@@ -52,8 +52,21 @@ def _make_fake_env(_env_id, render_mode=None):
     return FakeSafetyEnv()
 
 
-def _fake_wrapper_factory(env_id: str, seed: int):
-    return SafeRLGymnasiumEnv(env_id=env_id, seed=seed, make_env=_make_fake_env)
+def _fake_wrapper_factory(
+    env_id: str,
+    seed: int,
+    objective_mode: str = "2d",
+    control_scale: float = 0.01,
+    smoothness_scale: float = 0.01,
+):
+    return SafeRLGymnasiumEnv(
+        env_id=env_id,
+        seed=seed,
+        make_env=_make_fake_env,
+        objective_mode=objective_mode,
+        control_scale=control_scale,
+        smoothness_scale=smoothness_scale,
+    )
 
 
 def test_safety_wrapper_maps_reward_and_cost_to_subrep_motives():
@@ -75,12 +88,47 @@ def test_safety_wrapper_maps_reward_and_cost_to_subrep_motives():
     assert np.isclose(info["task_reward"], float(reward_vector[1]))
 
 
+def test_safety_wrapper_supports_three_objective_motives():
+    env = SafeRLGymnasiumEnv(
+        env_id="FakeSafety-v0",
+        seed=7,
+        make_env=_make_fake_env,
+        objective_mode="3d",
+    )
+
+    env.reset(seed=7)
+    _, reward_vector, _, _, info = env.step(np.array([0.8, 0.0], dtype=np.float32))
+
+    assert reward_vector.shape == (3,)
+    assert reward_vector[0] == -0.25
+    assert reward_vector[1] < 1.0
+    assert reward_vector[2] < 0.0
+    assert info["control_cost"] > 0.0
+
+
+def test_safety_wrapper_scales_control_efficiency_motive():
+    env = SafeRLGymnasiumEnv(
+        env_id="FakeSafety-v0",
+        seed=7,
+        make_env=_make_fake_env,
+        objective_mode="3d",
+        control_scale=0.05,
+    )
+
+    env.reset(seed=7)
+    _, reward_vector, _, _, info = env.step(np.array([0.8, 0.0], dtype=np.float32))
+
+    assert np.isclose(reward_vector[2], -0.05 * info["control_cost"])
+
+
 def test_safety_rollout_collector_saves_payoff_cost_and_motive_returns(tmp_path):
     collector = SafetyGymnasiumRolloutCollector(
         env_id="FakeSafety-v0",
         seed=42,
         save_dir=str(tmp_path),
         max_steps=3,
+        objective_mode="3d",
+        control_scale=0.05,
         env_factory=_fake_wrapper_factory,
     )
 
@@ -89,7 +137,9 @@ def test_safety_rollout_collector_saves_payoff_cost_and_motive_returns(tmp_path)
 
     assert len(records) == 1
     record = records[0]
-    assert record["candidate_motives"].shape == (7, 2)
+    assert record["candidate_motives"].shape == (7, 3)
+    assert record["objective_names"].tolist() == ["Safety", "Task", "ControlEfficiency"]
+    assert np.isclose(float(record["control_scale"]), 0.05)
     assert record["candidate_payoffs"].shape == (7,)
     assert record["candidate_safety_costs"].shape == (7,)
     assert record["candidate_task_returns"].shape == (7,)
