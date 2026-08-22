@@ -64,22 +64,12 @@ class SubRepEnv:
         
         SubRep objectives (both larger-is-better, as CDS/PDS require):
           [0] Safety = Terminal result + dense shaping
-          [1] Fuel   = Engine costs summed and passed through unchanged
+          [1] Fuel   = Engine costs summed, passed through unchanged
 
-        Both raw engine entries are already reported as non-positive costs
-        (`vector_reward[2] = -m_power`, `vector_reward[3] = -s_power`), so
-        their sum is *already* oriented larger-is-better: 0.0 when no engine
-        fires and increasingly negative as fuel is burned. Passing that sum
-        through unchanged is therefore the correct mapping.
-
-        Negating it here would invert the objective and make burning fuel
-        score higher than conserving it, which silently turns fuel waste into
-        an admission benefit inside `min_i(delta_n_i)`. See
-        `tests/test_env.py::test_fuel_objective_prefers_less_fuel`.
+        The engine entries arrive as non-positive costs, so their sum is already
+        larger-is-better. Negating it would make burning fuel outrank conserving
+        it. See `tests/test_env.py::test_fuel_objective_prefers_less_fuel`.
         """
-        # Safety reflects both terminal outcome and dense flight progress.
-        # Fuel is the raw engine-cost sum: already negative-for-worse, which
-        # matches the SubRep convention that every motive is better when larger.
         safety = raw_rewards[0] + raw_rewards[1]
         fuel = raw_rewards[2] + raw_rewards[3]
         return np.array([safety, fuel], dtype=np.float32)
