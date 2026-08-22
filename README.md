@@ -226,16 +226,21 @@ rejected skills:
 | Metric | Value |
 | :--- | ---: |
 | Total attempted | 10 |
-| Admitted | 7 |
-| Rejected | 3 |
-| CDS admissions | 6 |
+| Admitted | 3 |
+| Rejected | 7 |
+| CDS admissions | 2 |
 | PDS admissions | 1 |
 
-The perturbed PPO candidate demonstrates a bounded trade-off case where CDS
-fails but PDS admits within the demo epsilon budget (`5.0` on the discounted
-rollout-return scale). Fixed-action candidates still make the report a realistic
-safety check: rejected candidates are discarded before entering both
-`CertificateStore` and `SkillLibrary`.
+`ppo_deterministic` and `noop` clear CDS. `ppo_then_side_tradeoff` is the
+bounded-trade-off case: worst case `-2.73`, so CDS rejects while PDS admits inside
+the `5.0` budget. Everything else is rejected before entering `CertificateStore`
+or `SkillLibrary`. Episode 10 re-runs `ppo_deterministic` from a different start
+state and is rejected — admission is a property of the rollout, not the policy.
+
+> **These counts changed in `fix/lunar-lander-fuel-reward-sign`.** The previous
+> split (7 admitted / 3 rejected) came from a sign-inverted fuel objective that
+> credited wasted fuel as a benefit; a random policy cleared CDS under it. See
+> *Objective Mapping* below and `docs/INTEGRATION_REPORT.md` §2.2.
 
 ## MDN Checkpoint Behavior
 
@@ -339,6 +344,30 @@ The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy,
 - **Platform:** `mo-gymnasium` (`MO-LunarLander-v3`)
 - **Observation Space:** `(8,)`
 - **Reward Space:** `(2,)` mapped to `[Safety, Fuel]`
+
+#### Objective Mapping
+
+`MO-LunarLander-v3` emits four raw objectives, which `SubRepEnv._map_rewards`
+folds into SubRep's two:
+
+```text
+raw[0] terminal result (+100 landed / -100 crashed)  ->  Safety = raw[0] + raw[1]
+raw[1] dense potential-based shaping                 ->
+raw[2] main engine cost  (-m_power, <= 0)            ->  Fuel   = raw[2] + raw[3]
+raw[3] side engine cost  (-s_power, <= 0)            ->
+```
+
+Every motive is **larger-is-better**, since CDS admits on
+`delta_r + min_i(delta_n_i) >= 0`.
+
+The engine entries arrive as non-positive costs, so their sum is already oriented
+correctly — `0.0` when no engine fires, negative as fuel burns — and is passed
+through unchanged. Negating it would make burning fuel outrank conserving it;
+`tests/test_env.py::test_fuel_objective_prefers_less_fuel` pins the ordering.
+
+The SafeRL adapter *does* negate, because Safety-Gymnasium's `cost` is
+positive-is-worse. Same transform, opposite input convention — check the sign of
+the source before mapping a new environment.
 
 ### Neural Generator
 
