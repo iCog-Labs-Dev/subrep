@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 from torch import Tensor, nn
-
+from candidate_a_activation import constrained_support_activation
 
 class MotiveDecompositionNetwork(nn.Module):
     """Shared-backbone MDN for runtime inference and auxiliary training.
@@ -50,7 +50,7 @@ class MotiveDecompositionNetwork(nn.Module):
 
         self.trunk = nn.Sequential(*trunk_layers)
         self.distribution_head = nn.Linear(hidden_dim, num_objectives)
-        self.support_head = nn.Linear(hidden_dim, num_objectives)
+        self.support_head = nn.Linear(hidden_dim, num_objectives+1)
         self.skill_embedding = nn.Embedding(num_skills, skill_embedding_dim)
         self.auxiliary_fusion = nn.Sequential(
             nn.Linear(hidden_dim + skill_embedding_dim, hidden_dim),
@@ -59,7 +59,7 @@ class MotiveDecompositionNetwork(nn.Module):
         self.gate_head = nn.Linear(hidden_dim, 1)
         self.motive_head = nn.Linear(hidden_dim, num_objectives)
         self.softplus = nn.Softplus()
-        self.support_activation = nn.Softplus()
+        self.raw_tau = nn.Parameter(torch.zeros(1))
 
         self._initialize_weights()
 
@@ -96,13 +96,9 @@ class MotiveDecompositionNetwork(nn.Module):
         return features, is_single_input
 
     def _support_values_from_raw(self, raw_support: Tensor) -> Tensor:
-        if self.num_objectives != 2:
-            return self.support_activation(raw_support)
-
-        lower = torch.sigmoid(raw_support[..., 0])
-        width_fraction = torch.sigmoid(raw_support[..., 1])
-        upper = lower + width_fraction * (1.0 - lower)
-        return torch.stack((upper, 1.0 - lower), dim=-1)
+        z, z_scale = raw_support[..., :-1], raw_support[..., -1:]
+        tau = torch.nn.functional.softplus(self.raw_tau) + 1e-4
+        return constrained_support_activation(z, z_scale, tau)
 
     def forward_inference(self, context: Tensor) -> tuple[Tensor, Tensor]:
         features, is_single_input = self._encode_context(context)

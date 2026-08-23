@@ -80,22 +80,83 @@ def test_mdn_two_objective_support_values_are_feasible_for_batched_contexts():
     assert torch.all(torch.sum(support_values, dim=-1) >= 1.0)
 
 
-def test_mdn_non_two_objective_support_values_keep_softplus_path():
-    """Non-2D support outputs should preserve the existing Softplus behavior."""
+def test_support_values_feasible_at_any_m():
+    for M in (2, 3, 5, 10):
+        model = MotiveDecompositionNetwork(num_objectives=M)
+        contexts = torch.randn(500, model.input_dim) * 10.0
+        _, support_values = model.forward_inference(contexts)
+
+        assert bool((support_values >= 0.0).all())
+        assert bool((support_values <= 1.0).all())
+        assert bool((support_values.sum(dim=-1) >= 1.0 - 1e-5).all())
+
+import torch
+import pytest
+from generator.mdn import MotiveDecompositionNetwork
+from candidate_a_activation import constrained_support_activation
+
+
+def test_permutation_equivariance():
+    """ no objective is privileged by position """
     torch.manual_seed(0)
-    model = MotiveDecompositionNetwork(num_objectives=3)
-    with torch.no_grad():
-        model.support_head.weight.zero_()
-        model.support_head.bias.copy_(torch.tensor([2.0, 0.0, -2.0]))
-    context = torch.randn(4, 8)
+    model = MotiveDecompositionNetwork(num_objectives=5)
+    contexts = torch.randn(200, model.input_dim) * 8.0
+    perm = torch.randperm(5)
 
-    _, support_values = model.forward_inference(context)
-    expected = torch.nn.functional.softplus(model.support_head.bias).expand_as(support_values)
+    raw = model.support_head(model.trunk(contexts))
+    z, z_scale = raw[..., :-1], raw[..., -1:]
+    tau = torch.nn.functional.softplus(model.raw_tau) + 1e-4
 
-    assert support_values.shape == (4, 3)
-    assert torch.allclose(support_values, expected)
-    assert torch.any(support_values > 1.0)
+    s1 = constrained_support_activation(z, z_scale, tau)
+    s2 = constrained_support_activation(z[:, perm], z_scale, tau)
 
+    assert torch.allclose(s2, s1[:, perm], atol=1e-6)
+
+
+def test_rank_preservation():
+    """ larger raw score never yields a smaller support value """
+    torch.manual_seed(1)
+    model = MotiveDecompositionNetwork(num_objectives=5)
+    contexts = torch.randn(500, model.input_dim) * 5.0
+
+    raw = model.support_head(model.trunk(contexts))
+    z = raw[..., :-1]
+    _, s = model.forward_inference(contexts)
+
+    assert torch.equal(z.argsort(dim=-1), s.argsort(dim=-1))
+
+
+def test_confidence_ratio_preserved_exactly():
+    """ relative confidence between objectives is preserved exactly """
+    torch.manual_seed(2)
+    model = MotiveDecompositionNetwork(num_objectives=4)
+    contexts = torch.randn(300, model.input_dim) * 6.0
+
+    raw = model.support_head(model.trunk(contexts))
+    z, z_scale = raw[..., :-1], raw[..., -1:]
+    tau = torch.nn.functional.softplus(model.raw_tau) + 1e-4
+
+    p = torch.softmax(z / tau, dim=-1)
+    s = constrained_support_activation(z, z_scale, tau)
+
+    assert torch.allclose(p[:, 0] / p[:, 1], s[:, 0] / s[:, 1], rtol=1e-4)
+
+
+def test_extreme_logit_sweep():
+    """  both requirements hold under extreme-magnitude input, real model, multiple M """
+    for M in (2, 5, 10):
+        model = MotiveDecompositionNetwork(num_objectives=M)
+        contexts = torch.randn(1000, model.input_dim) * 1000.0
+        _, s = model.forward_inference(contexts)
+        assert bool((s >= 0.0).all()) and bool((s <= 1.0).all())
+        assert bool((s.sum(dim=-1) >= 1.0 - 1e-5).all())
+
+
+def test_support_head_width_matches_num_objectives_plus_one():
+    """ head must output M+1 values (M scores + z_scale) """
+    for M in (2, 3, 7):
+        model = MotiveDecompositionNetwork(num_objectives=M)
+        assert model.support_head.out_features == M + 1
 
 def test_mdn_outputs_are_finite():
     """Both heads should produce finite tensors without NaN or Inf values."""
