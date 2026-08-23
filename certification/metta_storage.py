@@ -187,12 +187,12 @@ class CertificateStore:
 
     @staticmethod
     def _validated_weights_array(weights: list[float]) -> np.ndarray:
-        """Validate and return a 2D simplex weight array for this phase."""
+        """Validate and return a simplex weight array for this phase."""
         if weights is None:
             raise ValueError("weights must not be None")
         arr = np.asarray(weights, dtype=float)
-        if arr.shape != (2,):
-            raise ValueError(f"weights must be a length-2 vector, got shape {arr.shape}")
+        if arr.ndim != 1 or arr.shape[0] < 2:
+            raise ValueError(f"weights must be a 1D vector of length >= 2, got shape {arr.shape}")
         if not validate_simplex_weights(arr):
             raise ValueError(
                 "weights must be a valid simplex vector (finite, non-negative, sum to 1)"

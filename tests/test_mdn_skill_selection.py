@@ -486,15 +486,6 @@ def test_mdn_wx_without_audit_fields_raises_at_construction():
     for field in ["certification_context", "wx_support_directions", "wx_support_values"]:
         assert field in msg, f"Expected '{field}' in error message, got: {msg}"
 
-def test_wx_worst_case_rejects_non_2d():
-    """Vertex reconstruction should reject M != 2."""
-    with pytest.raises(ValueError, match="M=2"):
-        _compute_wx_worst_case(
-            delta_n=np.array([0.1, 0.2, 0.3]),
-            support_directions=np.eye(3),
-            support_values=np.array([0.5, 0.5, 0.5]),
-        )
-
 def test_wx_worst_case_rejects_non_basis_directions():
     """Vertex reconstruction should reject non-standard-basis directions."""
     with pytest.raises(ValueError, match="standard basis"):

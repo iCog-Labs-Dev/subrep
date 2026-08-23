@@ -20,6 +20,7 @@ from certification.certificate_schema import Certificate
 from library.skill_metadata import FULL_SIMPLEX, MDN_WX, SkillEntry
 from library.skill_library import SkillLibrary
 from library.skill_selector import SkillSelector
+from library.skill_library import _compute_wx_worst_case
 
 def make_dummy_policy(action: int = 0):
     """Create a simple deterministic policy that always returns `action`."""
@@ -637,3 +638,21 @@ def test_certification_to_library_flow():
     selector = SkillSelector(library=lib, seed=42)
     chosen = selector.select_random(np.zeros(8))
     assert chosen in {"cert-int-a", "cert-int-b"}
+
+def test_greedy_solver_matches_old_m2_formula():
+    # new general-M solver must reduce to the exact old M=2 vertex formula
+    sv = np.array([0.7, 0.6])
+    delta_n = np.array([0.3, -0.2])
+    h_new = _compute_wx_worst_case(delta_n, np.eye(2), sv)
+
+    old_vertices = np.array([[sv[0], 1-sv[0]], [1-sv[1], sv[1]]])
+    h_old = float(np.max(old_vertices @ (-delta_n)))
+
+    assert abs(h_new - h_old) < 1e-9
+
+def test_certification_works_at_m3():
+    # M=3 certification is now possible at all -- was structurally rejected before
+    sv = np.array([0.5, 0.4, 0.3])
+    delta_n = np.array([0.2, -0.1, 0.05])
+    h = _compute_wx_worst_case(delta_n, np.eye(3), sv)
+    assert isinstance(h, float)

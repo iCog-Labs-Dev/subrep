@@ -50,3 +50,21 @@ def simplex_support_values(query_directions: np.ndarray) -> np.ndarray:
     if not np.all(np.isfinite(query_directions)):
         raise ValueError("query_directions must contain only finite values")
     return np.max(query_directions, axis=1).astype(np.float32)
+
+
+def greedy_worst_case_vertex(direction: np.ndarray, sv: np.ndarray) -> np.ndarray:
+    """Vertex of W_x maximizing w . direction, via greedy fractional-knapsack.
+    Assumes sum(sv) >= 1 (checked by the caller)."""
+    if float(np.sum(sv)) < 1.0 - 1e-9:
+        raise ValueError(f"Infeasible support_values (sum < 1): {sv.tolist()}")
+
+    order = np.argsort(-direction, kind="stable")
+    w = np.zeros_like(sv)
+    remaining = 1.0
+    for i in order:
+        take = min(sv[i], remaining)
+        w[i] = take
+        remaining -= take
+        if remaining <= 1e-12:
+            break
+    return w

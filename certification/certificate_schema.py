@@ -36,7 +36,7 @@ class Certificate:
     skill_id: str
     gate_type: str
     delta_r: float
-    delta_n: tuple[float, float]
+    delta_n: tuple[float, ...]
     admission_margin: float
     epsilon: float
     timestamp: str
@@ -73,10 +73,10 @@ class Certificate:
                 f"got {self.weight_region_type!r}"
             )
 
-        # In this phase, motive vector is fixed to 2D: [Safety, Fuel].
+        # motive vector length is general (M >= 2)
         dn = tuple(float(v) for v in self.delta_n)
-        if len(dn) != 2:
-            raise ValueError(f"delta_n must have length 2, got {len(dn)}")
+        if len(dn) < 2:
+            raise ValueError(f"delta_n must have length >= 2, got {len(dn)}")
         if not all(isfinite(v) for v in dn):
             raise ValueError(f"delta_n must contain only finite values, got {dn}")
         object.__setattr__(self, "delta_n", dn)

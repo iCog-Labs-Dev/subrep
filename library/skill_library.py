@@ -17,19 +17,18 @@ from utils.weight_set_store import WeightSet
 from certification.certificate_schema import Certificate
 from certification.cds_test import CDSGate
 from certification.pds_test import PDSGate
+from utils.support_geometry import greedy_worst_case_vertex
 
 logger = logging.getLogger(__name__)
 
 def _validate_wx_geometry(support_directions: np.ndarray, support_values: np.ndarray,) -> tuple[np.ndarray, np.ndarray]:
-    """Validate W_x support geometry for M=2 standard basis"""
+    """Validate W_x support geometry for any M>=2 standard basis"""
     sd = np.asarray(support_directions, dtype=np.float64)
     sv = np.asarray(support_values, dtype=np.float64)
     num_obj = len(sv)
 
-    if num_obj != 2:
-        raise ValueError(
-            f"W_x vertex reconstruction requires M=2, got M={num_obj}."
-        )
+    if num_obj < 2:
+        raise ValueError(f"W_x vertex reconstruction requires M >= 2, got M={num_obj}.")
 
     expected_shape = (num_obj, num_obj)
     if sd.shape != expected_shape:
@@ -64,28 +63,22 @@ def _support_values_feasible(support_values: np.ndarray) -> bool:
         return False
     return True
 
-def _compute_wx_worst_case(delta_n: np.ndarray, support_directions: np.ndarray, support_values: np.ndarray,) -> float:
-    """Compute h_{W_x}(-Δn) = max_{w ∈ W_x} w · (-Δn)"""
+
+def _compute_wx_worst_case(delta_n: np.ndarray, support_directions: np.ndarray, support_values: np.ndarray) -> float:
+    """Compute h_{W_x}(-Δn) = max_{w in W_x} w . (-Δn), for any M."""
     sd, sv = _validate_wx_geometry(support_directions, support_values)
     neg_delta_n = -np.asarray(delta_n, dtype=np.float64)
+    vertex = greedy_worst_case_vertex(neg_delta_n, sv)
+    return float(vertex @ neg_delta_n)
 
-    vertices = np.array([
-        [sv[0], 1.0 - sv[0]],
-        [1.0 - sv[1], sv[1]],
-    ], dtype=np.float64)
-
-    scores = vertices @ neg_delta_n
-    return float(np.max(scores))
-
-def _build_wx_weight_set(support_directions: tuple[tuple[float, ...], ...], support_values: tuple[float, ...],) -> WeightSet:
-    """Reconstruct a WeightSet from W_x support geometry"""
-    _, sv = _validate_wx_geometry(
-        np.asarray(support_directions), np.asarray(support_values)
-    )
+def _build_wx_weight_set(support_directions, support_values, delta_n: np.ndarray) -> WeightSet:
+    """Single-vertex WeightSet holding the one vertex CDSGate/PDSGate.admit() actually needs."""
+    _, sv = _validate_wx_geometry(np.asarray(support_directions), np.asarray(support_values))
+    neg_delta_n = -np.asarray(delta_n, dtype=np.float64)
+    vertex = greedy_worst_case_vertex(neg_delta_n, sv)
 
     ws = WeightSet()
-    ws.add_vertex(np.array([sv[0], 1.0 - sv[0]], dtype=np.float32))
-    ws.add_vertex(np.array([1.0 - sv[1], sv[1]], dtype=np.float32))
+    ws.add_vertex(vertex.astype(np.float32))
     return ws
 
 class SkillLibrary:
@@ -136,7 +129,7 @@ class SkillLibrary:
                     f"MDN_WX skill '{skill_id}' requires wx_support_directions and wx_support_values for certificate verification."
                 )
             weight_set = _build_wx_weight_set(
-                wx_support_directions, wx_support_values
+                wx_support_directions, wx_support_values, delta_n_vec
             )
 
         if not gate.admit(certificate.delta_r, delta_n_vec, weight_set):

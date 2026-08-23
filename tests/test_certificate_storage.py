@@ -24,7 +24,7 @@ def _sample_certificate(
     skill_id: str = "landing_skill_01",
     gate_type: str = "CDS",
     delta_r: float = 0.5,
-    delta_n: tuple[float, float] = (0.2, -0.1),
+    delta_n: tuple[float,...] = (0.2, -0.1),
     admission_margin: float = 0.4,
     epsilon: float = 0.0,
 ) -> Certificate:
@@ -82,10 +82,16 @@ def test_certificate_cds_nonzero_epsilon_fails():
 
 
 def test_certificate_wrong_delta_n_length_fails():
+    # the invalid case length < 2
     with pytest.raises(ValueError):
-        _sample_certificate(delta_n=(0.1, 0.2, 0.3))  # type: ignore[arg-type]
+        _sample_certificate(delta_n=(0.5,))
 
 
+def test_certificate_delta_n_length_3_succeeds():
+    cert = _sample_certificate(delta_n=(0.1, 0.2, 0.3))
+    assert len(cert.delta_n) == 3
+
+    
 def test_certificate_negative_admission_margin_fails():
     with pytest.raises(ValueError):
         _sample_certificate(admission_margin=-0.01)
@@ -258,8 +264,7 @@ def test_query_by_weights_invalid_values_raise():
         store.query_by_weights([-0.1, 1.1])  # negative component
     with pytest.raises(ValueError):
         store.query_by_weights([0.5, np.inf])  # non-finite
-    with pytest.raises(ValueError):
-        store.query_by_weights([0.5, 0.3, 0.2])  # wrong shape
+
 
 
 def test_query_by_weights_raises_even_when_store_empty():
