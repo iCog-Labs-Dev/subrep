@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+import dataclasses
 
 from certification.certificate_schema import Certificate
 from library.skill_library import SkillLibrary
@@ -35,6 +36,10 @@ def _certificate(skill_id: str = "skill_a") -> Certificate:
         episode_length=100,
         version="0.1.0",
     )
+
+def _certificate_m3(skill_id: str = "skill_m3") -> Certificate:
+    """ M=2 certificate with delta_n swapped to length 3 """
+    return dataclasses.replace(_certificate(skill_id), delta_n=(0.5, 0.2, 0.1))
 
 
 def test_load_demo_artifacts_counts_and_flattens_rows(tmp_path: Path):
@@ -87,6 +92,26 @@ def test_build_mdn_selection_trace_uses_stub_when_checkpoint_missing(tmp_path: P
     assert trace["decisions"][0]["no_retraining"] is True
 
 
+def test_build_mdn_selection_trace_infers_num_objectives_from_library(tmp_path: Path):
+    """ num_objectives is now inferred from the library's own M=3 skill, not hardcoded to 2 """
+    library_path = tmp_path / "library.json"
+    checkpoint_path = tmp_path / "missing_mdn.pth"
+
+    library = SkillLibrary(save_path=str(library_path))
+    cert = _certificate_m3("skill_m3")
+    assert library.add_skill("skill_m3", cert, lambda obs: 0)
+    library.save(str(library_path))
+
+    trace = build_mdn_selection_trace(
+        library_path=library_path,
+        checkpoint_path=checkpoint_path,
+        observations=(np.zeros(8, dtype=np.float32),),
+    )
+
+    assert trace["mdn_source"] == "stub"
+    assert trace["decisions"][0]["status"] == "selected"
+
+
 def test_build_zero_shot_performance_rows_scores_against_baseline():
     trace = {
         "decisions": [
@@ -126,6 +151,12 @@ def test_support_geometry_feasible_for_two_objective_interval():
     assert support_geometry_feasible([0.8, 0.4]) is True
     assert support_geometry_feasible([1.2, 0.4]) is False
     assert support_geometry_feasible([0.4, 0.4]) is False
+
+
+def test_support_geometry_feasible_supports_for_three_objective_interval():
+    assert support_geometry_feasible([0.5, 0.4, 0.3]) is True    
+    assert support_geometry_feasible([0.9, 0.05, 0.02]) is False  
+    assert support_geometry_feasible([0.1]) is False            
 
 
 def test_count_metta_certificates_missing_file_is_zero(tmp_path: Path):

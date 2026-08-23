@@ -24,11 +24,22 @@ def load_mdn_checkpoint(
     checkpoint = _load_checkpoint_payload(path, map_location=map_location)
     state = extract_model_state_dict(checkpoint)
     model = build_mdn_from_state_dict(state)
-    model.load_state_dict(state)
+
+    try:
+        model.load_state_dict(state)
+    except RuntimeError as e:
+        raise RuntimeError(
+            f"Failed to load MDN checkpoint at {path!r}. This checkpoint was likely "
+            f"trained before constrained_support_activation was introduced, which "
+            f"widened support_head from M to M+1 outputs and added a new 'raw_tau' "
+            f"parameter. Old checkpoints are structurally incompatible and must be "
+            f"retrained under the current architecture -- they cannot be loaded as-is.\n"
+            f"Original error: {e}"
+        ) from e
+    
     model.to(torch.device(map_location))
     model.eval()
     return model
-
 
 def extract_model_state_dict(checkpoint: Any) -> dict[str, torch.Tensor]:
     """Return the model state dict from raw or wrapped checkpoint payloads."""

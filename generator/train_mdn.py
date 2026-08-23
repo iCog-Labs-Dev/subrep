@@ -63,7 +63,12 @@ def build_records_from_prepared_candidate_outcomes(
         raise ValueError("prepared_outcomes must contain at least one candidate outcome")
 
     first_context = next(iter(grouped))
-    model = MotiveDecompositionNetwork(input_dim=len(first_context), num_objectives=2)
+    first_group = grouped[first_context]
+    if not first_group:
+        raise ValueError("grouped context has no candidate outcomes to infer num_objectives from")
+    num_objectives = len(first_group[0].motives)
+    model = MotiveDecompositionNetwork(input_dim=len(first_context), num_objectives=num_objectives)
+    
     trainer = create_trainer_for_model(model, seed=seed, device=device)
     trainer.config.checkpoint_path = checkpoint_path
 

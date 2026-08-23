@@ -282,8 +282,8 @@ class ProbabilityAwareRuntimeLogCollector:
             return alpha, support_values, weights
 
         weights = np.asarray(self.behavior_config.weights, dtype=np.float32).reshape(-1)
-        if weights.shape != (2,) or np.any(weights <= 0.0) or not np.isclose(np.sum(weights), 1.0, atol=1e-6):
-            raise ValueError("fixed behavior weights must be a positive 2D simplex vector")
+        if weights.shape[0] < 2 or np.any(weights <= 0.0) or not np.isclose(np.sum(weights), 1.0, atol=1e-6):
+            raise ValueError("fixed behavior weights must be a positive simplex vector with at least 2 objectives")
         alpha = np.maximum(weights, 1e-6).astype(np.float32)
         support_values = np.ones_like(alpha, dtype=np.float32)
         return alpha, support_values, weights

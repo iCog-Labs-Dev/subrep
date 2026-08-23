@@ -52,10 +52,14 @@ def score_candidate(candidate: CandidateSkillRecord, weights: np.ndarray) -> flo
         raise ValueError(f"candidate {candidate.skill_id!r} is not certified and cannot be scored")
 
     weights = np.asarray(weights, dtype=np.float64).reshape(-1)
-    if weights.shape != (2,):
-        raise ValueError(f"weights must have shape (2,), got {weights.shape}")
+    if weights.shape[0] < 2:
+        raise ValueError(f"weights must have length >= 2, got shape {weights.shape}")
     if not np.all(np.isfinite(weights)):
         raise ValueError("weights must contain only finite values")
+
+    delta_n = np.asarray(candidate.delta_n, dtype=np.float64)
+    if delta_n.shape != weights.shape:
+        raise ValueError(f"weights shape {weights.shape} does not match candidate.delta_n shape {delta_n.shape}")
 
     return float(candidate.delta_r + float(np.dot(weights, np.asarray(candidate.delta_n, dtype=np.float64))))
 

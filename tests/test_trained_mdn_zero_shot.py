@@ -94,6 +94,18 @@ def test_checkpoint_loader_infers_candidate_set_model_shape(tmp_path):
         )
 
 
+def test_old_checkpoint_shape_mismatch_raises_clear_migration_message(tmp_path):
+    old_model = MotiveDecompositionNetwork(num_objectives=2)
+    old_model.support_head = torch.nn.Linear(old_model.hidden_dim, 2)   # pre-fix width: M, not M+1
+    del old_model.raw_tau                                                # pre-fix: this param didn't exist
+
+    path = tmp_path / "old_checkpoint.pt"
+    torch.save(old_model.state_dict(), path)
+
+    with pytest.raises(RuntimeError, match="structurally incompatible"):
+        load_mdn_checkpoint(path)
+
+
 def test_loaded_mdn_checkpoint_supplies_runtime_geometry_to_library(tmp_path):
     checkpoint_path = tmp_path / "mdn_policy_best.pth"
     _save_deterministic_mdn_checkpoint(checkpoint_path, num_skills=2048)

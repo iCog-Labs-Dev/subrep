@@ -142,7 +142,12 @@ def load_mdn_or_stub(
             print(f"[MDN Loader] Inferred dimensions: input={inferred_input_dim}, objectives={inferred_num_objectives}, skills={num_skills}")
             return model
         except Exception as e:
-            print(f"[MDN Loader] Warning: Failed to load existing checkpoint from '{path}'.")
+            if "size mismatch" in str(e) or "Missing key(s)" in str(e):
+                print(f"[MDN Loader] Warning: checkpoint at '{path}' appears to predate "
+                    f"constrained_support_activation (support_head width or raw_tau "
+                    f"mismatch) and cannot be loaded under the current architecture.")
+            else:
+                print(f"[MDN Loader] Warning: Failed to load existing checkpoint from '{path}'.")
             print(f"             Exception: {e}")
             print(f"             Falling back to StubMDN.")
 
@@ -153,8 +158,8 @@ def load_mdn_or_stub(
     stub = StubMDN(
         input_dim=input_dim,
         num_objectives=num_objectives,
-        fixed_alpha=[2.0, 2.0],  # Middle-ground weight prediction
-        fixed_support_values=[1.0, 1.0],  # Standard simplex support
+        fixed_alpha=[2.0] * num_objectives,  # Middle-ground weight prediction
+        fixed_support_values=[1.0] * num_objectives,  # Standard simplex support
     )
     if device is not None:
         stub = stub.to(device)

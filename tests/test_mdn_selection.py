@@ -59,6 +59,32 @@ def test_score_candidate_matches_manual_calculation():
 
     assert np.isclose(score, expected)
 
+def test_score_candidate_works_at_m3():
+    candidate = CandidateSkillRecord(
+        skill_id="skill_b",
+        delta_r=0.3,
+        delta_n=(0.2, -0.1, 0.05),
+        is_certified=True,
+        gate_type="CDS",
+    )
+    weights = np.array([0.5, 0.3, 0.2], dtype=np.float32)
+
+    score = score_candidate(candidate, weights)
+    expected = 0.3 + 0.5 * 0.2 + 0.3 * (-0.1) + 0.2 * 0.05
+
+    assert np.isclose(score, expected)
+
+
+def test_score_candidate_rejects_weights_length_below_2():
+    candidate = CandidateSkillRecord(
+        skill_id="skill_c",
+        delta_r=0.1,
+        delta_n=(0.1,0.2),
+        is_certified=True,
+        gate_type="CDS",
+    )
+    with pytest.raises(ValueError):
+        score_candidate(candidate, np.array([1.0]))
 
 def test_score_candidate_rejects_uncertified_candidate():
     candidate = CandidateSkillRecord(

@@ -4,10 +4,10 @@ This directory contains two learning components:
 
 - `SkillGenerator`: a 2-head MLP that predicts rollout payoff and 2D motive returns.
 - `MotiveDecompositionNetwork` (MDN): a shared network that predicts motive weights,
-  2D support geometry, admission gates, and auxiliary motive returns.
+  support geometry (any number of objectives), admission gates, and auxiliary motive returns.
 
 The current implementation targets MO-LunarLander with two objectives:
-`[Safety, Fuel]`.
+`[Safety, Fuel]`; the MDN architecture itself supports any number >= 2.
 
 ## Skill Generator
 
@@ -47,16 +47,28 @@ learner in the current implementation.
 - `forward_inference(context) -> (alpha, support_values)`
 - `forward_auxiliary(context, skill_id) -> (gate_logit, q_hat)`
 
-For `num_objectives == 2`, support values are decoded as feasible interval
-geometry by construction:
+Support values are produced by `constrained_support_activation`, guaranteeing
+the following for any `num_objectives >= 2`, by mathematical construction:
 
-- `0 <= s0 <= 1`
-- `0 <= s1 <= 1`
-- `s0 + s1 >= 1`
+- `0 <= s_i <= 1` for every objective `i`
+- `sum_i(s_i) >= 1`
 
-For non-2D objective counts, the model preserves the older non-negative
-Softplus support path. General higher-dimensional `W_x` projection is future
-work.
+Internally: `p = softmax(z / tau)` (a learned temperature `tau`, keeping the
+usable range from collapsing at high confidence), `t = t_max ** sigmoid(z_scale)`
+(log-space interpolation between 1 and the largest safe scale-up for `p`),
+`s = clamp(t * p, 0, 1)`. `p_max` is computed via a log-sum-exp smoothing of
+`max(p)` rather than a hard max, so the whole construction is differentiable
+everywhere.
+
+`support_head` outputs `num_objectives + 1` values (the extra output is
+`z_scale`). This is a breaking change to checkpoint compatibility: checkpoints
+saved before this change cannot be loaded under the current architecture and
+must be retrained (`load_mdn_checkpoint` raises a clear error explaining this
+if attempted).
+
+`W_x` worst-case computation, certificate schema validation, and MeTTa
+storage now support any `num_objectives >= 2` as well — none of these are
+restricted to 2 objectives anymore.
 
 ## Candidate-Set Data Collection
 

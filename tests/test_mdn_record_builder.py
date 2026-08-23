@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from utils.mdn_record_builder import (
     PreparedCandidateOutcome,
@@ -63,6 +64,26 @@ def test_prepared_candidate_outcome_normalizes_context_and_preserves_metadata():
     assert len(outcome.context) == 14
     assert outcome.gate_type == "CDS"
     assert outcome.metadata["source"] == "prepared"
+
+
+def test_prepared_candidate_outcome_supports_motives_length_3():
+    outcome = PreparedCandidateOutcome(
+        context=(0.1,) * 14,
+        skill_id="skill_m3",
+        payoff=1.0,
+        motives=(0.2, 0.5, 0.3),
+    )
+    assert outcome.motives == pytest.approx((0.2, 0.5, 0.3),abs=1e-6)
+
+
+def test_prepared_candidate_outcome_rejects_motives_length_below_2():
+    with pytest.raises(ValueError):
+        PreparedCandidateOutcome(
+            context=(0.1,) * 14,
+            skill_id="skill_m1",
+            payoff=1.0,
+            motives=(0.2,),
+        )
 
 
 def test_build_candidate_skill_records_rejects_missing_outcome_fields():

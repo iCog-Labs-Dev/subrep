@@ -131,10 +131,12 @@ def build_mdn_selection_trace(
         }
 
     with contextlib.redirect_stdout(io.StringIO()):
+        admitted = library.get_admitted_skills()
+        num_objectives = len(admitted[0].delta_n) if admitted else 2
         model = load_mdn_or_stub(
             checkpoint_path=checkpoint_path,
             input_dim=8,
-            num_objectives=2,
+            num_objectives=num_objectives,
         )
     mdn_source = "stub" if isinstance(model, StubMDN) else "trained_checkpoint"
     selector = MDNRuntimeSelector(model)
@@ -209,11 +211,11 @@ def build_zero_shot_performance_rows(selection_trace: dict[str, Any]) -> list[di
 
 
 def support_geometry_feasible(values: Any) -> bool:
-    """Return whether 2-objective support values define a non-empty region."""
+    """Return whether support values define a non-empty region, for any M >= 2."""
     if values is None:
         return False
     support = np.asarray(values, dtype=np.float64).reshape(-1)
-    if support.shape != (2,):
+    if support.shape[0] < 2:
         return False
     return bool(np.all(support >= 0.0) and np.all(support <= 1.0) and float(np.sum(support)) >= 1.0)
 

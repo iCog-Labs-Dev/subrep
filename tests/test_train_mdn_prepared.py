@@ -28,6 +28,14 @@ def _prepared_outcomes() -> tuple[PreparedCandidateOutcome, ...]:
     )
 
 
+def _prepared_outcomes_three_objectives() -> tuple[PreparedCandidateOutcome, ...]:
+    return (
+        PreparedCandidateOutcome(context=(0.1,) * 14, skill_id="skill_a", payoff=1.7, motives=(0.5, 0.3, 0.2)),
+        PreparedCandidateOutcome(context=(0.1,) * 14, skill_id="skill_b", payoff=1.1, motives=(0.2, 0.4, 0.4)),
+        PreparedCandidateOutcome(context=(0.2,) * 14, skill_id="skill_c", payoff=1.5, motives=(0.4, 0.3, 0.3)),
+    )
+
+
 def test_build_records_from_prepared_candidate_outcomes_groups_by_context():
     records = build_records_from_prepared_candidate_outcomes(
         prepared_outcomes=_prepared_outcomes(),
@@ -62,3 +70,15 @@ def test_build_auxiliary_records_from_prepared_candidate_outcomes_includes_all_c
     )
 
     assert len(records) == len(_prepared_outcomes())
+
+
+def test_build_records_infers_objective_count_from_outcomes():
+    records = build_records_from_prepared_candidate_outcomes(
+        prepared_outcomes=_prepared_outcomes_three_objectives(),
+        baseline_stats={"baseline_payoff": 1.0, "baseline_motives": (0.4, 0.3, 0.3)},
+        seed=0,
+        device="cpu",
+    )
+
+    assert len(records) == 2
+    assert all(record.selected_skill_id for record in records)
