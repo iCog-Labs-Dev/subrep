@@ -53,10 +53,10 @@ SkillLibrary.query_admissible(current_weight, support_directions, support_values
 All final admissibility decisions still flow through `SkillLibrary`. The MDN
 only supplies weights and support geometry.
 
-## 2-Objective Support Geometry
+## Support Geometry
 
-The current implementation is 2-objective MO-LunarLander. Support
-directions are the standard basis:
+Support geometry is defined for any `M >= 2`; the worked example below uses M = 2 because
+MO-LunarLander exposes exactly `[Safety, Fuel]`. Support directions are the standard basis:
 
 ```text
 u0 = [1, 0]

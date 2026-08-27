@@ -133,9 +133,10 @@ The trained MDN checkpoint path is:
 models/mdn_policy_best.pth
 ```
 
-If the checkpoint is present, the pipeline records `mdn_source: trained_checkpoint`.
-If it is missing, the pipeline records `mdn_source: stub` and uses fixed test
-outputs so the demo remains runnable.
+If a SASP-compatible checkpoint is present, the pipeline records
+`mdn_source: trained_checkpoint`. If the checkpoint is missing **or predates SASP**, the pipeline
+records `mdn_source: stub` and uses fixed test outputs so the demo remains runnable. The committed
+checkpoint is currently pre-SASP, so a fresh run reports `stub` by design.
 
 ## 5. Candidate-Set MDN Training
 
@@ -196,7 +197,8 @@ The report includes:
 - failure reasons for rejected skills,
 - example admitted/rejected records,
 - MDN source metadata,
-- alpha, derived weights, support values, and support feasibility.
+- alpha, derived weights, support values, and support feasibility,
+- `infeasible_support_events`, a permanent counter expected to read 0.
 
 For final trained-MDN reporting, regenerate the report with
 `models/mdn_policy_best.pth` present.
@@ -230,7 +232,7 @@ Relevant tests include:
 Latest full local validation:
 
 ```text
-435 passed, 53 warnings
+528 passed, 2 xfailed, 62 warnings
 ```
 
 ## 10. Current Scope
@@ -239,7 +241,8 @@ Implemented:
 
 - 2-objective MO-LunarLander SubRep pipeline,
 - full-simplex certification,
-- 2D contextual `MDN_WX` support geometry,
+- contextual `MDN_WX` support geometry at any `M >= 2`, feasible by construction (SASP),
+- exact O(M log M) greedy worst-case evaluation with no vertex enumeration,
 - MeTTa certificate storage,
 - candidate-set MDN training/evaluation,
 - zero-shot reuse validation.
