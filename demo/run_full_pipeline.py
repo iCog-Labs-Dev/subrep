@@ -117,7 +117,10 @@ def _build_demo_candidate_policies(env: SubRepEnv) -> tuple[CandidatePolicy, ...
             "ppo_then_side_tradeoff",
             _ppo_then_fixed_action_policy(
                 ppo_deterministic.policy_fn,
-                switch_step=45,
+                # Tuned to the PDS band: fails CDS at -2.73, admitted within
+                # the 5.0 budget. Was 45, which only sat near the boundary
+                # because the old inverted fuel mapping credited the burn.
+                switch_step=180,
                 fixed_action=3,
             ),
         ),

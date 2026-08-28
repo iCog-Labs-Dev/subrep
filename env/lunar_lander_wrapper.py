@@ -62,15 +62,16 @@ class SubRepEnv:
           [2] Main engine usage cost (negative)
           [3] Side engine usage cost (negative)
         
-        SubRep objectives:
+        SubRep objectives (both larger-is-better, as CDS/PDS require):
           [0] Safety = Terminal result + dense shaping
-          [1] Fuel = Engine costs inverted so positive = fuel saved
+          [1] Fuel   = Engine costs summed, passed through unchanged
+
+        The engine entries arrive as non-positive costs, so their sum is already
+        larger-is-better. Negating it would make burning fuel outrank conserving
+        it. See `tests/test_env.py::test_fuel_objective_prefers_less_fuel`.
         """
-        # Safety should reflect both terminal outcome and dense flight
-        # progress. Fuel is inverted because MO-LunarLander reports engine
-        # usage as negative costs while SubRep motives are better when larger.
         safety = raw_rewards[0] + raw_rewards[1]
-        fuel = -(raw_rewards[2] + raw_rewards[3])
+        fuel = raw_rewards[2] + raw_rewards[3]
         return np.array([safety, fuel], dtype=np.float32)
 
     def reset(self, seed=None):
