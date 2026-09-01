@@ -317,6 +317,28 @@ python -m generator.evaluate_mdn_candidate_sets \
 
 The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy, regret, gate F1, Q/motive error, per-objective Q diagnostics, and bootstrap confidence intervals.
 
+## Multi-Objective Benchmark
+
+SubRep includes a lightweight synthetic benchmark for validating the
+certification chain beyond the original two-objective LunarLander setup. It
+checks CDS/PDS admission, `SkillLibrary.query_admissible()`, `MDN_WX` support
+regions, reuse under motive shifts, negative-transfer cases, query timing, and
+simple baselines for `M = 3, 4, 5+`.
+
+```bash
+python -m demo.run_multi_objective_benchmark \
+  --objectives 3 4 5 \
+  --candidates 48 \
+  --seeds 11 23 37 \
+  --output demo/artifacts/multi_objective_benchmark.json \
+  --markdown-output demo/artifacts/multi_objective_benchmark.md
+```
+
+Outputs:
+
+- `demo/artifacts/multi_objective_benchmark.json`
+- `demo/artifacts/multi_objective_benchmark.md`
+
 ## Project Structure
 
 | Folder | Description |

@@ -89,6 +89,8 @@ class CertificateStore:
         results: list[Certificate] = []
 
         for cert in self.load_all():
+            if len(cert.delta_n) != w.size:
+                continue
             if cert.gate_type == "CDS":
                 # CDS is globally admissible under the simplex assumption.
                 results.append(cert)

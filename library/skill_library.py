@@ -254,6 +254,8 @@ class SkillLibrary:
         for entry in self._skills.values():
             if entry.weight_region_type == MDN_WX:
                 continue
+            if len(entry.delta_n) != w.size:
+                continue
 
             if entry.gate_type == "CDS":
                 # CDS skills pass for all weight vectors
@@ -310,6 +312,8 @@ class SkillLibrary:
                 sd = np.asarray(support_directions, dtype=np.float64)
                 sv = np.asarray(support_values, dtype=np.float64)
                 delta_n = np.asarray(entry.delta_n, dtype=np.float64)
+                if delta_n.size != w.size:
+                    continue
 
                 h_wx = _compute_wx_worst_case(delta_n, sd, sv)
 
