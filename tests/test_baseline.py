@@ -31,7 +31,8 @@ class _DeterministicBaselineEnv:
         reward = np.array([1.0 + seed_term, 0.5 - seed_term], dtype=np.float32)
         terminated = self._step_count >= 3
         truncated = False
-        return obs, reward, terminated, truncated, {}
+        return obs, reward, terminated, truncated, {"task_payoff": float(reward.sum())}
+
 
 
 def test_idle_policy_returns_consistent_action():
@@ -138,3 +139,30 @@ def test_improvements_can_be_passed_to_cds_and_pds():
 
     assert cds_gate.admit(delta_r, delta_n) is True
     assert pds_gate.admit(delta_r, delta_n) is True
+
+
+class _PayoffAwareEnv:
+    def __init__(self):
+        self._count = 0
+
+    def reset(self, seed=None):
+        self._count = 0
+        return np.zeros(8, dtype=np.float32), {}
+
+    def step(self, action):
+        self._count += 1
+        obs = np.zeros(8, dtype=np.float32)
+        reward = np.array([1.0, 2.0], dtype=np.float32)  # sum = 3.0
+        terminated = self._count >= 2
+        truncated = False
+        # task_payoff explicitly differs from sum(reward)
+        info = {"task_payoff": 10.0}
+        return obs, reward, terminated, truncated, info
+
+
+def test_baseline_reads_task_payoff_from_info():
+    env = _PayoffAwareEnv()
+    policy = IdlePolicy(env=env, gamma=1.0)
+    stats = policy.run_baseline_episodes(num_episodes=1, seed=0)
+    # 2 steps at 10.0 payoff each = 20.0 (not 2 * 3.0 = 6.0)
+    assert stats["baseline_payoff"] == 20.0
