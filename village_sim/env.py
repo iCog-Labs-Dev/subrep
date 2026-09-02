@@ -2,28 +2,24 @@ import copy
 import random
 import numpy as np
 from village_sim.state import VillageState
-from village_sim.motives import phi
+from village_sim.motives import MOTIVE_NAMES, phi
 
 # VillageEnv is a STANDALONE SYNTHETIC PROXY for the SubRep certification
-# workflow. It deliberately does NOT mirror the repository's SubRepEnv.
+# workflow, updated in Phase 2 to conform to the SubRepBaseEnv contract.
 #
 # Interface contract:
-#   reset(seed=None) -> VillageState
-#   step(action) -> (VillageState, motives, done, info)
-#       motives : np.ndarray of shape (6,)  -- the motive vector (phi)
-#       done    : bool                       -- terminal flag
-#       info    : dict with "task_reward" (scalar payoff, Section 3.1) and
-#                 "raid_active"
+#   reset(seed=None, options=None) -> (VillageState, info)
+#   step(action) -> (VillageState, motives, terminated, truncated, info)
+#       motives     : np.ndarray of shape (6,)  -- the motive vector (phi)
+#       terminated  : bool                      -- terminal flag (time-limit or casualty)
+#       truncated   : bool                      -- external truncation flag (False)
+#       info        : dict with "task_payoff", "task_reward", and "raid_active"
 #
-# It does NOT expose observation_space / action_space, and it does not follow
-# the Gymnasium-style step() -> (obs, reward, terminated, truncated, info)
-# contract used by the repository envs. Adopting that interface is part of the
-# later integration phase.
-#
-# It DOES provide the two minimum requirements of this PR:
+# It provides:
 #   * deterministic reset(seed=...) -- reseeds the RNG (see reset)
 #   * action validation -- unknown actions and unmet resource preconditions
 #     raise ValueError before any state is mutated (see _validate_action).
+#   * metadata property exposing environment_id, motive_names, and schema versions.
 #
 # Defense against policy mutation (Section 4.6): reset() and step() return a
 # COPY of the internal VillageState (see _snapshot). A policy therefore cannot
@@ -54,22 +50,28 @@ VALID_ACTIONS = {
 }
 
 class VillageEnv:
-    """Standalone synthetic proxy environment for village simulation.
-
-    See the module docstring for the interface contract. This env is NOT a
-    Gymnasium-style environment and does not mirror ``SubRepEnv``; that
-    alignment is deferred to a later integration phase.
-    """
+    """Standalone synthetic proxy environment for village simulation."""
 
     def __init__(self, seed=None):
         self.rng = random.Random(seed)
         self.state = None
 
-    def reset(self, seed=None) -> VillageState:
+    @property
+    def metadata(self) -> dict:
+        return {
+            "environment_id": "village_sim_v1",
+            "motive_names": list(MOTIVE_NAMES),
+            "motive_schema_version": "1.0.0",
+            "payoff_schema_version": "1.0.0",
+            "observation_schema_version": "1.0.0",
+            "action_schema_version": "1.0.0",
+        }
+
+    def reset(self, seed=None, options=None) -> tuple[VillageState, dict]:
         if seed is not None:
             self.rng.seed(seed)
         self.state = VillageState()
-        return self._snapshot()
+        return self._snapshot(), {}
 
     def step(self, action: str):
         self._validate_action(action)
@@ -93,9 +95,14 @@ class VillageEnv:
         task_reward = self._compute_task_reward(done)
         info = {
             "task_reward": task_reward,
+            "task_payoff": float(task_reward),
             "raid_active": s.raid_active,
         }
-        return self._snapshot(), motives, done, info
+        return self._snapshot(), motives, done, False, info
+
+    def close(self) -> None:
+        """Close and clean up environment resources."""
+        pass
 
     def _snapshot(self) -> VillageState:
         """Return a copy of the live state so policies cannot mutate it (4.6)."""
