@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import warnings
 
 import numpy as np
 
@@ -38,7 +39,16 @@ class IdlePolicy:
 
             while True:
                 action = self.get_action(obs)
-                obs, reward_vec, terminated, truncated, _ = self.env.step(action)
+                step_out = self.env.step(action)
+                if len(step_out) == 5:
+                    obs, reward_vec, terminated, truncated, info = step_out
+                elif len(step_out) == 4:
+                    obs, reward_vec, terminated, info = step_out
+                    truncated = False
+                else:
+                    raise ValueError(f"Expected step() to return 4 or 5 elements, got {len(step_out)}")
+
+                info = dict(info) if isinstance(info, dict) else {}
                 reward_vec = np.asarray(reward_vec, dtype=np.float32)
 
                 if reward_vec.ndim != 1:
@@ -47,7 +57,17 @@ class IdlePolicy:
                 if motive_deltas is None:
                     motive_deltas = np.zeros_like(reward_vec, dtype=np.float32)
 
-                total_payoff += discount * float(np.sum(reward_vec))
+                if "task_payoff" in info:
+                    step_payoff = float(info["task_payoff"])
+                else:
+                    warnings.warn(
+                        "Environment step info missing 'task_payoff'; falling back to sum(reward_vec)",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    step_payoff = float(np.sum(reward_vec))
+
+                total_payoff += discount * step_payoff
                 motive_deltas += discount * reward_vec
 
                 if terminated or truncated:
