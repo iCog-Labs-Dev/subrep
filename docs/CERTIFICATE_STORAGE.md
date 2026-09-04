@@ -28,7 +28,7 @@ Fields:
 - `skill_id: str`
 - `gate_type: str` (`CDS` or `PDS`, normalized to uppercase)
 - `delta_r: float`
-- `delta_n: vector<float>` (exactly 2 values)
+- `delta_n: vector<float>` (at least 2 values; length M defines the certificate's objective count)
 - `admission_margin: float` (`>= 0`)
 - `epsilon: float` (`>= 0`, and `epsilon == 0` for `CDS`)
 - `timestamp: str` (ISO format)
@@ -65,11 +65,14 @@ Validation rules:
 - `MDN_WX` certificates must have all MDN audit fields present.
 - `certification_context` must be finite and non-empty.
 - `mdn_alpha` must be finite, positive, and non-empty.
-- `wx_support_directions` must be finite and two-dimensional.
-- `wx_support_values` must be finite, non-negative, and match the number of
-  support direction rows.
-- Support values are support-function values, not weight vectors, so they do
-  not need to sum to 1.
+- `wx_support_directions` must be finite and square with shape `(M, M)`.
+- `wx_support_values` must be finite, lie in `[0, 1]`, satisfy `sum(s) >= 1`, and have length M
+  matching both `delta_n` and the number of support direction rows.
+- `mdn_alpha` must also have length M.
+- Support values are support-function values, not weight vectors, so they do not sum to exactly 1.
+  They must however satisfy `sum(s) >= 1`: each `s_i` caps how much weight objective `i` may carry
+  inside `W_x = { w in simplex : w_i <= s_i }`, so if the caps sum below 1 no weight vector can
+  respect all of them while summing to 1, and the region is empty.
 
 Methods:
 
@@ -184,7 +187,7 @@ Behavior policies:
 - Duplicate `skill_id` on `add` is rejected (`False`).
 - `query_by_gate_type` normalizes gate type to uppercase.
 - Weight vectors must be valid simplex vectors:
-  - length 2
+  - length >= 2, matching the certificate's objective count
   - finite
   - non-negative
   - sum approximately 1

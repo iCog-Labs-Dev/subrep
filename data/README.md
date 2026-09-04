@@ -95,8 +95,8 @@ These files are run outputs. Regenerate them with:
 python -m demo.run_full_pipeline
 ```
 
-If `models/mdn_policy_best.pth` is present, the admission report records
-`mdn_source: trained_checkpoint`. Otherwise it records `mdn_source: stub`.
+If a SASP-compatible `models/mdn_policy_best.pth` is present, the admission report records
+`mdn_source: trained_checkpoint`. If it is missing or predates SASP, it records `mdn_source: stub`.
 
 ## Optional Safety-Gymnasium Rollout Records
 
