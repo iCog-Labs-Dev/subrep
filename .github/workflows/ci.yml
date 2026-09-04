@@ -9,6 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          # Fetch external/metamo so the bridge adapter tests actually run.
+          # Without this they self-skip and the MetaMo seam is never exercised.
+          submodules: recursive
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
