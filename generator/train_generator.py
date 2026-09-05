@@ -22,8 +22,6 @@ from generator.dataset_split import (
     DEFAULT_MANIFEST_PATH,
 )
 
-# CHANGE 1: hyperparameters are no longer hardcoded module constants only.
-# They remain here as defaults for argparse arguments 
 BATCH_SIZE = 32
 NUM_EPOCHS = 50
 LEARNING_RATE = 1e-3
@@ -55,6 +53,7 @@ class SkillDataset(Dataset):
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return self.data[idx]
 
+
 class InMemorySkillDataset(Dataset):
     """Wrap a list of (obs, payoff, motives) tuples (one split group) as a Dataset."""
     def __init__(self, records: list):
@@ -72,14 +71,19 @@ def train_one_epoch(
     loader: DataLoader,
     optimizer: optim.Optimizer,
     loss_fn: GeneratorLoss,
+    device: torch.device,
 ) -> tuple[float, float, float]:
-    """Train the model for one epoch (unchanged from before)."""
+    """Train the model for one epoch."""
     model.train()
     total_loss = 0.0
     total_payoff_loss = 0.0
     total_motive_loss = 0.0
 
     for obs, target_payoff, target_motives in loader:
+        obs = obs.to(device)
+        target_payoff = target_payoff.to(device)
+        target_motives = target_motives.to(device)
+
         optimizer.zero_grad()
 
         pred_payoff, pred_motives = model(obs)
@@ -100,10 +104,12 @@ def train_one_epoch(
         total_motive_loss / num_samples,
     )
 
+
 def evaluate_loss(
     model: SkillGenerator,
     loader: DataLoader,
     loss_fn: GeneratorLoss,
+    device: torch.device,
 ) -> tuple[float, float, float]:
     """Compute loss on a held-out split WITHOUT updating any weights."""
     model.eval()
@@ -113,6 +119,10 @@ def evaluate_loss(
 
     with torch.no_grad():
         for obs, target_payoff, target_motives in loader:
+            obs = obs.to(device)
+            target_payoff = target_payoff.to(device)
+            target_motives = target_motives.to(device)
+
             pred_payoff, pred_motives = model(obs)
             losses = loss_fn.breakdown(pred_payoff, pred_motives, target_payoff, target_motives)
 
@@ -141,10 +151,14 @@ def train(
     test_frac: float = 0.125,
     patience: int = 10,
     split_manifest_path: str = DEFAULT_MANIFEST_PATH,
+    checkpoint_path: str | None = None,
 ) -> None:
     """Main training loop, now with a real train/val split and model selection."""
     torch.manual_seed(seed)
     np.random.seed(seed)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
     print(f"Loading dataset from {data_dir}/ ...")
     try:
@@ -155,11 +169,6 @@ def train(
 
     print(f"{len(full_dataset)} episodes found.")
 
-    '''Training below only ever touches `split.train` and `split.val`; 
-    `split.test` is loaded but never used past this point in this file. 
-    Because the manifest is persisted, evaluate_generator_mse.py reads 
-    the SAME assignment back later instead of recomputing it 
-    from seed/fraction flags that could drift out of sync'''
     assignment = compute_split_assignment(
         full_dataset.files,
         train_frac=train_frac,
@@ -192,16 +201,19 @@ def train(
     train_loader = DataLoader(InMemorySkillDataset(split.train), batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(InMemorySkillDataset(split.val), batch_size=batch_size, shuffle=False)
 
-    # Initialize model, loss, and optimizer
     model = SkillGenerator(input_dim=8, hidden_dim=hidden_dim, motive_dim=2)
+    model.to(device)
     loss_fn = GeneratorLoss(payoff_weight=1.0, motive_weight=1.0)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    history_train_loss = []
-    history_val_loss = [] 
+    if checkpoint_path is None:
+        out_stem = Path(output)
+        checkpoint_path = str(out_stem.with_name(out_stem.stem + "_checkpoint" + out_stem.suffix))
+    Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Instead of always saving whatever the model looks like after the final epoch, 
-    # we keep a copy of the weights from whichever epoch had the best (lowest) validation loss.
+    history_train_loss = []
+    history_val_loss = []
+
     best_val_loss = float("inf")
     best_model_state = None
     best_epoch = -1
@@ -209,8 +221,8 @@ def train(
 
     print("\nStarting training...")
     for epoch in range(num_epochs):
-        train_loss, train_p_loss, train_m_loss = train_one_epoch(model, train_loader, optimizer, loss_fn)
-        val_loss, val_p_loss, val_m_loss = evaluate_loss(model, val_loader, loss_fn)
+        train_loss, train_p_loss, train_m_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, device)
+        val_loss, val_p_loss, val_m_loss = evaluate_loss(model, val_loader, loss_fn, device)
 
         history_train_loss.append(train_loss)
         history_val_loss.append(val_loss)
@@ -222,14 +234,12 @@ def train(
                 f"val_loss: {val_loss:.6f} (payoff: {val_p_loss:.6f}, motives: {val_m_loss:.6f})"
             )
 
-        # early stopping. If validation loss doesn't improve 
-        # for `patience` epochs in a row, stop early.
-    
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_model_state = copy.deepcopy(model.state_dict())
             best_epoch = epoch + 1
             epochs_without_improvement = 0
+            model.save(checkpoint_path)
         else:
             epochs_without_improvement += 1
             if epochs_without_improvement >= patience:
@@ -246,9 +256,8 @@ def train(
     model_path = str(out_path)
     model.save(model_path)
     print(f"\nBest model (epoch {best_epoch}, val_loss={best_val_loss:.6f}) saved -> {model_path}")
+    print(f"(Mid-training checkpoints were also written throughout to -> {checkpoint_path})")
 
-    # log both curves to CSV (not just a PNG) so validation
-    # numbers are machine-readable for later reporting, not just a picture.
     log_dir = Path("plots")
     log_dir.mkdir(parents=True, exist_ok=True)
     csv_path = log_dir / "generator_training_log.csv"
@@ -295,6 +304,12 @@ def main():
         default=DEFAULT_MANIFEST_PATH,
         help="Where to save the train/val/test file assignment for evaluate_generator_mse.py to reuse.",
     )
+    parser.add_argument(
+        "--checkpoint-path",
+        type=str,
+        default=None,
+        help="Where to write mid-training checkpoints (defaults to <output>_checkpoint.pt).",
+    )
     args = parser.parse_args()
 
     train(
@@ -310,6 +325,7 @@ def main():
         test_frac=args.test_frac,
         patience=args.patience,
         split_manifest_path=args.split_manifest,
+        checkpoint_path=args.checkpoint_path,
     )
 
 
