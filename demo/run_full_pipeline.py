@@ -27,7 +27,12 @@ from certification.metta_storage import CertificateStore
 from library.skill_library import SkillLibrary, support_values_feasible
 from library.skill_selector import SkillSelector
 from generator.skill_generator import SkillGenerator
-from utils.admission_report import AdmissionReport, AdmissionRecord
+from utils.admission_report import (
+    AdmissionRecord,
+    AdmissionReport,
+    RejectionCategory,
+    evaluate_gates,
+)
 from utils.mdn_stub import load_mdn_or_stub, StubMDN
 from generator.mdn_runtime_selector import MDNRuntimeSelector
 from utils.mdn_contracts import CandidateSkillRecord
@@ -149,7 +154,7 @@ def _make_certificate(
         skill_id=skill_id,
         gate_type=gate_type,
         delta_r=float(delta_r),
-        delta_n=(float(delta_n[0]), float(delta_n[1])),
+        delta_n=tuple(float(v) for v in delta_n),
         admission_margin=float(margin),
         epsilon=epsilon,
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -297,10 +302,22 @@ def run_pipeline() -> dict:
         active_gate = "CDS" if admitted_cds else "PDS"
         margin = gate.get_admission_margin(delta_r, delta_n) if admitted_cds else pds_gate.get_admission_margin(delta_r, delta_n)
 
+        # Record both gate inequalities with their exact numeric sides, for
+        # admitted and rejected candidates alike. `gate_type` below still names
+        # only the admitting gate, so this is what preserves "which gates were
+        # evaluated and how each fared" in the audit.
+        gate_evaluations = evaluate_gates(
+            delta_r=float(delta_r),
+            delta_n=delta_n,
+            epsilon=PDS_EPSILON,
+        )
+
         # Determine human-readable failure reason for rejected skills
         failure_reason: str | None = None
+        rejection_category: str | None = None
         if not admitted_flag:
             worst_case_score = delta_r + float(np.min(delta_n))
+            rejection_category = RejectionCategory.GATE_FAILED
             failure_reason = (
                 f"delta_r + min(delta_n) below CDS/PDS thresholds "
                 f"(score={worst_case_score:.4f}, PDS threshold={-PDS_EPSILON:.4f})"
@@ -326,6 +343,7 @@ def run_pipeline() -> dict:
                     # ROLLBACK: library rejected — remove from cert_store to stay in sync
                     cert_store.remove_skill(skill_id)
                     failure_reason = "library.add_skill() rejected after math re-verification"
+                    rejection_category = RejectionCategory.LIBRARY_REVERIFICATION_FAILED
                     admitted_flag = False
                     rejected += 1
                     result_str = "REJECTED ❌"
@@ -342,6 +360,7 @@ def run_pipeline() -> dict:
             else:
                 # Duplicate skill_id — treat as rejected
                 failure_reason = "duplicate skill_id already in cert_store"
+                rejection_category = RejectionCategory.DUPLICATE_SKILL_ID
                 admitted_flag = False
                 rejected += 1
                 result_str = "REJECTED ❌"
@@ -356,10 +375,22 @@ def run_pipeline() -> dict:
             "admitted": admitted_flag,
             "gate_type": active_gate if admitted_flag else None,
             "delta_r": float(delta_r),
-            "delta_n": (float(delta_n[0]), float(delta_n[1])),
+            # Full vector, not the first two components: a truncated motive
+            # vector is neither correct nor inspectable beyond two objectives.
+            "delta_n": tuple(float(v) for v in delta_n),
             "margin": float(margin),
             "epsilon": PDS_EPSILON if active_gate == "PDS" else 0.0,
             "failure_reason": failure_reason,
+            # Audit context. This demo certifies against the full simplex, so
+            # the support fields stay empty; the schema carries them for
+            # contextual MDN_WX certification.
+            "weight_region_type": "FULL_SIMPLEX",
+            "gate_evaluations": gate_evaluations,
+            "rejection_category": rejection_category,
+            "baseline_id": "idle_policy_v1",
+            "environment": ENV_NAME,
+            "seed": SEED,
+            "episode_length": int(episode_length),
         }
         episode_records.append(episode_record_dict)
         report.add_from_dict(episode_record_dict)
