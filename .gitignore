@@ -19,6 +19,8 @@ data/safety_gymnasium_rollouts_seed42_ctx100/
 data/safety_gymnasium_rollouts_seed43_ctx100/
 data/safety_gymnasium_rollouts_seed44_ctx100/
 data/safety_gymnasium_rollouts*_lagrangian/
+# Generated train/val/test split manifest 
+data/generator_split_manifest.json
 # Trained model weights (run train_generator locally to regenerate)
 models/*
 !models/pilot_ppo.pt

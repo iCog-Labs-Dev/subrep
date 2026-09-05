@@ -345,7 +345,17 @@ The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy,
 - **Architecture:** 2-head MLP
 - **Input:** state vector `(8,)`
 - **Outputs:** scalar payoff `(1,)`, motive vector `(2,)`
-- **Training:** supervised MSE on collected rollout payoff/motive totals
+- **Training data:** single-policy rollouts (`data/raw`), split into train
+  (75%), validation (12.5%), and test (12.5%) sets; the split
+  assignment is persisted to `data/generator_split_manifest.json`
+- **Training:** supervised MSE on the train split only; validation loss
+  drives model selection and early stopping; the best-validation checkpoint
+  is saved, with mid-training checkpoints written as new bests are found
+- **Evaluation:** MSE on the held-out test split (`evaluate_generator_mse.py`);
+  certification-focused metrics — admission rate, rejection reasons,
+  payoff/motive improvement over baseline, and comparison against the
+  non-neural candidate policies — on held-out seeds
+  (`evaluate_generator_report.py`)
 
 ### MDN
 
@@ -394,6 +404,7 @@ Vertex enumeration was retired because its cost grows combinatorially with M.
 ## Documentation
 
 - `generator/README.md`: skill-generator and MDN training/evaluation
+- `docs/GENERATOR_TRAINING_PIPELINE.md`: skill-generator train/val/test pipeline, exact commands, and file outputs
 - `data/README.md`: rollout and candidate-set data schemas
 - `docs/CERTIFICATE_STORAGE.md`: certificate schema and MeTTa atom format
 - `docs/ZERO_SHOT_PROTOCOL.md`: full-simplex and MDN_WX reuse protocol
