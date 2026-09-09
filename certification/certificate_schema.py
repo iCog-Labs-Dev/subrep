@@ -36,7 +36,8 @@ class Certificate:
     skill_id: str
     gate_type: str
     delta_r: float
-    delta_n: tuple[float, float]
+    # delta_n is an N-dimensional motive improvement vector (N >= 1).
+    delta_n: tuple[float, ...]
     admission_margin: float
     epsilon: float
     timestamp: str
@@ -51,6 +52,11 @@ class Certificate:
     mdn_alpha: tuple[float, ...] | None = None
     wx_support_directions: tuple[tuple[float, ...], ...] | None = None
     wx_support_values: tuple[float, ...] | None = None
+    # Optional schema identity fields for cross-domain rejection.
+    # None means "schema unknown" (legacy artifact) — always accepted.
+    domain_id: str | None = None
+    motive_schema_version: str | None = None
+    motive_names: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         # Normalize gate labels once so downstream query logic is consistent.
@@ -73,13 +79,38 @@ class Certificate:
                 f"got {self.weight_region_type!r}"
             )
 
-        # In this phase, motive vector is fixed to 2D: [Safety, Fuel].
+        # delta_n: arbitrary-length non-empty tuple of finite floats.
         dn = tuple(float(v) for v in self.delta_n)
-        if len(dn) != 2:
-            raise ValueError(f"delta_n must have length 2, got {len(dn)}")
+        if len(dn) == 0:
+            raise ValueError("delta_n must be non-empty")
         if not all(isfinite(v) for v in dn):
             raise ValueError(f"delta_n must contain only finite values, got {dn}")
         object.__setattr__(self, "delta_n", dn)
+
+        # Validate optional schema identity fields.
+        if self.domain_id is not None:
+            if not isinstance(self.domain_id, str) or not self.domain_id.strip():
+                raise ValueError("domain_id must be a non-empty string when provided")
+        if self.motive_schema_version is not None:
+            if not isinstance(self.motive_schema_version, str) or not self.motive_schema_version.strip():
+                raise ValueError("motive_schema_version must be a non-empty string when provided")
+        if self.motive_names is not None:
+            names = tuple(self.motive_names)
+            object.__setattr__(self, "motive_names", names)
+            if len(names) == 0:
+                raise ValueError("motive_names must be non-empty when provided")
+            if len(names) != len(dn):
+                raise ValueError(
+                    f"motive_names length ({len(names)}) must match "
+                    f"delta_n length ({len(dn)}) when provided"
+                )
+            seen: set[str] = set()
+            for name in names:
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError(f"Every motive name must be a non-empty string, got {name!r}")
+                if name in seen:
+                    raise ValueError(f"Duplicate motive name in certificate: {name!r}")
+                seen.add(name)
 
         # Numeric invariants used by gate logic and reproducibility.
         self._validate_finite("delta_r", self.delta_r)
@@ -119,7 +150,7 @@ class Certificate:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert certificate to a JSON/MeTTA serialization-ready dictionary."""
-        return {
+        d: dict[str, Any] = {
             "skill_id": self.skill_id,
             "gate_type": self.gate_type,
             "delta_r": float(self.delta_r),
@@ -138,17 +169,35 @@ class Certificate:
             "mdn_alpha": _optional_vector_to_list(self.mdn_alpha),
             "wx_support_directions": _optional_matrix_to_list(self.wx_support_directions),
             "wx_support_values": _optional_vector_to_list(self.wx_support_values),
+            # Schema identity fields (None for artifacts that predate this field).
+            "domain_id": self.domain_id,
+            "motive_schema_version": self.motive_schema_version,
+            "motive_names": list(self.motive_names) if self.motive_names is not None else None,
         }
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Certificate":
-        """Create a certificate from dictionary input via constructor validation."""
+        """
+        Create a certificate from dictionary input via constructor validation.
+
+        Schema identity fields (domain_id, motive_schema_version, motive_names)
+        default to None when absent so older serialized artifacts load cleanly.
+        """
         data = dict(data)
         data.setdefault("weight_region_type", "FULL_SIMPLEX")
         data.setdefault("certification_context", None)
         data.setdefault("mdn_alpha", None)
         data.setdefault("wx_support_directions", None)
         data.setdefault("wx_support_values", None)
+        # Schema identity defaults — absent in artifacts serialized before this field was added.
+        data.setdefault("domain_id", None)
+        data.setdefault("motive_schema_version", None)
+        raw_names = data.get("motive_names")
+        if raw_names is not None:
+            data["motive_names"] = tuple(str(n) for n in raw_names)
+        else:
+            data["motive_names"] = None
         return cls(**data)
 
     @staticmethod

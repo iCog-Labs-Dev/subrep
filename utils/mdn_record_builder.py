@@ -22,7 +22,8 @@ class PreparedCandidateOutcome:
     context: tuple[float, ...]
     skill_id: str
     payoff: float
-    motives: tuple[float, float]
+    # motives is an N-dimensional observed motive vector (N >= 1).
+    motives: tuple[float, ...]
     metadata: dict[str, Any] = field(default_factory=dict)
     gate_type: str = "CDS"
     epsilon: float | None = None
@@ -44,8 +45,8 @@ class PreparedCandidateOutcome:
         object.__setattr__(self, "payoff", payoff)
 
         motives = np.asarray(self.motives, dtype=np.float32).reshape(-1)
-        if motives.shape != (2,):
-            raise ValueError(f"motives must have shape (2,), got {motives.shape}")
+        if motives.shape[0] == 0:
+            raise ValueError("motives must be non-empty")
         if not np.all(np.isfinite(motives)):
             raise ValueError("motives must contain only finite values")
         object.__setattr__(self, "motives", tuple(float(v) for v in motives))

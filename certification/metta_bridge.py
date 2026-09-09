@@ -32,6 +32,10 @@ OPTIONAL_AUDIT_FIELDS = [
     "mdn_alpha",
     "wx_support_directions",
     "wx_support_values",
+    # Schema identity fields for cross-domain rejection.
+    "domain_id",
+    "motive_schema_version",
+    "motive_names",
 ]
 CERTIFICATE_FIELDS = BASE_CERTIFICATE_FIELDS + OPTIONAL_AUDIT_FIELDS
 
@@ -89,6 +93,11 @@ def atom_to_cert(atom: Any) -> Certificate:
     for field in OPTIONAL_AUDIT_FIELDS:
         fields.setdefault(field, None)
     fields["weight_region_type"] = fields["weight_region_type"] or "FULL_SIMPLEX"
+    # motive_names is stored as a MeTTa vec and comes back as a list;
+    # convert to tuple for Certificate constructor compatibility.
+    raw_names = fields.get("motive_names")
+    if raw_names is not None and isinstance(raw_names, list):
+        fields["motive_names"] = tuple(str(n) for n in raw_names)
 
     return Certificate.from_dict(fields)
 

@@ -20,6 +20,14 @@ from certification.pds_test import PDSGate
 
 logger = logging.getLogger(__name__)
 
+# Import schema compatibility helpers.
+try:
+    from schemas.objective_schema import ObjectiveSchema, schemas_compatible
+    _SCHEMAS_AVAILABLE = True
+except ImportError:
+    _SCHEMAS_AVAILABLE = False
+    ObjectiveSchema = None  # type: ignore[assignment,misc]
+
 def _validate_wx_geometry(support_directions: np.ndarray, support_values: np.ndarray,) -> tuple[np.ndarray, np.ndarray]:
     """Validate W_x support geometry for M=2 standard basis"""
     sd = np.asarray(support_directions, dtype=np.float64)
@@ -270,6 +278,55 @@ class SkillLibrary:
     def count(self) -> int:
         """Return the number of skills in the library."""
         return len(self._skills)
+
+    def query_by_schema(self, schema: "ObjectiveSchema") -> "List[SkillEntry]":
+        """
+        Return skills whose certificate is compatible with *schema*.
+
+        This is the primary mechanism for cross-domain rejection.
+        A skill whose certificate carries no schema information (domain_id,
+        motive_schema_version, motive_names all None) is treated as
+        legacy/unknown and is included in results.
+
+        A skill is EXCLUDED when its certificate has an explicit schema
+        that is incompatible with the requested schema — different
+        domain_id, different motive_schema_version, or different
+        motive_names (even if the same length).
+
+        Args:
+            schema: The objective schema to filter by.
+
+        Returns:
+            List of SkillEntry whose certificates are compatible with schema.
+
+        Raises:
+            ImportError: If the schemas package is not available.
+        """
+        if not _SCHEMAS_AVAILABLE:
+            raise ImportError(
+                "schemas package is not available; cannot use query_by_schema()"
+            )
+
+        result = []
+        for entry in self._skills.values():
+            cert = entry.certificate
+            # Build an ObjectiveSchema from the certificate's identity fields
+            # if all three are present; otherwise treat as legacy (None).
+            cert_schema: "ObjectiveSchema | None" = None
+            if (
+                cert.domain_id is not None
+                and cert.motive_schema_version is not None
+                and cert.motive_names is not None
+            ):
+                from schemas.objective_schema import ObjectiveSchema as _OS
+                cert_schema = _OS(
+                    domain_id=cert.domain_id,
+                    motive_schema_version=cert.motive_schema_version,
+                    motive_names=cert.motive_names,
+                )
+            if schemas_compatible(cert_schema, schema):
+                result.append(entry)
+        return result
 
     def register_policy(self, skill_id: str, policy: Callable) -> bool:
         """ Attach a policy to a skill that was loaded from disk. """

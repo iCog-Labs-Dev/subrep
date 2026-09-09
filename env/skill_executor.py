@@ -6,7 +6,9 @@ discounted rollout summaries needed by later certification stages.
 """
 
 from __future__ import annotations # Used for forward type references in Python 3.7+ without string literals.
+import copy
 from typing import Callable, Optional
+import warnings
 import numpy as np
 
 class SkillExecutor:
@@ -32,7 +34,7 @@ class SkillExecutor:
             policy_fn: Callable mapping observation -> action.
             gamma: Discount factor used for payoff and motive totals.
             max_steps: Optional rollout cap. If None, run until env ends.
-            payoff_fn: Optional scalarization function for 2D reward vectors.
+            payoff_fn: Optional scalarization function for reward vectors.
         """
         if not (0.0 <= gamma <= 1.0):
             raise ValueError("gamma must be in [0, 1]")
@@ -87,20 +89,34 @@ class SkillExecutor:
         Args:
             initial_obs: If provided, skip env.reset() and start from this state.
         """
+        # Determine fallback motive dimension if available
+        fallback_dim = 2
+        if hasattr(self.env, "metadata") and isinstance(self.env.metadata, dict):
+            m_names = self.env.metadata.get("motive_names")
+            if isinstance(m_names, (list, tuple)) and len(m_names) > 0:
+                fallback_dim = len(m_names)
+        elif hasattr(self.env, "reward_space") and hasattr(self.env.reward_space, "shape"):
+            if self.env.reward_space.shape:
+                fallback_dim = self.env.reward_space.shape[0]
+
         if initial_obs is not None:
             # Use provided observation instead of resetting.
-            obs = np.array(initial_obs, copy=True)
+            obs = np.array(initial_obs, copy=True) if isinstance(initial_obs, (np.ndarray, list, tuple)) else copy.copy(initial_obs)
         else:
-            obs, _ = self.env.reset()
+            reset_out = self.env.reset()
+            if isinstance(reset_out, tuple) and len(reset_out) == 2:
+                obs, _ = reset_out
+            else:
+                obs = reset_out
 
-        initial_obs = np.array(obs, copy=True)
+        initial_obs = np.array(obs, copy=True) if isinstance(obs, (np.ndarray, list, tuple)) else copy.copy(obs)
         total_payoff = 0.0
-        motive_deltas = np.zeros(2, dtype=np.float32)
+        motive_deltas = None
         discount = 1.0
         steps = 0
         terminated = False
         truncated = False
-        final_reward = np.zeros(2, dtype=np.float32)
+        final_reward = None
         stop_reason = "unknown"
         behavior_probability = None
 
@@ -112,11 +128,33 @@ class SkillExecutor:
             # Query action from caller-provided policy.
             action_output = self.policy_fn(obs)
             action, behavior_probability = self._parse_policy_output(action_output)
-            obs, reward_vec, terminated, truncated, _ = self.env.step(action)
+            step_out = self.env.step(action)
+            if len(step_out) == 5:
+                obs, reward_vec, terminated, truncated, info = step_out
+            elif len(step_out) == 4:
+                obs, reward_vec, terminated, info = step_out
+                truncated = False
+            else:
+                raise ValueError(f"Expected step() to return 4 or 5 elements, got {len(step_out)}")
+
+            info = dict(info) if isinstance(info, dict) else {}
             reward_vec = np.asarray(reward_vec, dtype=np.float32)
 
-            # Apply discounting to both scalar payoff and 2D motive totals.
-            total_payoff += discount * float(self.payoff_fn(reward_vec))
+            if motive_deltas is None:
+                motive_deltas = np.zeros_like(reward_vec, dtype=np.float32)
+
+            # Preference: task_payoff in info, fallback to payoff_fn(reward_vec)
+            if "task_payoff" in info:
+                step_payoff = float(info["task_payoff"])
+            else:
+                warnings.warn(
+                    "Environment step info missing 'task_payoff'; falling back to payoff_fn",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                step_payoff = float(self.payoff_fn(reward_vec))
+
+            total_payoff += discount * step_payoff
             motive_deltas += discount * reward_vec
             final_reward = reward_vec
             steps += 1
@@ -130,6 +168,15 @@ class SkillExecutor:
                 break
 
             discount *= self.gamma
+
+        if motive_deltas is None:
+            motive_deltas = np.zeros(fallback_dim, dtype=np.float32)
+        if final_reward is None:
+            final_reward = np.zeros(fallback_dim, dtype=np.float32)
+
+        motive_names = None
+        if hasattr(self.env, "metadata") and isinstance(self.env.metadata, dict):
+            motive_names = self.env.metadata.get("motive_names")
 
         # Console summary required by task spec.
         print("Episode summary:")
@@ -149,6 +196,7 @@ class SkillExecutor:
             "gamma": float(self.gamma),
             "max_steps": self.max_steps,
             "behavior_probability": behavior_probability,
+            "motive_names": motive_names,
         }
 
         return float(total_payoff), motive_deltas, bool(terminated)
