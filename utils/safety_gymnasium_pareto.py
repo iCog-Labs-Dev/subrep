@@ -82,8 +82,13 @@ def collect_pareto_points(
         "ppo": [],
         "ppo_lagrangian": [],
     }
+    expected_metadata = None
     for path in files:
         record = _load_record(path)
+        if expected_metadata is None:
+            expected_metadata = record["objective_metadata"]
+        elif record["objective_metadata"] != expected_metadata:
+            raise ValueError("Cannot compare rollouts with different objective metadata/scaling")
         ids = record["candidate_skill_ids"]
         if baseline_candidate_id not in ids:
             raise ValueError(f"{path} does not contain baseline {baseline_candidate_id!r}")
@@ -267,6 +272,9 @@ def _candidate_point(record: dict, candidate_id: str) -> dict | None:
 def _point_from_index(record: dict, idx: int, method: str) -> dict:
     return {
         "method": method,
+        "raw_objective_returns": record['raw_candidate_motives'][idx].tolist(),
+        "objective_metadata": record['objective_metadata'],
+        "plot_scope": "task versus safety projection; other objectives retained in JSON",
         "context_seed": int(record["context_seed"]),
         "candidate_policy": record["candidate_skill_ids"][idx],
         "safety_cost": float(record["candidate_safety_costs"][idx]),
@@ -275,16 +283,8 @@ def _point_from_index(record: dict, idx: int, method: str) -> dict:
 
 
 def _load_record(path: Path) -> dict:
-    data = np.load(path, allow_pickle=True)
-    motives = np.asarray(data["candidate_motives"], dtype=np.float32)
-    return {
-        "context_seed": int(np.asarray(data["context_seed"]).item()),
-        "candidate_skill_ids": [_scalar_to_string(item) for item in data["candidate_skill_ids"]],
-        "candidate_payoffs": np.asarray(data["candidate_payoffs"], dtype=np.float32),
-        "candidate_motives": motives,
-        "candidate_safety_costs": np.asarray(data["candidate_safety_costs"], dtype=np.float32),
-        "candidate_task_returns": np.asarray(data["candidate_task_returns"], dtype=np.float32),
-    }
+    from utils.safety_gymnasium_pipeline import _load_rollout_record
+    return _load_rollout_record(path)
 
 
 def _pareto_frontier(points: list[dict]) -> list[dict]:

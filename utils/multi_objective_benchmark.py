@@ -17,6 +17,7 @@ from typing import Callable
 
 import numpy as np
 
+from utils.admission_report import AdmissionReport, AdmissionRecord, evaluate_gates
 from certification.cds_test import CDSGate
 from certification.certificate_schema import Certificate
 from library.skill_library import SkillLibrary
@@ -34,16 +35,22 @@ class CandidateSkill:
 
 def run_multi_objective_benchmark(
     *,
-    objective_counts: tuple[int, ...] = (3, 4, 5),
+    objective_counts: tuple[int, ...] = (3, 4, 5, 6, 8, 10),
     candidates_per_objective_count: int = 48,
-    seeds: tuple[int, ...] = (11, 23, 37),
+    seeds: tuple[int, ...] = (11, 23, 37, 51, 67),
     epsilon: float = 0.08,
     output_json: str | Path | None = None,
     output_markdown: str | Path | None = None,
 ) -> dict[str, object]:
     """Run the synthetic benchmark and optionally write JSON/Markdown reports."""
+    if not seeds or len(set(seeds)) != len(seeds):
+        raise ValueError("Provide non-empty, unique seeds")
+    if not objective_counts or any(m < 2 for m in objective_counts):
+        raise ValueError("Objective counts must be at least two")
+    if candidates_per_objective_count < 0 or not np.isfinite(epsilon) or epsilon < 0:
+        raise ValueError("Candidate count and finite epsilon must be non-negative")
     results = [
-        _run_one_setting(
+        _aggregate_seeds(
             num_objectives=m,
             candidates_per_seed=candidates_per_objective_count,
             seeds=seeds,
@@ -53,6 +60,8 @@ def run_multi_objective_benchmark(
     ]
     summary = {
         "benchmark": "synthetic_multi_objective_subrep",
+        "schema_version": 3,
+        "evidence_type": "synthetic; no policy execution",
         "objective_counts": list(objective_counts),
         "seeds": list(seeds),
         "epsilon": float(epsilon),
@@ -83,19 +92,28 @@ def render_multi_objective_benchmark_markdown(summary: dict[str, object]) -> str
         "",
         "## Results",
         "",
-        "| M | Candidates | Admitted | Rejected | CDS | PDS | Reuse Success | Negative Transfer | Query ms | Motive Shift Changed Selection |",
+        "| M | Candidates | Admitted | Rejected | CDS | PDS | Reuse Eligibility | Abstention | Query ms | Motive Shift Changed Selection |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|",
     ]
     for result in summary["results"]:
         lines.append(
             "| {num_objectives} | {candidate_skills_evaluated} | {admitted} | {rejected} | "
-            "{cds_admissions} | {pds_admissions} | {reuse_success_rate:.3f} | "
-            "{negative_transfer_rate:.3f} | {query_time_ms:.3f} | {selection_changed_under_motive_shift} |".format(
+            "{cds_admissions} | {pds_admissions} | {reuse_eligibility_rate:.3f} | "
+            "{abstention_rate:.3f} | {query_time_ms:.3f} | {selection_changed_under_motive_shift} |".format(
                 **result
             )
         )
 
-    lines += ["", "## Reuse Details", ""]
+    lines += ["", "## Method comparisons", "",
+              "Independent seed libraries; random methods are exact uniform expectations.",
+              "Empty choices abstain and receive the idle baseline score (0). No policies execute.",
+              "| M | Scenario | Step | Method | Mean score | Seed std | Mean delta_r | Mean delta_n | Abstention |",
+              "|---|---|---|---|---|---|---|---|---|"]
+    for result in summary["results"]:
+        for row in result["comparisons"]:
+            for method, values in row["methods"].items():
+                lines.append(f"| {result['num_objectives']} | {row['scenario']} | {row['step']} | {method} | {values['mean_score']:.4f} | {values['score_std_across_seeds']:.4f} | {values['mean_delta_r']:.4f} | {values['mean_delta_n']} | {values['abstention_rate']:.3f} |")
+    lines += ["", "## Reuse Details", "", "Illustrative queries from the first seed only; full seed records are in JSON.", ""]
     for result in summary["results"]:
         lines += [
             f"### M={result['num_objectives']}",
@@ -121,6 +139,15 @@ def render_multi_objective_benchmark_markdown(summary: dict[str, object]) -> str
                 )
             )
         lines.append("")
+    from utils.admission_report import _render_audit_sections
+    lines += ["", "Eligibility is not execution success. No policies were executed.",
+              "Selection validity checks score >= -epsilon for the selected skill; abstentions are excluded from that denominator.",
+              "Query ms is total library-filter time across the three queries, excluding ranking.",
+              "Contextual caps are hand-constructed synthetic evidence, not trained MDN predictions."]
+    for result in summary["results"]:
+        lines += ["", f"## M={result['num_objectives']} audit", "",
+                  f"Selection validity: {result['selection_validity_rate']}; threshold violations: {result['selected_threshold_violation_count']}"]
+        lines += _render_audit_sections(result["admission_audit"])
     return "\n".join(lines) + "\n"
 
 
@@ -132,19 +159,40 @@ def _run_one_setting(
     epsilon: float,
 ) -> dict[str, object]:
     library = SkillLibrary()
+    audit = AdmissionReport()
     attempted = cds_count = pds_count = rejected = 0
     rejected_reasons: dict[str, int] = {}
     certification_scores: list[float] = []
+    all_candidates = []
 
     for seed in seeds:
         rng = np.random.default_rng(seed + num_objectives * 10_000)
         for candidate in _generate_candidates(rng, num_objectives, candidates_per_seed, seed=seed):
+            all_candidates.append(candidate)
             attempted += 1
             gate_type, margin, region_type, support_values = _certify_candidate(
                 candidate,
                 num_objectives=num_objectives,
                 epsilon=epsilon,
             )
+            # CDS uses the full simplex; the fallback PDS test uses constructed caps.
+            cds_eval = evaluate_gates(candidate.delta_r, candidate.delta_n, epsilon)[0]
+            caps = None if gate_type == "CDS" else _candidate_support_values(np.asarray(candidate.delta_n))
+            pds_eval = evaluate_gates(candidate.delta_r, candidate.delta_n, epsilon, support_values=caps)[1]
+            audit_record = AdmissionRecord(
+                skill_id=candidate.skill_id, admitted=gate_type is not None,
+                gate_type=gate_type, delta_r=candidate.delta_r, delta_n=candidate.delta_n,
+                margin=margin, epsilon=0.0 if gate_type == "CDS" else epsilon,
+                failure_reason=None if gate_type else "Both CDS and contextual PDS failed",
+                candidate_policy=candidate.source,
+                weight_region_type="FULL_SIMPLEX" if caps is None else "MDN_WX",
+                support_values=caps, support_feasible=True if caps is not None else None,
+                gate_evaluations=(cds_eval, pds_eval),
+                rejection_category=None if gate_type else "GATE_FAILED",
+                baseline_id="synthetic_idle_v1", environment=f"Synthetic-MO-{num_objectives}D-v0",
+                seed=seed, episode_length=50,
+            )
+            audit.add_record(audit_record)
             if gate_type is None:
                 rejected += 1
                 reason = "failed CDS/PDS worst-case margin"
@@ -172,6 +220,10 @@ def _run_one_setting(
                 wx_support_values=cert.wx_support_values,
             )
             if not added:
+                audit_record.admitted = False
+                audit_record.gate_type = None
+                audit_record.rejection_category = "LIBRARY_REVERIFICATION_FAILED"
+                audit_record.failure_reason = "Library re-verification failed"
                 rejected += 1
                 reason = "library admission rejected certificate"
                 rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
@@ -189,19 +241,26 @@ def _run_one_setting(
     support_values = _runtime_support_values(num_objectives)
     support_directions = make_basis_query_directions(num_objectives)
     reuse_results = {}
-    start = time.perf_counter()
+    elapsed_ms = 0.0
     total_query_results = 0
     for label, weight in query_weights.items():
+        start = time.perf_counter()
         admissible = library.query_admissible(
             current_weight=weight,
             support_directions=support_directions,
             support_values=support_values,
         )
+        elapsed_ms += (time.perf_counter() - start) * 1000.0
         total_query_results += len(admissible)
         selected = _select_highest(admissible, weight)
         highest_reward = _select_highest_reward(admissible)
         reuse_results[label] = {
+            "weights": weight.tolist(),
+            "support_values": support_values.tolist(),
             "admissible_count": len(admissible),
+            "abstained": selected is None,
+            "selection_threshold": -selected.epsilon if selected else None,
+            "selection_valid": bool(_entry_score(selected, weight) >= -selected.epsilon - 1e-9) if selected else None,
             "selected_skill": selected.skill_id if selected else None,
             "selected_score": _entry_score(selected, weight) if selected else None,
             "random_certified_expected_score": (
@@ -212,17 +271,14 @@ def _run_one_setting(
             "highest_reward_skill": highest_reward.skill_id if highest_reward else None,
             "highest_reward_score_under_weight": _entry_score(highest_reward, weight) if highest_reward else None,
         }
-    elapsed_ms = (time.perf_counter() - start) * 1000.0
-
     shift_a = reuse_results["uniform"]["selected_skill"]
     shift_b = reuse_results[f"objective_{num_objectives - 1}_focused"]["selected_skill"]
-    negative_transfer_count = sum(
-        1
-        for entry in library.get_admitted_skills()
-        if min(_entry_score(entry, weight) for weight in query_weights.values()) < -epsilon
-    )
+    selections = [r for r in reuse_results.values() if not r["abstained"]]
+    valid = sum(r["selection_valid"] for r in selections)
 
     return {
+        "seed": seeds[0],
+        "comparisons": _comparisons(library, all_candidates, num_objectives, epsilon),
         "num_objectives": num_objectives,
         "candidate_skills_evaluated": attempted,
         "admitted": library.count(),
@@ -232,8 +288,13 @@ def _run_one_setting(
         "pds_admissions": pds_count,
         "rejected_reasons": rejected_reasons,
         "reuse": reuse_results,
-        "reuse_success_rate": _safe_ratio(total_query_results, len(query_weights) * max(library.count(), 1)),
-        "negative_transfer_rate": _safe_ratio(negative_transfer_count, max(library.count(), 1)),
+        "rejection_rate": _safe_ratio(rejected, attempted),
+        "reuse_eligibility_rate": _safe_ratio(total_query_results, len(query_weights) * library.count()),
+        "selection_validity_rate": valid / len(selections) if selections else None,
+        "selected_threshold_violation_count": len(selections) - valid,
+        "abstention_rate": (len(query_weights) - len(selections)) / len(query_weights),
+        "execution_performance": None,
+        "admission_audit": audit.compile(),
         "selection_changed_under_motive_shift": shift_a != shift_b,
         "query_time_ms": elapsed_ms,
         "mean_uniform_certification_score": float(np.mean(certification_scores)) if certification_scores else None,
@@ -296,7 +357,7 @@ def _certify_candidate(
     pds_margin = float(candidate.delta_r) - h_wx + float(epsilon)
     if pds_margin >= 0.0:
         return "PDS", pds_margin, MDN_WX, support_values
-    return None, min(cds_margin, pds_margin), FULL_SIMPLEX, None
+    return None, pds_margin, MDN_WX, support_values
 
 
 def _candidate_support_values(delta_n: np.ndarray) -> tuple[float, ...]:
@@ -364,8 +425,8 @@ def _uniform(num_objectives: int) -> np.ndarray:
 
 
 def _focused(num_objectives: int, index: int) -> np.ndarray:
-    weight = np.full(num_objectives, 0.1 / max(num_objectives - 1, 1), dtype=np.float64)
-    weight[index] = 0.9
+    weight = np.full(num_objectives, 0.3 / max(num_objectives - 1, 1), dtype=np.float64)
+    weight[index] = 0.7
     return weight
 
 
@@ -395,3 +456,85 @@ def _format_optional(value: float | None) -> str:
     if value is None:
         return ""
     return f"{float(value):.4f}"
+
+
+def _comparisons(library, candidates, m, epsilon):
+    """Exact uniform-random expectations; all methods share each candidate pool."""
+    balanced, focused = _uniform(m), _focused(m, 0)
+    scenarios = [("balanced", 0, balanced)]
+    scenarios += [(f"objective_{i}_focused", 0, _focused(m, i)) for i in range(m)]
+    scenarios += [("gradual_shift", i, (1-t)*balanced+t*focused)
+                  for i, t in enumerate(np.linspace(0, 1, 5))]
+    scenarios += [("abrupt_shift", i, w) for i, w in enumerate(
+        [focused, _focused(m, m-1), focused])]
+    # Explicit rejected-only pool, not artificially hiding admissible candidates.
+    rejected = [CandidateSkill("empty_case_rejected", -1.-epsilon, tuple([-1.]*m), "constructed_rejection")]
+    scenarios += [("empty_admissible", 0, balanced)]
+    rows = []
+    for name, step, w in scenarios:
+        pool = rejected if name == "empty_admissible" else candidates
+        active_library = SkillLibrary() if name == "empty_admissible" else library
+        eligible = active_library.query_admissible(w, np.eye(m), _runtime_support_values(m))
+        methods = {
+            "subrep": sorted(eligible, key=lambda c: (-_score(c.delta_r,c.delta_n,w), c.skill_id))[:1],
+            "random_candidate": pool,
+            "random_admissible": eligible,
+            "idle": [],
+            "unrestricted_best": sorted(pool, key=lambda c: (-_score(c.delta_r,c.delta_n,w), c.skill_id))[:1],
+        }
+        outcomes = {}
+        for method, choices in methods.items():
+            dr = float(np.mean([c.delta_r for c in choices])) if choices else 0.
+            dn = np.mean([c.delta_n for c in choices], axis=0) if choices else np.zeros(m)
+            outcomes[method] = {
+                "score": _score(dr, dn, w), "delta_r": dr, "delta_n": dn.tolist(),
+                "selected_skill_id": choices[0].skill_id if choices and not method.startswith("random") else None,
+                "abstained": not choices and method != "idle",
+                "baseline_fallback": not choices and method != "idle",
+                "evaluation": "uniform_random_expectation" if method.startswith("random") else "deterministic",
+                "candidate_count": len(choices),
+            }
+        rows.append({"scenario": name, "step": step, "weights": w.tolist(),
+                     "objective_names": [f"objective_{i}" for i in range(m)],
+                     "support_region_source": "hand-designed synthetic caps, not trained MDN",
+                     "admissible_count": len(eligible), "methods": outcomes})
+    return rows
+
+
+def _aggregate_seeds(*, num_objectives, candidates_per_seed, seeds, epsilon):
+    runs = [_run_one_setting(num_objectives=num_objectives,
+            candidates_per_seed=candidates_per_seed, seeds=(seed,), epsilon=epsilon) for seed in seeds]
+    result = dict(runs[0])
+    result.pop("seed")
+    result["seed_results"] = runs
+    result["reuse_example_seed"] = seeds[0]
+    for key in ("candidate_skills_evaluated", "admitted", "rejected", "cds_admissions", "pds_admissions",
+                "selected_threshold_violation_count", "infeasible_support_events", "query_time_ms"):
+        result[key] = sum(r[key] for r in runs)
+    for key in ("admission_rate", "rejection_rate", "reuse_eligibility_rate", "abstention_rate",
+                "selection_validity_rate", "mean_uniform_certification_score"):
+        values = [r[key] for r in runs if r[key] is not None]
+        result[key] = float(np.mean(values)) if values else None
+    audit = AdmissionReport()
+    for run in runs:
+        for entry in run["admission_audit"]["audit_entries"]:
+            audit.add_from_dict(entry)
+    result["admission_audit"] = audit.compile()
+    result["rejected_reasons"] = result["admission_audit"]["failure_reasons"]
+    result["selection_changed_under_motive_shift"] = any(r["selection_changed_under_motive_shift"] for r in runs)
+    result["comparisons"] = []
+    for idx, first in enumerate(runs[0]["comparisons"]):
+        row = {k:v for k,v in first.items() if k not in ("methods", "admissible_count")}
+        row["methods"] = {}
+        for method in first["methods"]:
+            samples = [r["comparisons"][idx]["methods"][method] for r in runs]
+            row["methods"][method] = {
+                "mean_score": float(np.mean([v["score"] for v in samples])),
+                "score_std_across_seeds": float(np.std([v["score"] for v in samples])),
+                "mean_delta_r": float(np.mean([v["delta_r"] for v in samples])),
+                "mean_delta_n": np.mean([v["delta_n"] for v in samples],axis=0).tolist(),
+                "abstention_rate": float(np.mean([v["abstained"] for v in samples])),
+                "seed_count": len(samples),
+            }
+        result["comparisons"].append(row)
+    return result

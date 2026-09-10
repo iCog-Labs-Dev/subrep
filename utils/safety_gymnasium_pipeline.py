@@ -17,7 +17,8 @@ from certification.metta_storage import CertificateStore
 from certification.pds_test import PDSGate
 from library.skill_library import SkillLibrary
 from library.skill_selector import select_best_skill_entry
-from utils.admission_report import AdmissionReport
+from utils.admission_report import AdmissionReport, evaluate_gates, _render_audit_sections
+from utils.safety_objectives import rollout_metadata
 
 
 DEFAULT_TASK_WEIGHT = (0.10, 0.90)
@@ -44,8 +45,9 @@ def run_safety_gymnasium_certification_pipeline(
     library_file: str | Path = "data/safety_gymnasium_library.json",
     report_json_path: str | Path = "demo/artifacts/safety_gymnasium_admission_report.json",
     report_md_path: str | Path = "demo/artifacts/safety_gymnasium_admission_report.md",
-    task_weight: Sequence[float] = DEFAULT_TASK_WEIGHT,
-    safety_weight: Sequence[float] = DEFAULT_SAFETY_WEIGHT,
+    task_weight: Sequence[float] | None = None,
+    safety_weight: Sequence[float] | None = None,
+    expected_objectives: int | None = None,
 ) -> SafetyGymnasiumPipelineResult:
     """Certify collected Safety-Gymnasium candidate outcomes.
 
@@ -59,6 +61,18 @@ def run_safety_gymnasium_certification_pipeline(
             f"No Safety-Gymnasium rollout files found in {rollout_dir!s} matching {pattern!r}"
         )
 
+    first = _load_rollout_record(files[0])
+    metadata = first['objective_metadata']
+    n = len(metadata['objective_names'])
+    if expected_objectives is not None and n != expected_objectives:
+        raise ValueError("Objective count mismatch; collect fresh rollouts, do not pad old data")
+    task_weight = tuple(task_weight) if task_weight is not None else ((.1,.9) if n == 2 else (.1,.8,.1))
+    safety_weight = tuple(safety_weight) if safety_weight is not None else ((.9,.1) if n == 2 else (.8,.1,.1))
+    for w in (task_weight, safety_weight):
+        if len(w) != n or not np.all(np.isfinite(w)) or min(w) < 0 or not np.isclose(sum(w),1):
+            raise ValueError("Comparison weights must match the objective simplex")
+    if metadata['gamma'] is not None and not np.isclose(metadata['gamma'], gamma):
+        raise ValueError("Pipeline gamma differs from collected returns")
     cds_gate = CDSGate()
     pds_gate = PDSGate(epsilon=pds_epsilon)
     cert_store = CertificateStore()
@@ -72,6 +86,8 @@ def run_safety_gymnasium_certification_pipeline(
 
     for file_index, path in enumerate(files, start=1):
         record = _load_rollout_record(path)
+        if record["objective_metadata"] != metadata:
+            raise ValueError("Mixed objective schemas or scales in rollout directory")
         contexts_processed += 1
         candidate_outcomes_loaded += len(record["candidate_skill_ids"])
 
@@ -150,10 +166,15 @@ def run_safety_gymnasium_certification_pipeline(
                 "admitted": admitted,
                 "gate_type": gate_type if admitted else None,
                 "delta_r": float(delta_r),
-                "delta_n": (float(delta_n[0]), float(delta_n[1])),
+                "delta_n": tuple(float(v) for v in delta_n),
                 "margin": float(margin),
                 "epsilon": float(epsilon),
                 "failure_reason": failure_reason,
+                "gate_evaluations": evaluate_gates(delta_r, delta_n, pds_epsilon),
+                "rejection_category": ("GATE_FAILED" if not (admitted_cds or admitted_pds) else "LIBRARY_REVERIFICATION_FAILED") if not admitted else None,
+                "baseline_id": f"safety_rollout_baseline:{baseline_candidate_id}",
+                "environment": record['env_id'], "seed": record['context_seed'],
+                "episode_length": int(record['step_counts'][candidate_idx]),
             }
             report.add_from_dict(episode_dict)
             context_candidates.append(episode_dict)
@@ -188,6 +209,10 @@ def run_safety_gymnasium_certification_pipeline(
     stats.update(
         {
             "benchmark": "Safety-Gymnasium",
+            "objective_metadata": metadata,
+            "score_definition": "task_payoff/task_scale + dot(weights, motive_returns/objective_scales); task contributes twice",
+            "evaluation_type": "retrospective rollout evidence",
+
             "rollout_dir": str(rollout_dir),
             "baseline_candidate": baseline_candidate_id,
             "contexts_processed": contexts_processed,
@@ -234,12 +259,16 @@ def _load_rollout_record(path: Path) -> dict:
         else motives[:, 1]
     )
 
+    metadata = rollout_metadata(data, motives)
+    scales = np.asarray(metadata['objective_scales'])
     return {
+        "objective_metadata": metadata,
+        "raw_candidate_motives": motives.copy(),
         "env_id": _scalar_to_string(data["env_id"]) if "env_id" in data else "Safety-Gymnasium",
         "context_seed": int(np.asarray(data["context_seed"]).item()),
         "candidate_skill_ids": [_scalar_to_string(item) for item in data["candidate_skill_ids"]],
-        "candidate_payoffs": np.asarray(data["candidate_payoffs"], dtype=np.float32),
-        "candidate_motives": motives,
+        "candidate_payoffs": np.asarray(data["candidate_payoffs"], dtype=np.float32) / scales[1],
+        "candidate_motives": motives / scales,
         "candidate_safety_costs": safety_costs,
         "candidate_task_returns": task_returns,
         "step_counts": (
@@ -268,7 +297,7 @@ def _make_certificate(
         skill_id=skill_id,
         gate_type=gate_type,
         delta_r=float(delta_r),
-        delta_n=(float(delta_n[0]), float(delta_n[1])),
+        delta_n=tuple(float(v) for v in delta_n),
         admission_margin=float(margin),
         epsilon=float(epsilon),
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -530,7 +559,7 @@ def _save_pipeline_outputs(
 
     md_path = Path(report_md_path)
     md_path.parent.mkdir(parents=True, exist_ok=True)
-    md_path.write_text("\n".join(_render_safety_markdown(stats)) + "\n", encoding="utf-8")
+    md_path.write_text("\n".join(_render_safety_markdown(stats) + ["", "## Objective measurement and scaling", json.dumps(stats["objective_metadata"], indent=2)] + _render_audit_sections(stats)) + "\n", encoding="utf-8")
 
 
 def _render_safety_markdown(stats: dict) -> list[str]:

@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 import numpy as np
 from gymnasium.spaces import Box
+from utils.safety_objectives import OBJECTIVE_NAMES, control_effort
 
 
 class SafeRLGymnasiumEnv:
@@ -24,7 +25,11 @@ class SafeRLGymnasiumEnv:
         seed: int = 42,
         render_mode: Optional[str] = None,
         make_env: Optional[Callable] = None,
+        include_control_efficiency: bool = False,
     ) -> None:
+        self.include_control_efficiency = bool(include_control_efficiency)
+        self.objective_names = OBJECTIVE_NAMES if include_control_efficiency else OBJECTIVE_NAMES[:2]
+        self.num_objectives = len(self.objective_names)
         self.env_id = env_id
         self.seed = int(seed)
         self.env = self._create_env(env_id, render_mode=render_mode, make_env=make_env)
@@ -33,9 +38,9 @@ class SafeRLGymnasiumEnv:
         self.observation_space = self.env.observation_space
         self.action_space = self.env.action_space
         self.reward_space = Box(
-            low=np.array([-np.inf, -np.inf], dtype=np.float32),
-            high=np.array([np.inf, np.inf], dtype=np.float32),
-            shape=(2,),
+            low=-np.inf,
+            high=np.inf,
+            shape=(self.num_objectives,),
             dtype=np.float32,
         )
 
@@ -66,12 +71,20 @@ class SafeRLGymnasiumEnv:
         return self.env.reset()
 
     def step(self, action):
+        effort = control_effort(action, self.action_space.low, self.action_space.high) if self.include_control_efficiency else None
         obs, reward, cost, terminated, truncated, info = self.env.step(action)
         info = dict(info)
         reward_value = float(reward)
         cost_value = float(np.asarray(cost, dtype=np.float64).reshape(-1)[0])
         reward_vector = self._map_reward_and_cost(reward_value, cost_value)
 
+        if self.include_control_efficiency:
+            reward_vector = np.append(reward_vector, -effort).astype(np.float32)
+            info["control_effort"] = effort
+            info["control_efficiency_motive"] = -effort
+        info["objective_names"] = list(self.objective_names)
+        info["raw_objective_values"] = reward_vector.copy()
+        info["objective_measurement_version"] = 1
         info["task_reward"] = reward_value
         info["safety_cost"] = cost_value
         info["safety_motive"] = float(reward_vector[0])

@@ -297,6 +297,8 @@ class SkillLibrary:
 
         admissible: list[SkillEntry] = []
         for entry in self._skills.values():
+            if len(entry.delta_n) != w.size:
+                continue
             if entry.weight_region_type == FULL_SIMPLEX:
                 # Globally certified
                 admissible.append(entry)
@@ -316,6 +318,8 @@ class SkillLibrary:
                     continue
 
                 h_wx = _compute_wx_worst_case(delta_n, sd, sv)
+                if np.any(w > sv + _FEAS_TOL):
+                    continue
 
                 if entry.gate_type == "CDS":
                     if entry.delta_r >= h_wx:

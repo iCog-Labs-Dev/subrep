@@ -137,7 +137,16 @@ class SafetyGymnasiumRolloutCollector:
         ppo_checkpoint: str | Path | None = None,
         ppo_lagrangian_checkpoint: str | Path | None = None,
         env_factory: Optional[Callable[..., SafeRLGymnasiumEnv]] = None,
+        objectives: int = 2,
+        scales_file: str | None = None,
     ) -> None:
+        from utils.safety_objectives import FrozenObjectiveScales
+        if objectives not in (2, 3):
+            raise ValueError("objectives must be 2 or 3")
+        if scales_file and objectives != 3:
+            raise ValueError("Frozen scale files require three objectives")
+        self.objectives = objectives
+        self.scales = FrozenObjectiveScales.load(scales_file) if scales_file else None
         self.env_id = env_id
         self.seed = int(seed)
         self.save_dir = Path(save_dir)
@@ -147,7 +156,7 @@ class SafetyGymnasiumRolloutCollector:
         self.ppo_checkpoint = ppo_checkpoint
         self.ppo_lagrangian_checkpoint = ppo_lagrangian_checkpoint
         factory = env_factory or SafeRLGymnasiumEnv
-        self.env = factory(env_id=env_id, seed=seed)
+        self.env = factory(env_id=env_id, seed=seed, **({"include_control_efficiency": True} if objectives == 3 else {}))
         self.candidate_policies = build_default_safety_candidate_policies(
             self.env,
             ppo_checkpoint=ppo_checkpoint,
@@ -194,7 +203,17 @@ class SafetyGymnasiumRolloutCollector:
             step_counts.append(int(info.get("steps", 0)))
             stop_reasons.append(str(info.get("stop_reason", "unknown")))
 
+        if any(v.shape != (self.objectives,) for v in motives):
+            raise ValueError("Environment objective count does not match requested mode")
+        from utils.safety_objectives import OBJECTIVE_NAMES
         return {
+            "schema_version": np.asarray(2),
+            "objective_names": np.asarray(OBJECTIVE_NAMES[:self.objectives]),
+            "measurement_definitions": np.asarray(["negative environment cost", "environment task reward", "negative mean squared normalized applied action"][:self.objectives]),
+            "objective_scales": np.asarray(self.scales.divisors if self.scales else [1.] * self.objectives),
+            "scaling_source": np.asarray(self.scales.development_source if self.scales else "identity-unscaled-not-calibrated"),
+            "values_are_raw": np.asarray(True),
+            "gamma": np.asarray(self.gamma),
             "env_id": np.asarray(self.env_id),
             "context": context,
             "context_seed": np.asarray(context_seed, dtype=np.int32),
@@ -234,6 +253,8 @@ class SafetyGymnasiumRolloutCollector:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect Safety-Gymnasium candidate rollouts.")
+    parser.add_argument("--objectives", type=int, choices=[2,3], default=2)
+    parser.add_argument("--scales-file", default=None)
     parser.add_argument("--contexts", type=int, default=25)
     parser.add_argument("--env-id", type=str, default="SafetyPointGoal1-v0")
     parser.add_argument("--save-dir", type=str, default="data/safety_gymnasium_rollouts")
@@ -262,6 +283,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     collector = SafetyGymnasiumRolloutCollector(
+        objectives=args.objectives,
+        scales_file=args.scales_file,
         env_id=args.env_id,
         seed=args.seed,
         save_dir=args.save_dir,
