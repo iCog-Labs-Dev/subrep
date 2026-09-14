@@ -34,7 +34,12 @@ Per-file schema:
 | `behavior_probability` | scalar/float, optional | Behavior-policy probability when available |
 
 These records train `models/generator.pt` through supervised payoff/motive
-regression.
+regression. `generator/train_generator.py` splits them into train (75%),
+validation (12.5%), and test (12.5%) sets by filename, persisting the
+assignment to `data/generator_split_manifest.json` so evaluation scripts
+read back the same split rather than recomputing it. See
+`docs/GENERATOR_TRAINING_PIPELINE.md` for the full training/evaluation
+sequence.
 
 ## Candidate-Set Records
 
