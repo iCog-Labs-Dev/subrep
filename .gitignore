@@ -1,5 +1,6 @@
 .env
 .venv
+.venv39
 .venv_linux
 .venv_safety*/
 __pycache__/
