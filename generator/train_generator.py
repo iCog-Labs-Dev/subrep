@@ -71,9 +71,11 @@ def train_one_epoch(
     loader: DataLoader,
     optimizer: optim.Optimizer,
     loss_fn: GeneratorLoss,
-    device: torch.device,
+    device: torch.device=None,
 ) -> tuple[float, float, float]:
     """Train the model for one epoch."""
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.train()
     total_loss = 0.0
     total_payoff_loss = 0.0
@@ -109,9 +111,11 @@ def evaluate_loss(
     model: SkillGenerator,
     loader: DataLoader,
     loss_fn: GeneratorLoss,
-    device: torch.device,
+    device: None,
 ) -> tuple[float, float, float]:
     """Compute loss on a held-out split WITHOUT updating any weights."""
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.eval()
     total_loss = 0.0
     total_payoff_loss = 0.0
