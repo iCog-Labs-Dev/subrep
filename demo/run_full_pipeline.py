@@ -27,7 +27,12 @@ from certification.metta_storage import CertificateStore
 from library.skill_library import SkillLibrary, support_values_feasible
 from library.skill_selector import SkillSelector
 from generator.skill_generator import SkillGenerator
-from utils.admission_report import AdmissionReport, AdmissionRecord
+from utils.admission_report import (
+    AdmissionRecord,
+    AdmissionReport,
+    RejectionCategory,
+    evaluate_gates,
+)
 from utils.mdn_stub import load_mdn_or_stub, StubMDN
 from generator.mdn_runtime_selector import MDNRuntimeSelector
 from utils.mdn_contracts import CandidateSkillRecord
@@ -45,6 +50,9 @@ CERT_FILE           = "data/certificates.metta"
 LIBRARY_FILE        = "data/library.json"
 ENV_NAME            = "MO-LunarLander-v3"
 VERSION             = "0.1.0"
+# Single source for the baseline label: the certificate records it, and the
+# audit report falls back to it for candidates that never get a certificate.
+BASELINE_ID         = "idle_policy_v1"
 MDN_CHECKPOINT_PATH = "models/mdn_policy_best.pth"  # Will fallback to stub if not found
 REPORT_JSON_PATH    = "demo/artifacts/admission_report.json"
 REPORT_MD_PATH      = "demo/artifacts/admission_report.md"
@@ -149,13 +157,13 @@ def _make_certificate(
         skill_id=skill_id,
         gate_type=gate_type,
         delta_r=float(delta_r),
-        delta_n=(float(delta_n[0]), float(delta_n[1])),
+        delta_n=tuple(float(v) for v in delta_n),
         admission_margin=float(margin),
         epsilon=epsilon,
         timestamp=datetime.now(timezone.utc).isoformat(),
         seed=SEED,
         gamma=GAMMA,
-        baseline_id="idle_policy_v1",
+        baseline_id=BASELINE_ID,
         environment=ENV_NAME,
         episode_length=episode_length,
         version=VERSION,
@@ -297,14 +305,29 @@ def run_pipeline() -> dict:
         active_gate = "CDS" if admitted_cds else "PDS"
         margin = gate.get_admission_margin(delta_r, delta_n) if admitted_cds else pds_gate.get_admission_margin(delta_r, delta_n)
 
+        # Record both gate inequalities with their exact numeric sides, for
+        # admitted and rejected candidates alike. `gate_type` below still names
+        # only the admitting gate, so this is what preserves "which gates were
+        # evaluated and how each fared" in the audit.
+        gate_evaluations = evaluate_gates(
+            delta_r=float(delta_r),
+            delta_n=delta_n,
+            epsilon=PDS_EPSILON,
+        )
+
         # Determine human-readable failure reason for rejected skills
         failure_reason: str | None = None
+        rejection_category: str | None = None
         if not admitted_flag:
             worst_case_score = delta_r + float(np.min(delta_n))
+            rejection_category = RejectionCategory.GATE_FAILED
             failure_reason = (
                 f"delta_r + min(delta_n) below CDS/PDS thresholds "
                 f"(score={worst_case_score:.4f}, PDS threshold={-PDS_EPSILON:.4f})"
             )
+
+        # Defined before the branch so the rejected path can test it safely.
+        cert: Certificate | None = None
 
         if admitted_flag:
             # STORE — save to cert_store (MeTTa) then to library
@@ -326,6 +349,7 @@ def run_pipeline() -> dict:
                     # ROLLBACK: library rejected — remove from cert_store to stay in sync
                     cert_store.remove_skill(skill_id)
                     failure_reason = "library.add_skill() rejected after math re-verification"
+                    rejection_category = RejectionCategory.LIBRARY_REVERIFICATION_FAILED
                     admitted_flag = False
                     rejected += 1
                     result_str = "REJECTED ❌"
@@ -342,12 +366,38 @@ def run_pipeline() -> dict:
             else:
                 # Duplicate skill_id — treat as rejected
                 failure_reason = "duplicate skill_id already in cert_store"
+                rejection_category = RejectionCategory.DUPLICATE_SKILL_ID
                 admitted_flag = False
                 rejected += 1
                 result_str = "REJECTED ❌"
         else:
             rejected += 1
             result_str = "REJECTED ❌"
+
+        # Audit context. An admitted skill has a stored certificate, so read the
+        # context from it rather than re-asserting literals here -- the
+        # certificate is the record of what was actually certified, and reading
+        # it means the report cannot drift from it. A rejected skill has no
+        # certificate (or had it rolled back), so its context has to come from
+        # the evaluation itself.
+        if admitted_flag and cert is not None:
+            audit_region = cert.weight_region_type
+            audit_support = cert.wx_support_values
+            audit_baseline = cert.baseline_id
+            audit_environment = cert.environment
+            audit_seed = cert.seed
+            audit_length = cert.episode_length
+        else:
+            audit_region = "FULL_SIMPLEX"
+            audit_support = None
+            audit_baseline = BASELINE_ID
+            audit_environment = ENV_NAME
+            audit_seed = SEED
+            audit_length = int(episode_length)
+
+        audit_support_feasible = (
+            support_values_feasible(audit_support) if audit_support is not None else None
+        )
 
         # Record episode data for admission report
         episode_record_dict = {
@@ -356,10 +406,21 @@ def run_pipeline() -> dict:
             "admitted": admitted_flag,
             "gate_type": active_gate if admitted_flag else None,
             "delta_r": float(delta_r),
-            "delta_n": (float(delta_n[0]), float(delta_n[1])),
+            # Full vector, not the first two components: a truncated motive
+            # vector is neither correct nor inspectable beyond two objectives.
+            "delta_n": tuple(float(v) for v in delta_n),
             "margin": float(margin),
             "epsilon": PDS_EPSILON if active_gate == "PDS" else 0.0,
             "failure_reason": failure_reason,
+            "weight_region_type": audit_region,
+            "support_values": audit_support,
+            "support_feasible": audit_support_feasible,
+            "gate_evaluations": gate_evaluations,
+            "rejection_category": rejection_category,
+            "baseline_id": audit_baseline,
+            "environment": audit_environment,
+            "seed": audit_seed,
+            "episode_length": audit_length,
         }
         episode_records.append(episode_record_dict)
         report.add_from_dict(episode_record_dict)

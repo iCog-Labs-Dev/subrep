@@ -41,7 +41,8 @@ library/
 - certificate exists in the attached `CertificateStore`, when provided,
 - gate type is supported (`CDS` or `PDS`),
 - CDS/PDS math still passes before runtime admission,
-- `MDN_WX` skills include support directions and support values.
+- `MDN_WX` skills include support directions and support values, re-verified through the exact
+  greedy `W_x` support function at any `M >= 2`.
 
 This re-check protects the runtime library from accepting malformed or stale
 certificate data.

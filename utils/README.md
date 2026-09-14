@@ -8,8 +8,8 @@ certification, runtime selection, and reporting.
 | File | Purpose |
 |---|---|
 | `cone_utils.py` | Simplex and worst-case motive helpers |
-| `return_targets.py` | Discounted and doubly-robust return target helpers |P
-| `support_geometry.py` | Support-function utilities and basis directions |
+| `return_targets.py` | Discounted and doubly-robust return target helpers |
+| `support_geometry.py` | Basis directions and the exact O(M log M) greedy `W_x` support-function solver |
 | `weight_set_store.py` | Context-conditioned `W_x` vertex/support storage |
 | `mdn_selection.py` | Alpha-to-weight conversion and candidate scoring |
 | `mdn_contracts.py` | MDN decision/candidate record contracts |

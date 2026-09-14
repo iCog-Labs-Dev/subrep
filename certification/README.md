@@ -12,8 +12,10 @@ storage layer.
 | `cvar_test.py` | Optional distribution-aware CVaR gate using MDN alpha |
 | `gate.py` | Shared input validation base class |
 
-The gates support full-simplex certification and optional `WeightSet`-restricted
-certification used by contextual `W_x` flows.
+The gates support full-simplex certification, optional `WeightSet`-restricted certification (legacy
+M = 2 path), and `support_values`-restricted certification for contextual `W_x` flows at any M.
+The `W_x` path evaluates the region's support function via an exact O(M log M) greedy solver rather
+than enumerating vertices.
 
 ## Certificates
 
