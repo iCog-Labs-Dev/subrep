@@ -26,6 +26,7 @@ models/*
 plots/
 data/library.json
 data/safety_gymnasium_library.json
+data/safety*
 data/safety_gymnasium_certificates.metta
 data/safety_gymnasium_library.json
 data/safety_gymnasium_certificates.metta

@@ -80,3 +80,6 @@ of collected evidence, not independent evaluation executions.
 
 These tests use a controlled fake simulator to verify measurements and scaling.
 They do not constitute a real Safety-Gymnasium benchmark run.
+
+For automated development/evidence/held-out collection and five-method comparisons,
+see [SAFETY_FULL_BENCHMARK.md](SAFETY_FULL_BENCHMARK.md).

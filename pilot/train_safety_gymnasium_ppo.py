@@ -218,7 +218,17 @@ def _collect_rollout(
         next_obs, reward, cost, terminated, truncated, _ = env.step(env_action)
         next_obs = np.asarray(next_obs, dtype=np.float32).reshape(-1)
         reward_value = float(reward) - float(current_cost_penalty) * float(cost)
-        done = bool(terminated or truncated)
+        cutoff = episode_length + 1 >= config.max_episode_steps
+        done = bool(terminated or truncated or cutoff)
+        # Time limits end the sampled episode, not the underlying task. Bootstrap
+        # from its final observation before resetting, while stopping GAE at the
+        # boundary. True terminal states have no continuation value.
+        if done and not terminated:
+            with torch.no_grad():
+                _, final_value = model.distribution(
+                    torch.as_tensor(next_obs, dtype=torch.float32, device=device)
+                )
+            reward_value += config.gamma * float(final_value.detach().cpu().item())
 
         observations.append(current_obs)
         raw_actions.append(raw_action)
@@ -232,7 +242,7 @@ def _collect_rollout(
         episode_length += 1
 
         current_obs = next_obs
-        if done or episode_length >= config.max_episode_steps:
+        if done:
             completed_returns.append(float(episode_return))
             completed_costs.append(float(episode_cost))
             rollout_completed_costs.append(float(episode_cost))
