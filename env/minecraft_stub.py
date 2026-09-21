@@ -45,6 +45,9 @@ SKILL_NAMES: Tuple[str, ...] = (
     "ArcherKite",
     "SwingGateBarricade",
     "DiscountChain",
+    # Appended deliberately -- see BORDERLINE CANDIDATE below. Must stay last:
+    # tests/test_minecraft_stub.py indexes actions positionally in places.
+    "RiskyForage",
 )
 
 # Mean per-step payoff for each action, one row per action, columns in
@@ -57,13 +60,49 @@ _BASE_REWARDS = np.array([
     [0.25, 0.00, 0.10, 0.05, -0.15, -0.05],  # ArcherKite
     [0.35, 0.05, -0.05, -0.15, 0.00, 0.30],  # SwingGateBarricade
     [-0.10, 0.45, 0.05, 0.20, 0.10, 0.00],   # DiscountChain
+    [-0.05, 0.00, -0.05, 0.0977, 0.00, 0.00],  # RiskyForage -- see below
 ], dtype=np.float32)
+
+# ---------------------------------------------------------------------------
+# BORDERLINE CANDIDATE -- why RiskyForage has the numbers it does
+# ---------------------------------------------------------------------------
+# The PDS gate admits when `delta_r + min(delta_n) >= -epsilon`. MetaMo drives
+# epsilon over roughly [0, 0.1], so epsilon can only change an admission
+# decision for a skill whose margin lands inside (-0.1, 0). Every other action
+# here sits far outside that band (margins run from -2.0 to +11.4), which is
+# why epsilon provably could not flip anything before this action existed.
+#
+# RiskyForage is constructed so its margin is analytically predictable:
+#
+#   * Its threat vulnerability equals Idle's (0.35), and the Reputation threat
+#     penalty is applied uniformly to every action, so ALL threat-dependent
+#     terms cancel exactly between RiskyForage and the idle baseline.
+#   * What remains is a constant per-step delta from the idle row:
+#         d = RiskyForage_row - Idle_row = [-0.05, 0, 0, +0.0977, 0, 0]
+#   * Over a discounted episode both rollouts share the same discount sum
+#         D = sum_{k=0..episode_length-1} gamma^k   (= 21.432 at 24 steps, gamma 0.99)
+#     so  delta_n = d * D  and  delta_r = sum(d) * D, giving
+#         margin = D * (sum(d) + min(d)) = D * (y - 2x)
+#     with x = 0.05 (the Safety cost) and y = 0.0977 (the Inventory gain).
+#
+#   => margin = 21.432 * (0.0977 - 0.100) ~= -0.049
+#
+# That sits mid-band, so epsilon above ~0.05 admits it and epsilon below
+# rejects it. Semantically it reads as risky foraging: inventory gained, safety
+# spent, time lost.
+#
+# The margin is pinned by tests/test_minecraft_stub.py; if the episode length,
+# gamma, or the idle row ever change, that test fails and these numbers need
+# re-deriving rather than nudging.
 
 # How badly rising threat hurts each action's Safety payoff. Trading while
 # under attack is the most exposed thing you can do; spawning a golem is the
 # least.
+# RiskyForage shares Idle's 0.35 deliberately: matching the baseline's
+# vulnerability is what makes its margin threat-independent and analytically
+# exact. Do not "tune" it without re-deriving the margin above.
 _THREAT_VULNERABILITY = np.array(
-    [0.35, 0.20, 0.05, 0.30, 0.10, 0.60], dtype=np.float32
+    [0.35, 0.20, 0.05, 0.30, 0.10, 0.60, 0.35], dtype=np.float32
 )
 
 _NUM_OBJECTIVES = len(OBJECTIVE_NAMES)

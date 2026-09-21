@@ -152,3 +152,107 @@ def test_works_with_idle_policy():
 
     assert stats["baseline_motives"].shape == (NUM_OBJECTIVES,)
     assert np.isfinite(stats["baseline_payoff"])
+
+
+# --------------------------------------------------------------------------
+# The borderline candidate. These pin the numbers the epsilon-coupling tests
+# in test_bridge_e2e.py depend on.
+# --------------------------------------------------------------------------
+
+GAMMA = 0.99
+
+
+def _discounted_rollout(env, action, *, seed, gamma=GAMMA):
+    """Run one episode always taking `action`.
+
+    Mirrors IdlePolicy.run_baseline_episodes' discounting exactly
+    (baseline/idle_policy.py:35-56) so the results are comparable.
+    """
+    env.reset(seed=seed)
+    discount = 1.0
+    total_payoff = 0.0
+    motives = None
+
+    while True:
+        _, reward_vec, terminated, truncated, _ = env.step(action)
+        reward_vec = np.asarray(reward_vec, dtype=np.float32)
+        if motives is None:
+            motives = np.zeros_like(reward_vec)
+        total_payoff += discount * float(np.sum(reward_vec))
+        motives += discount * reward_vec
+        if terminated or truncated:
+            break
+        discount *= gamma
+
+    return float(total_payoff), np.asarray(motives, dtype=np.float32)
+
+
+def margin_for(action_name: str, *, seed: int = 42) -> float:
+    """Return the PDS margin `delta_r + min(delta_n)` for one action.
+
+    Noiseless, so the value is exact and reproducible.
+    """
+    from baseline.idle_policy import IdlePolicy
+    from baseline.improvement_calculator import ImprovementCalculator
+
+    env = MinecraftStubEnv(seed=seed, noise_scale=0.0)
+    baseline = IdlePolicy(env=env, idle_action=0, gamma=GAMMA).run_baseline_episodes(
+        num_episodes=2, seed=seed
+    )
+    payoff, motives = _discounted_rollout(
+        env, SKILL_NAMES.index(action_name), seed=seed
+    )
+    delta_r, delta_n = ImprovementCalculator(baseline).compute_improvements(
+        skill_payoff=payoff, skill_motives=motives
+    )
+    return float(delta_r) + float(np.min(delta_n))
+
+
+def test_riskyforage_is_appended_last():
+    """Positional indexing elsewhere assumes the original order is untouched.
+
+    test_zero_noise_is_fully_deterministic calls env.step(2) directly, so
+    inserting rather than appending would silently change what it exercises.
+    """
+    assert SKILL_NAMES[-1] == "RiskyForage"
+    assert SKILL_NAMES[:6] == (
+        "Idle",
+        "TorchCorridor",
+        "IronGolemSpawn",
+        "ArcherKite",
+        "SwingGateBarricade",
+        "DiscountChain",
+    )
+
+
+def test_riskyforage_margin_sits_inside_the_epsilon_band():
+    """The whole point of this action: epsilon must be able to flip it.
+
+    MetaMo drives epsilon over roughly [0, 0.1], so the margin has to land in
+    (-0.1, 0) for the budget to change the admission decision at all. If this
+    fails, re-derive the reward row from the comment in env/minecraft_stub.py
+    rather than nudging the numbers.
+    """
+    margin = margin_for("RiskyForage")
+    assert -0.06 < margin < -0.04, (
+        f"RiskyForage margin {margin:.6f} drifted out of the target band; "
+        "epsilon-coupling tests in test_bridge_e2e.py depend on it"
+    )
+
+
+def test_riskyforage_margin_is_threat_independent():
+    """Matching Idle's vulnerability makes the margin episode-length stable."""
+    short = margin_for("RiskyForage", seed=7)
+    same = margin_for("RiskyForage", seed=7)
+    assert short == pytest.approx(same)
+
+
+def test_other_candidates_stay_outside_the_epsilon_band():
+    """Documents why RiskyForage was needed: nothing else is flippable."""
+    for name in ("TorchCorridor", "IronGolemSpawn", "ArcherKite",
+                 "SwingGateBarricade", "DiscountChain"):
+        margin = margin_for(name)
+        assert not (-0.1 < margin < 0.0), (
+            f"{name} margin {margin:.4f} is now inside the epsilon band; "
+            "the e2e tests assume RiskyForage is the only flippable candidate"
+        )
