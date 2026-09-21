@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from utils.weight_set_store import WeightSet, WeightSetStore
 
@@ -76,3 +77,18 @@ def test_weight_set_store_save_load_round_trip(tmp_path: Path):
     original_support = store.get_support_values(np.array([0.1] * 8, dtype=np.float32))
     loaded_support = loaded.get_support_values(np.array([0.1] * 8, dtype=np.float32))
     assert np.allclose(original_support, loaded_support)
+
+
+@pytest.mark.parametrize(
+    "weight, message",
+    [
+        (np.array([0.5, 0.4], dtype=np.float32), "sum to 1"),
+        (np.array([1.1, -0.1], dtype=np.float32), "0 <= w_i <= 1"),
+        (np.array([1.0], dtype=np.float32), "shape"),
+    ],
+)
+def test_weight_set_store_rejects_non_simplex_observations(weight, message):
+    store = WeightSetStore(num_objectives=2)
+
+    with pytest.raises(ValueError, match=message):
+        store.observe_certified_weight(np.zeros(8, dtype=np.float32), weight)

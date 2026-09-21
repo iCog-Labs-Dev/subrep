@@ -46,6 +46,39 @@ def test_support_trainer_one_step_runs_and_returns_finite_loss():
     assert np.isfinite(loss)
 
 
+def test_support_training_updates_only_the_support_head():
+    torch.manual_seed(0)
+    model = MotiveDecompositionNetwork()
+    trainer = MDNSupportTrainer(model, _store_with_targets(), device="cpu")
+    support_before = {
+        name: parameter.detach().clone()
+        for name, parameter in model.support_head.named_parameters()
+    }
+    trunk_before = {
+        name: parameter.detach().clone()
+        for name, parameter in model.trunk.named_parameters()
+    }
+    distribution_before = {
+        name: parameter.detach().clone()
+        for name, parameter in model.distribution_head.named_parameters()
+    }
+
+    trainer.training_step()
+
+    assert any(
+        not torch.equal(support_before[name], parameter)
+        for name, parameter in model.support_head.named_parameters()
+    )
+    assert all(
+        torch.equal(trunk_before[name], parameter)
+        for name, parameter in model.trunk.named_parameters()
+    )
+    assert all(
+        torch.equal(distribution_before[name], parameter)
+        for name, parameter in model.distribution_head.named_parameters()
+    )
+
+
 def test_support_trainer_updates_support_predictions_toward_targets():
     torch.manual_seed(0)
     model = MotiveDecompositionNetwork()
@@ -72,6 +105,34 @@ def test_support_trainer_updates_support_predictions_toward_targets():
     after_loss = torch.nn.functional.mse_loss(after, target_values).item()
 
     assert after_loss < before_loss
+
+
+def test_support_trainer_fit_selects_by_separate_validation_store():
+    torch.manual_seed(0)
+    model = MotiveDecompositionNetwork()
+    validation_store = WeightSetStore(num_objectives=2)
+    validation_store.observe_certified_weight(
+        np.array([0.3] * 8, dtype=np.float32),
+        np.array([0.6, 0.4], dtype=np.float32),
+    )
+    trainer = MDNSupportTrainer(
+        model,
+        _store_with_targets(),
+        config=SupportTrainerConfig(
+            learning_rate=5e-3,
+            max_epochs=3,
+            early_stopping_patience=2,
+        ),
+        device="cpu",
+    )
+
+    metrics = trainer.fit(validation_store)
+
+    assert 1.0 <= metrics["epochs_completed"] <= 3.0
+    assert 0.0 <= metrics["best_epoch"] <= metrics["epochs_completed"]
+    assert np.isfinite(metrics["train_mse"])
+    assert np.isfinite(metrics["validation_mse"])
+    assert metrics["validation_feasibility_violation_rate"] == 0.0
 
 
 def test_support_trainer_checkpoint_round_trip(tmp_path: Path):

@@ -83,6 +83,10 @@ def serialize_candidate_records(
         "candidate_delta_n": np.asarray([candidate.delta_n for candidate in candidate_skills], dtype=np.float32),
         "candidate_accept_labels": np.asarray([candidate.is_certified for candidate in candidate_skills], dtype=np.bool_),
         "candidate_gate_types": np.asarray([candidate.gate_type for candidate in candidate_skills]),
+        "candidate_epsilons": np.asarray(
+            [np.nan if candidate.epsilon is None else candidate.epsilon for candidate in candidate_skills],
+            dtype=np.float32,
+        ),
         "candidate_admission_margins": np.asarray(
             [np.nan if candidate.admission_margin is None else candidate.admission_margin for candidate in candidate_skills],
             dtype=np.float32,
@@ -189,6 +193,26 @@ def validate_probability_aware_log(record: dict[str, Any]) -> None:
         raise ValueError("candidate_accept_labels length must match candidate_skill_ids")
     if not np.any(labels):
         raise ValueError("at least one candidate must be certified")
+
+    gate_types = np.asarray(
+        record.get("candidate_gate_types", np.asarray(["CDS"] * len(skill_ids)))
+    ).reshape(-1)
+    if gate_types.shape != (len(skill_ids),):
+        raise ValueError("candidate_gate_types length must match candidate_skill_ids")
+    normalized_gate_types = np.asarray(
+        [str(value).strip().upper() for value in gate_types]
+    )
+    if not np.all(np.isin(normalized_gate_types, ["CDS", "PDS"])):
+        raise ValueError("candidate_gate_types must contain only CDS or PDS")
+    if "candidate_epsilons" in record:
+        epsilons = np.asarray(record["candidate_epsilons"], dtype=np.float64).reshape(-1)
+        if epsilons.shape != (len(skill_ids),):
+            raise ValueError("candidate_epsilons length must match candidate_skill_ids")
+        pds_epsilons = epsilons[normalized_gate_types == "PDS"]
+        if not np.all(np.isfinite(pds_epsilons)) or np.any(pds_epsilons < 0.0):
+            raise ValueError("PDS candidate_epsilons must be finite and non-negative")
+    elif np.any(normalized_gate_types == "PDS"):
+        raise ValueError("PDS runtime logs must include candidate_epsilons")
 
     selected_index = int(np.asarray(record["selected_candidate_index"]).reshape(()).item())
     if selected_index < 0 or selected_index >= len(skill_ids):
