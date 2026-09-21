@@ -10,12 +10,43 @@ static config:
 
 | Quantity | Where it goes |
 |---|---|
-| `weights` (on the objective simplex) | `select_best_skill_entry(entries, weight)` — `library/skill_selector.py:28` |
-| `pds_epsilon` | `certify_skill(epsilon=…)` → `PDSGate(epsilon=…)` — `certification/pds_test.py:33` |
-| `cvar_tail_level` | `certify_skill(cvar_confidence=…)` → `CVaRGate(confidence=…)` — `certification/cvar_test.py:19` |
+| `weights` (on the objective simplex) | `score_skill_entry(entry, weight)` — `library/skill_selector.py:21` |
+| `pds_epsilon` | stamped onto `candidate.epsilon` → `PDSGate(epsilon=…)` — see [Two budgets, two routes](#two-budgets-two-routes) |
+| `cvar_tail_level` | `certify_candidate_skills(cvar_confidence=…)` → `CVaRGate(confidence=…)` — `certification/cvar_test.py:19` |
 
 The executed outcome feeds back through `stimulus.py` into MetaMo's appraisal
 comonad Ψ, closing the loop.
+
+## Two budgets, two routes
+
+The two risk budgets reach the gates by **different mechanisms**. This looks
+like accidental inconsistency and is not — do not "simplify" it away.
+
+`RuntimeCertificationPipeline.certify_candidate_skills` accepts
+`cvar_confidence` as a call parameter but has **no `epsilon` parameter**
+(`utils/mdn_runtime_pipeline.py:205-213`). It resolves the PDS budget per
+candidate instead, via `_candidate_epsilon` → `_effective_epsilon`, which reads
+`candidate.epsilon` and falls back to the static `config.pds_epsilon` when that
+is `None` (`utils/mdn_runtime_pipeline.py:301-309`).
+
+So:
+
+| Budget | Route |
+|---|---|
+| `cvar_tail_level` | call parameter — passed straight through to the gate |
+| `pds_epsilon` | **stamped onto each candidate record** before certification |
+
+`MetaMoController.certify` does the stamping in `_with_epsilon`
+(`bridge/controller.py`), using `dataclasses.replace` on the frozen
+`CandidateSkillRecord`. The helper is duck-typed: callers may pass lightweight
+stand-ins that are not `CandidateSkillRecord`, and those pass through
+untouched.
+
+**Why this matters.** Without the stamp, the governor's ε is computed every
+step, stored on `StepRecord`, printed by the demo — and silently ignored by the
+gate, which keeps using the static config value. The failure is invisible:
+every other signal still moves, so nothing looks wrong. `test_bridge_e2e.py`'s
+S1 is the regression guard.
 
 ## Layout
 
@@ -54,7 +85,7 @@ root-relative absolute imports (`core/state.py:6` does
 To pin it as a submodule:
 
 ```bash
-git submodule add https://github.com/kirubel-Nigussie/MetaMo-Python.git external/metamo
+git submodule add https://github.com/iCog-Labs-Dev/MetaMo-Python external/metamo
 git -C external/metamo checkout ceb108eba92ff2f2c7e0ce9bf2d073e78044669b
 ```
 
@@ -205,3 +236,43 @@ gate admits nearly everything, so it can overrule PDS rejections and ε stops
 being observable in the admitted count. The demo prints a PDS-only column
 alongside for exactly this reason. Train the MDN, or switch to `PDS` without
 `use_cvar`, before drawing conclusions about gate behaviour.
+
+Every assertion in `test_bridge_e2e.py` that concerns ε or abstention runs with
+`use_cvar=False` for this reason.
+
+---
+
+## The borderline candidate
+
+`env/minecraft_stub.py` defines a `RiskyForage` action that exists purely so ε
+has something to act on.
+
+The PDS gate admits when `Δr + min(Δn) ≥ −ε`, and MetaMo drives ε over roughly
+`[0, 0.1]`. So ε can only change an admission for a skill whose margin lands
+inside `(−0.1, 0)`. The original five actions have margins from −2.0 to +11.4 —
+all far outside that band, which means **ε provably could not flip any decision**
+and no test could demonstrate the budget coupling at all.
+
+`RiskyForage` is constructed with a **noiseless** margin of ≈ −0.05: ε above
+~0.05 admits it, ε below rejects it. Its reward row is derived analytically
+rather than tuned by hand — the full derivation is in the
+`BORDERLINE CANDIDATE` comment block in `env/minecraft_stub.py`, and the
+margin is pinned by
+`test_minecraft_stub.py::test_riskyforage_margin_sits_inside_the_epsilon_band`.
+
+### It only works with noise off
+
+The margin is ≈ −0.05, while the stub's default `noise_scale=0.02`, accumulated
+over a discounted episode across six objectives, perturbs it by a comparable or
+larger amount. With noise on, the margin wanders well outside the band — in the
+demo it lands near −0.104, so PDS rejects `RiskyForage` at *every* ε in
+`[0, 0.1]`.
+
+So any test that depends on ε flipping this candidate must build the env with
+`noise_scale=0.0`; `test_bridge_e2e.py` does. `demo/run_metamo_pipeline.py`
+uses the default noise, so its PDS-only column stays flat and the demo does
+**not** illustrate the ε coupling — S1 is where that behaviour is demonstrated.
+
+If the episode length, γ, or the idle reward row ever change, that test fails
+and the row must be **re-derived from the comment**, not nudged until the test
+passes.

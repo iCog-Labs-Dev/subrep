@@ -106,7 +106,7 @@ def ensure_metamo_on_path() -> Path:
             "Could not locate a MetaMo checkout. Searched:\n  "
             f"{searched}\n\n"
             "Fix by either:\n"
-            "  git submodule add https://github.com/kirubel-Nigussie/MetaMo-Python.git "
+            "  git submodule add https://github.com/iCog-Labs-Dev/MetaMo-Python "
             "external/metamo\n"
             "or by setting SUBREP_METAMO_PATH to an existing checkout."
         )
