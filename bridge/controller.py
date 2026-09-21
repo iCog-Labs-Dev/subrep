@@ -15,12 +15,30 @@ seeds before each certification pass and records the seed it used.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from .protocol import GovernorSignal, SkillOutcome
+
+
+def _with_epsilon(candidate: Any, epsilon: float) -> Any:
+    """Stamp this step's PDS budget onto a candidate record.
+
+    `RuntimeCertificationPipeline.certify_candidate_skills` has no `epsilon`
+    parameter -- it resolves the budget per candidate via
+    `_candidate_epsilon`, which reads `candidate.epsilon` and falls back to the
+    static `config.pds_epsilon` when that is None
+    (utils/mdn_runtime_pipeline.py:301-309). So the only way the governor's
+    per-step epsilon can reach the PDS gate is on the record itself.
+
+    Duck-typed on purpose: callers may pass lightweight stand-ins that are not
+    `CandidateSkillRecord`, and those are left untouched.
+    """
+    if is_dataclass(candidate) and any(f.name == "epsilon" for f in fields(candidate)):
+        return replace(candidate, epsilon=float(epsilon))
+    return candidate
 
 
 @dataclass
@@ -83,16 +101,27 @@ class MetaMoController:
     ) -> List[Any]:
         """Certify candidates under this step's budgets.
 
-        Both budgets are passed explicitly. `cvar_confidence` is the scalar
-        tail level; the MDN's Dirichlet concentration is fetched internally by
-        the pipeline and never travels through this call.
+        Both budgets reach the gates, by two different routes:
+
+        * `cvar_tail_level` is a call parameter -- the pipeline threads it
+          down to `CVaRGate(confidence=...)`.
+        * `pds_epsilon` has no call parameter, so it is stamped onto each
+          candidate record instead; see `_with_epsilon`.
+
+        The MDN's Dirichlet concentration is fetched internally by the
+        pipeline and never travels through this call.
         """
         effective_seed = self.seed if seed is None else int(seed)
         _seed_torch(effective_seed)
 
+        budgeted = [
+            _with_epsilon(candidate, signal.pds_epsilon)
+            for candidate in candidate_skills
+        ]
+
         return self.pipeline.certify_candidate_skills(
             context=np.asarray(context),
-            candidate_skills=list(candidate_skills),
+            candidate_skills=budgeted,
             baseline_stats=baseline_stats,
             weights_used=signal.weights,
             cvar_confidence=signal.cvar_tail_level,
