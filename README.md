@@ -220,6 +220,39 @@ The report includes:
   empty `W_x` algebraically impossible, so any nonzero value signals a code regression rather than a
   tuning problem.
 
+### Full Certification Audit
+
+Beyond the summary counts, the report carries **one audit entry per evaluated candidate**, so every
+admission and rejection can be inspected individually rather than through a handful of examples:
+
+- `audit_entries`: one record per candidate, each containing the skill ID, candidate policy, gate
+  type, admitted/rejected, `delta_r`, the complete `delta_n` vector, weight region type, support
+  values and support feasibility for `MDN_WX`, epsilon, admission margin, rejection category and
+  reason, baseline policy, environment, seed, and episode length,
+- `rejection_categories`: rejections grouped by cause — `GATE_FAILED`,
+  `DUPLICATE_SKILL_ID`, `LIBRARY_REVERIFICATION_FAILED`, `INFEASIBLE_SUPPORT` — rather than by
+  message text, so one cause counts once,
+- `by_policy` and `by_weight_region`: attempted/admitted/rejected/CDS/PDS totals per candidate
+  policy and per weight region.
+
+Each entry records the **exact inequality** the gates compared, with both sides exposed:
+
+```text
+CDS:  delta_r + worst_case >= 0
+PDS:  delta_r + worst_case >= -epsilon
+
+worst_case = min(delta_n)                    # FULL_SIMPLEX
+           = min_w (w . delta_n) over W_x    # MDN_WX, via the exact greedy solver
+```
+
+Both gate evaluations are stored for every candidate, admitted or rejected, so the report shows
+which gates were tried and how each fared — not only the gate that happened to admit. Vectors are
+rendered at their full length, so records stay readable at any objective count.
+
+The Markdown report adds matching sections: `Per-Candidate Audit` (with an `MDN_WX Support Geometry`
+sub-table when contextual decisions are present), `Summary by Candidate Policy`,
+`Summary by Weight Region`, and `Rejection Categories`.
+
 A representative mixed-candidate run produces both accepted and
 rejected skills:
 
@@ -316,6 +349,28 @@ python -m generator.evaluate_mdn_candidate_sets \
 ```
 
 The evaluator reports lift versus PPO/random baselines, balanced top-1 accuracy, regret, gate F1, Q/motive error, per-objective Q diagnostics, and bootstrap confidence intervals.
+
+## Multi-Objective Benchmark
+
+SubRep includes a lightweight synthetic benchmark for validating the
+certification chain beyond the original two-objective LunarLander setup. It
+checks CDS/PDS admission, `SkillLibrary.query_admissible()`, `MDN_WX` support
+regions, reuse under motive shifts, negative-transfer cases, query timing, and
+simple baselines for `M = 3, 4, 5+`.
+
+```bash
+python -m demo.run_multi_objective_benchmark \
+  --objectives 3 4 5 \
+  --candidates 48 \
+  --seeds 11 23 37 \
+  --output demo/artifacts/multi_objective_benchmark.json \
+  --markdown-output demo/artifacts/multi_objective_benchmark.md
+```
+
+Outputs:
+
+- `demo/artifacts/multi_objective_benchmark.json`
+- `demo/artifacts/multi_objective_benchmark.md`
 
 ## Project Structure
 

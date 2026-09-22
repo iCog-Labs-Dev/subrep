@@ -60,8 +60,27 @@ class WeightSetStore:
             raise ValueError("context must contain only finite values")
         return tuple(np.round(context, decimals=4).tolist())
 
+    def context_key(self, context: np.ndarray) -> tuple[float, ...]:
+        """Return the canonical rounded key used to group one context."""
+        return self._context_key(context)
+
     def observe_certified_weight(self, context: np.ndarray, weight_vector: np.ndarray) -> None:
         key = self._context_key(context)
+        weight_vector = np.asarray(weight_vector, dtype=np.float32).reshape(-1)
+        if weight_vector.shape != (self.num_objectives,):
+            raise ValueError(
+                f"weight_vector must have shape ({self.num_objectives},), got {weight_vector.shape}"
+            )
+        if not np.all(np.isfinite(weight_vector)):
+            raise ValueError("weight_vector must contain only finite values")
+        if np.any(weight_vector < 0.0) or np.any(weight_vector > 1.0):
+            raise ValueError(
+                f"weight_vector must satisfy 0 <= w_i <= 1, got {weight_vector.tolist()}"
+            )
+        if not np.isclose(float(np.sum(weight_vector)), 1.0, atol=1e-5, rtol=0.0):
+            raise ValueError(
+                f"weight_vector must sum to 1, got sum={float(np.sum(weight_vector)):.6f}"
+            )
         if key not in self._store:
             self._store[key] = WeightSet()
         self._store[key].add_vertex(weight_vector)
@@ -83,6 +102,17 @@ class WeightSetStore:
             support_values = weight_set.get_support_values(self._query_directions)
             targets.append((context, support_values))
         return targets
+
+    def get_all_context_vertices(self) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Return copied contexts and their observed weight vertices."""
+        observations: list[tuple[np.ndarray, np.ndarray]] = []
+        for key in sorted(self._store):
+            vertices = self._store[key].get_vertices_array()
+            if vertices is not None:
+                observations.append(
+                    (np.asarray(key, dtype=np.float32), vertices.astype(np.float32, copy=True))
+                )
+        return observations
 
     def context_count(self) -> int:
         return len(self._store)
@@ -111,8 +141,9 @@ class WeightSetStore:
         store = cls(num_objectives=int(data["num_objectives"]))
         for key_str, vertices_list in data["contexts"].items():
             key = tuple(float(value) for value in key_str.split(",") if value != "")
-            weight_set = WeightSet()
             for vertex in vertices_list:
-                weight_set.add_vertex(np.asarray(vertex, dtype=np.float32))
-            store._store[key] = weight_set
+                store.observe_certified_weight(
+                    np.asarray(key, dtype=np.float32),
+                    np.asarray(vertex, dtype=np.float32),
+                )
         return store

@@ -100,6 +100,66 @@ class TestEndToEndPipeline:
         assert "rejected" in content
         assert "admission_rate" in content
 
+    def test_admitted_audit_entries_match_their_certificates(self):
+        """Admitted audit entries must mirror the certificate that was stored.
+
+        The report reads its audit context from the certificate rather than
+        re-asserting literals, so the two cannot drift. If the pipeline ever
+        certifies under a different weight region, the report follows instead of
+        continuing to claim FULL_SIMPLEX.
+        """
+        import json
+
+        run_pipeline()
+
+        report = json.loads(
+            Path("demo/artifacts/admission_report.json").read_text(encoding="utf-8")
+        )
+        library = json.loads(
+            Path("data/library.json").read_text(encoding="utf-8")
+        )
+        skills = library.get("skills", {})
+
+        admitted = [e for e in report["audit_entries"] if e["admitted"]]
+        assert admitted, "expected at least one admitted candidate"
+
+        for entry in admitted:
+            certificate = skills[entry["skill_id"]]["certificate"]
+
+            assert entry["weight_region_type"] == certificate["weight_region_type"]
+            assert entry["baseline_id"] == certificate["baseline_id"]
+            assert entry["environment"] == certificate["environment"]
+            assert entry["seed"] == certificate["seed"]
+            assert entry["episode_length"] == certificate["episode_length"]
+            # Support geometry is carried through verbatim, including when the
+            # certificate has none because it was certified on the full simplex.
+            assert entry["support_values"] == certificate["wx_support_values"]
+
+    def test_rejected_audit_entries_carry_evaluation_context(self):
+        """Rejected candidates have no certificate, so context comes from evaluation.
+
+        This is the path that cannot fall back on a stored certificate, so it
+        must be captured while the candidate is being evaluated.
+        """
+        import json
+
+        run_pipeline()
+
+        report = json.loads(
+            Path("demo/artifacts/admission_report.json").read_text(encoding="utf-8")
+        )
+        rejected = [e for e in report["audit_entries"] if not e["admitted"]]
+        assert rejected, "expected at least one rejected candidate"
+
+        for entry in rejected:
+            assert entry["baseline_id"] is not None
+            assert entry["environment"] is not None
+            assert entry["seed"] is not None
+            assert entry["episode_length"] is not None
+            # Both gates are still recorded even though no gate admitted.
+            assert {g["gate"] for g in entry["gate_evaluations"]} == {"CDS", "PDS"}
+            assert entry["rejection_category"] is not None
+
     def test_cert_store_matches_library_size(self):
         """Assert cert_store.count() == library_size from stats."""
         stats = run_pipeline()
