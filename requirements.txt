@@ -9,3 +9,4 @@ swig
 gymnasium[box2d]
 matplotlib>=3.7.0
 streamlit
+websockets>=16.0,<17.0
