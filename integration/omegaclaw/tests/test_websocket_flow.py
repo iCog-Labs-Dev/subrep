@@ -72,7 +72,13 @@ def test_connection_timeout_is_recorded_as_backend_error(tmp_path):
 def _simulated_omega_client(url: str, token: str) -> None:
     from websockets.sync.client import connect
 
-    with connect(url, additional_headers={"Authorization": f"Bearer {token}"}) as websocket:
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        connection = connect(url, additional_headers=headers)
+    except TypeError:
+        connection = connect(url, extra_headers=headers)
+
+    with connection as websocket:
         websocket.send(json.dumps({"type": "resume", "last_seen_seq": None}))
         request_frame = json.loads(websocket.recv(timeout=5))
         assert request_frame["type"] == "user_message"
