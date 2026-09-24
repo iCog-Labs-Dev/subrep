@@ -1,6 +1,7 @@
 """Translate an executed-skill outcome into MetaMo appraisal inputs.
 
-This closes the loop described in the paper: SubRep consumes MetaMo's weights
+This closes the loop described in the reference specification: SubRep consumes
+MetaMo's weights
 and budgets, executes an option, and the outcome feeds back into MetaMo's
 appraisal comonad Psi.
 

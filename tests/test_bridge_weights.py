@@ -1,10 +1,13 @@
 """Tests for the w_meta 8-goal -> 6-objective projection.
 
-Note on scope: the paper reports three weight vectors (doc:530, 539, 552) but
+Note on scope: the reference specification reports three weight vectors but
 never states the goal vector G at those moments, so they cannot be reproduced
 numerically without inventing data. These tests therefore assert what the
-paper actually determines -- ordering and direction of change -- plus the
-structural invariants the gates rely on.
+specification actually determines -- ordering and direction of change -- plus
+the structural invariants the gates rely on.
+
+Reference specification: SubRep-Minecraft-AIRIS_v2
+https://drive.google.com/file/d/1Rpvusi_nIEIheElX7kUKQY88Dw0fazgS/view
 """
 
 from __future__ import annotations
@@ -80,7 +83,7 @@ def test_dimension_generic():
 
 
 def test_securing_raises_the_safety_weight():
-    """doc:528 -- 'securing up' accompanies Safety becoming dominant."""
+    """Specified: 'securing up' accompanies Safety becoming dominant."""
     calm = w_meta(balanced_goals(), NEUTRAL_M)
 
     tense_m = NEUTRAL_M.copy()
@@ -92,7 +95,7 @@ def test_securing_raises_the_safety_weight():
 
 
 def test_threat_shifts_weight_away_from_reputation():
-    """Under threat, trading matters less than surviving (doc:528-534)."""
+    """Under threat, trading matters less than surviving (specified)."""
     calm = w_meta(balanced_goals(), NEUTRAL_M)
 
     tense_m = NEUTRAL_M.copy()

@@ -1,8 +1,8 @@
 """A deterministic 6-objective Minecraft-shaped stub environment.
 
 This is NOT Minecraft. It is a stand-in that exercises the full m=6
-certification loop end to end while the real Minecraft/AIRIS stack does not
-exist in this repository. Pure numpy: no network, no game client, no mod.
+certification loop end to end while no real environment exists in this
+repository. Pure numpy: no network, no game client, no mod.
 
 It matches the `SubRepEnv` contract (env/lunar_lander_wrapper.py:12-117) that
 `IdlePolicy` and the certification pipeline already expect:
@@ -37,7 +37,7 @@ OBJECTIVE_NAMES: Tuple[str, ...] = (
     "Infrastructure",
 )
 
-# Action archetypes, named after the paper's execution trace (doc:520-556).
+# Action archetypes, named after the reference specification's execution trace.
 SKILL_NAMES: Tuple[str, ...] = (
     "Idle",
     "TorchCorridor",

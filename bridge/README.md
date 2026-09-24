@@ -100,7 +100,9 @@ never touched.
 
 **This is the single most important thing in this package.**
 
-The paper (`doc/SubRep-Minecraft-AIRIS_v2.txt:494-495`) specifies:
+The reference specification
+([SubRep-Minecraft-AIRIS_v2](https://drive.google.com/file/d/1Rpvusi_nIEIheElX7kUKQY88Dw0fazgS/view))
+gives:
 
 ```
 ε = ε₀ − a₁·securing + a₃·approach
@@ -125,7 +127,7 @@ modulator, which cannot be intended.
 ### Resolution
 
 1. **`confidence = α_t` numerically — no remapping.** The conventions already
-   agree: the paper states α = 0.1 (doc:544) and ε₀ = 0.10 (doc:534), and
+   agree: the specification states α = 0.1 and ε₀ = 0.10, and
    SubRep defaults to `cvar_confidence = 0.1` / `pds_epsilon = 0.1`
    (`utils/mdn_runtime_pipeline.py:97-99`). A `1 − α_t` remap would send
    0.1 → 0.9 — the mean of the worst 90%, essentially the plain expectation —
@@ -152,13 +154,13 @@ would mean ε₀/α₀ did not hold at the neutral state.
 
 `ε₀ = α₀ = 0.1`, `a₁ = 0.4`, `a₃ = 0.2`, `b₁ = 0.4`, `b₂ = 0.2`, `b₃ = 0.2`.
 
-`a₁ = 0.4` is **pinned by the paper's own trace** and reproduces it exactly at
-neutral approach:
+`a₁ = 0.4` is **pinned by the specification's own trace** and reproduces its
+reported values exactly at neutral approach:
 
-| Modulator | Formula | Paper |
+| Modulator | Formula | Specified |
 |---|---|---|
-| securing 0.55 | `0.1 − 0.4(0.05) = 0.08` | ε = 0.08 (doc:534) |
-| securing 0.45 | `0.1 − 0.4(−0.05) = 0.12` | ε = 0.12 (doc:550) |
+| securing 0.55 | `0.1 − 0.4(0.05) = 0.08` | ε = 0.08 |
+| securing 0.45 | `0.1 − 0.4(−0.05) = 0.12` | ε = 0.12 |
 
 The sigmoid compresses toward 0.5, so realistic securing spans roughly
 [0.2, 0.85] — usable range ≈ ±0.35, not ±0.5.
@@ -197,7 +199,7 @@ pass and records the seed on every `StepRecord`.
 
 ## Calibration status — read before trusting the numbers
 
-The paper reports three weight vectors (doc:530, 539, 552):
+The reference specification reports three weight vectors:
 
 ```
 w̄0 (dusk, patrol risk)  = [0.35, 0.15, 0.20, 0.20, 0.05, 0.05]

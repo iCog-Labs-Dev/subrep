@@ -494,7 +494,7 @@ semantics. Neither is a defect in the coupling — see §10 and §12.
 
 > Results from the stub environment are **controlled test evidence** that the
 > coupling behaves as designed. They are not real-environment validation — no
-> Minecraft, no AIRIS, no live agent is involved.
+> real environment and no live agent are involved.
 
 ---
 

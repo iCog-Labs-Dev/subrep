@@ -49,7 +49,7 @@ def test_loader_finds_a_plausible_checkout():
 
 
 def test_initial_signal_matches_published_baselines(governor):
-    """At the neutral modulator start, eps and alpha are the paper's values."""
+    """At the neutral modulator start, eps and alpha are the specified values."""
     signal = governor.signal()
     assert signal.pds_epsilon == pytest.approx(0.10, abs=1e-9)
     assert signal.cvar_tail_level == pytest.approx(0.10, abs=1e-9)

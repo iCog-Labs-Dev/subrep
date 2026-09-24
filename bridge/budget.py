@@ -7,7 +7,9 @@ MetaMo types -- so this module is fully testable without a MetaMo checkout.
 ------------------------------------------------------------------------------
 THE SIGN CORRECTION
 ------------------------------------------------------------------------------
-The paper (doc/SubRep-Minecraft-AIRIS_v2.txt:494-495) specifies:
+The reference specification, SubRep-Minecraft-AIRIS_v2
+(https://drive.google.com/file/d/1Rpvusi_nIEIheElX7kUKQY88Dw0fazgS/view),
+gives:
 
     eps   = eps0 - a1*securing + a3*approach
     alpha = a0   + b1*securing + b2*threshold - b3*approach
@@ -23,13 +25,13 @@ so the monotonicity is:
 
     alpha UP -> shallower tail -> CVaR UP -> easier to admit -> LESS conservative
 
-Under the paper's formulas as written, rising `securing` therefore TIGHTENS the
-PDS gate (eps down) while LOOSENING the CVaR gate (alpha up). The two gates
+Under the specified formulas as written, rising `securing` therefore TIGHTENS
+the PDS gate (eps down) while LOOSENING the CVaR gate (alpha up). The two gates
 move against each other under the same modulator, which cannot be intended.
 
 Resolution, ratified with the project owner:
   * Keep `confidence = alpha_t` NUMERICALLY. The conventions already agree --
-    the paper states alpha = 0.1 (doc:544) and eps0 = 0.10 (doc:534), and
+    the specification states alpha = 0.1 and eps0 = 0.10, and
     SubRep defaults to cvar_confidence = 0.1 / pds_epsilon = 0.1
     (utils/mdn_runtime_pipeline.py:97-99). Remapping to `1 - alpha_t` would
     send 0.1 -> 0.9, averaging the worst 90% (essentially the plain mean) and
@@ -59,15 +61,15 @@ CVAR_LEVEL_UPPER_BOUND = 1.0
 class BudgetCoefficients:
     """Coupling gains from modulators to risk budgets.
 
-    Defaults are anchored to the paper:
+    Defaults are anchored to the reference specification:
 
-    * `epsilon_0 = 0.1` matches both the paper's stated baseline (doc:534) and
-      SubRep's `RuntimePipelineConfig.pds_epsilon` default.
-    * `a1_securing = 0.4` is pinned by the paper's own execution trace and
-      reproduces it exactly at neutral approach:
-          securing 0.55 -> 0.1 - 0.4*(0.05) = 0.08   (doc:534)
-          securing 0.45 -> 0.1 - 0.4*(-0.05) = 0.12  (doc:550)
-    * `alpha_0 = 0.1` matches the paper's stated alpha (doc:544) and SubRep's
+    * `epsilon_0 = 0.1` matches both the specified baseline and SubRep's
+      `RuntimePipelineConfig.pds_epsilon` default.
+    * `a1_securing = 0.4` is pinned by the specification's own execution trace
+      and reproduces its reported values exactly at neutral approach:
+          securing 0.55 -> 0.1 - 0.4*(0.05) = 0.08   (specified)
+          securing 0.45 -> 0.1 - 0.4*(-0.05) = 0.12  (specified)
+    * `alpha_0 = 0.1` matches the specified alpha and SubRep's
       `cvar_confidence` default.
     * b-coefficients are positive here and applied with CORRECTED signs in
       `compute_cvar_tail_level` -- see the module docstring.

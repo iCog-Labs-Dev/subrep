@@ -1,6 +1,7 @@
 """End-to-end MetaMo -> SubRep demo on the 6-objective Minecraft stub.
 
-Shows the coupling the paper describes (§4.3): MetaMo emits per-step selection
+Shows the coupling the reference specification describes (§4.3): MetaMo emits
+per-step selection
 weights and risk budgets, SubRep certifies and selects under them, and the
 executed outcome feeds back into MetaMo's appraisal.
 
@@ -10,7 +11,7 @@ Run:
 
 What to watch:
   * `eps` and `alpha` BOTH tighten as `securing` rises. That is the corrected
-    sign convention -- under the paper's formulas as written they would move in
+    sign convention -- under the specified formulas as written they would move in
     opposite directions. See bridge/budget.py for the full argument.
   * The Safety weight climbs as threat rises and relaxes afterwards.
   * Two runs at the same seed produce identical output, which the unseeded

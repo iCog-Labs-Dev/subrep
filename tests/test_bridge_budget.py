@@ -1,10 +1,14 @@
 """Regression tests for the MetaMo -> SubRep risk-budget coupling.
 
 The direction tests below are the guard against the defect this integration
-exists to fix. The paper's alpha formula (doc:495) has signs that, against
-SubRep's lower-tail CVaR (certification/cvar_test.py:54-58), make the CVaR
-gate LOOSEN as `securing` rises while the PDS gate TIGHTENS. If anyone ever
-"restores" the paper's signs, `test_securing_tightens_both_gates` fails.
+exists to fix. The alpha formula in the reference specification has signs
+that, against SubRep's lower-tail CVaR (certification/cvar_test.py:54-58),
+make the CVaR gate LOOSEN as `securing` rises while the PDS gate TIGHTENS. If
+anyone ever "restores" the specified signs,
+`test_securing_tightens_both_gates` fails.
+
+Reference specification: SubRep-Minecraft-AIRIS_v2
+https://drive.google.com/file/d/1Rpvusi_nIEIheElX7kUKQY88Dw0fazgS/view
 """
 
 from __future__ import annotations
@@ -78,10 +82,10 @@ def test_approach_loosens_both_gates():
 
 
 def test_neutral_state_reproduces_published_baselines():
-    """At the neutral modulator point both budgets sit at the paper's values.
+    """At the neutral modulator point both budgets sit at the specified values.
 
-    eps0 = 0.10 (doc:534) and alpha = 0.1 (doc:544), which also match SubRep's
-    own defaults (utils/mdn_runtime_pipeline.py:97-99).
+    eps0 = 0.10 and alpha = 0.1, which also match SubRep's own defaults
+    (utils/mdn_runtime_pipeline.py:97-99).
     """
     epsilon, tail_level = compute_budgets(
         securing=NEUTRAL, threshold=NEUTRAL, approach=NEUTRAL
@@ -93,8 +97,8 @@ def test_neutral_state_reproduces_published_baselines():
 @pytest.mark.parametrize(
     "securing,expected_epsilon",
     [
-        (0.55, 0.08),  # doc:534 -- "eps = 0.08 (from baseline 0.10)"
-        (0.45, 0.12),  # doc:550 -- "eps = 0.12 as securing decreases"
+        (0.55, 0.08),  # specified: "eps = 0.08 (from baseline 0.10)"
+        (0.45, 0.12),  # specified: "eps = 0.12 as securing decreases"
     ],
 )
 def test_paper_epsilon_trace(securing, expected_epsilon):

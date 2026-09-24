@@ -21,8 +21,8 @@ EVIDENCE CAVEAT
 ------------------------------------------------------------------------------
 Everything here runs against `MinecraftStubEnv`, a deterministic numpy
 stand-in. These are CONTROLLED TEST OUTCOMES demonstrating that the coupling
-behaves as designed. They are NOT real-environment validation -- no Minecraft,
-no AIRIS, no live agent is involved.
+behaves as designed. They are NOT real-environment validation -- no real
+environment and no live agent are involved.
 
 ------------------------------------------------------------------------------
 THREE TRAPS THIS FILE HAS TO AVOID

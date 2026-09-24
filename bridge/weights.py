@@ -18,7 +18,9 @@ forbids. So the projection lives here instead.
 ------------------------------------------------------------------------------
 CALIBRATION STATUS -- READ BEFORE TRUSTING THE NUMBERS
 ------------------------------------------------------------------------------
-The paper reports three weight vectors (doc:530, 539, 552):
+The reference specification, SubRep-Minecraft-AIRIS_v2
+(https://drive.google.com/file/d/1Rpvusi_nIEIheElX7kUKQY88Dw0fazgS/view),
+reports three weight vectors:
 
     w0 (dusk, patrol risk)  = [0.35, 0.15, 0.20, 0.20, 0.05, 0.05]
     w1 (patrol appears)     = [0.38, 0.17, 0.18, 0.17, 0.05, 0.05]
