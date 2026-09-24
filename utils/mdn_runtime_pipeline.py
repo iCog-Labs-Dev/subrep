@@ -140,11 +140,16 @@ class RuntimeCertificationPipeline:
         baseline_stats: dict[str, Any],
         weights_used: Optional[np.ndarray] = None,
         epsilon: Optional[float] = None,
+        cvar_confidence: Optional[float] = None,
     ) -> CertificationResult:
         """Run the full certification pipeline for a single skill.
 
         Returns a CertificationResult with is_certified=True if the skill passes
         gate tests (or was already certified).
+
+        `epsilon` and `cvar_confidence` allow a caller (e.g. a motivational
+        governor) to supply per-step risk budgets. Both default to None, which
+        falls back to the values on `self.config`.
         """
         context_key = self.weight_store._context_key(context)
         permanence_key = (context_key, skill_id)
@@ -166,6 +171,7 @@ class RuntimeCertificationPipeline:
             context,
             weight_set,
             epsilon=effective_epsilon,
+            cvar_confidence=cvar_confidence,
         )
         audit_fields = self._build_audit_fields(context, weight_set)
 
@@ -185,6 +191,7 @@ class RuntimeCertificationPipeline:
                 context,
                 weight_set,
                 epsilon=effective_epsilon,
+                cvar_confidence=cvar_confidence,
             ),
             delta_r=float(delta_r),
             delta_n=tuple(float(v) for v in delta_n),
@@ -202,6 +209,7 @@ class RuntimeCertificationPipeline:
         candidate_skills: list[CandidateSkillRecord],
         baseline_stats: dict[str, Any],
         weights_used: Optional[np.ndarray] = None,
+        cvar_confidence: Optional[float] = None,
     ) -> list[CandidateSkillRecord]:
         """Certify a batch of candidate skills and return updated records.
 
@@ -242,6 +250,7 @@ class RuntimeCertificationPipeline:
                 context,
                 weight_set,
                 epsilon=effective_epsilon,
+                cvar_confidence=cvar_confidence,
             )
             audit_fields = self._build_audit_fields(
                 context,
@@ -262,6 +271,7 @@ class RuntimeCertificationPipeline:
                         context,
                         weight_set,
                         epsilon=effective_epsilon,
+                        cvar_confidence=cvar_confidence,
                     ),
                     delta_r=candidate.delta_r,
                     delta_n=candidate.delta_n,
@@ -307,6 +317,18 @@ class RuntimeCertificationPipeline:
         if self.config.gate_type.upper() == "PDS":
             return self.config.pds_epsilon if epsilon is None else float(epsilon)
         return 0.0
+
+    def _effective_cvar_confidence(self, cvar_confidence: float | None) -> float:
+        """Resolve the CVaR tail level for this call.
+
+        Mirrors `_effective_epsilon`: a per-call value wins, otherwise the
+        configured default applies. This is the scalar tail-mass argument to
+        `CVaRGate(confidence=...)`, NOT the MDN's Dirichlet concentration
+        vector `mdn_alpha`, which is a separate positive array of length m.
+        """
+        if cvar_confidence is None:
+            return self.config.cvar_confidence
+        return float(cvar_confidence)
 
     def _observe_certified_weight(self, context: np.ndarray, weights_used: np.ndarray) -> None:
         self.weight_store.observe_certified_weight(context, weights_used)
@@ -371,9 +393,11 @@ class RuntimeCertificationPipeline:
         weight_set: Optional[WeightSet],
         *,
         epsilon: float | None = None,
+        cvar_confidence: float | None = None,
     ) -> bool:
         """Run configured gate tests against W_x."""
         gate_type = self.config.gate_type.upper()
+        effective_confidence = self._effective_cvar_confidence(cvar_confidence)
 
         if gate_type == "CDS":
             gate = CDSGate()
@@ -386,7 +410,7 @@ class RuntimeCertificationPipeline:
                 context_tensor = __import__("torch").tensor(context, dtype=__import__("torch").float32, device=self.model.device if hasattr(self.model, "device") else "cpu")
                 alpha, _ = self.model.forward_inference(context_tensor)
             alpha_np = alpha.detach().cpu().numpy()
-            gate = CVaRGate(confidence=self.config.cvar_confidence, n_samples=self.config.cvar_samples)
+            gate = CVaRGate(confidence=effective_confidence, n_samples=self.config.cvar_samples)
             result = gate.admit(delta_r, delta_n, mdn_alpha=alpha_np)
         else:
             raise ValueError(f"Unknown gate_type: {gate_type}")
@@ -396,7 +420,7 @@ class RuntimeCertificationPipeline:
                 context_tensor = __import__("torch").tensor(context, dtype=__import__("torch").float32, device=self.model.device if hasattr(self.model, "device") else "cpu")
                 alpha, _ = self.model.forward_inference(context_tensor)
             alpha_np = alpha.detach().cpu().numpy()
-            cvar_gate = CVaRGate(confidence=self.config.cvar_confidence, n_samples=self.config.cvar_samples)
+            cvar_gate = CVaRGate(confidence=effective_confidence, n_samples=self.config.cvar_samples)
             cvar_result = cvar_gate.admit(delta_r, delta_n, mdn_alpha=alpha_np)
 
             if self.config.require_cds_or_cvar:
@@ -458,6 +482,7 @@ class RuntimeCertificationPipeline:
         weight_set: Optional[WeightSet],
         *,
         epsilon: float | None = None,
+        cvar_confidence: float | None = None,
     ) -> float:
         gate_type = self.config.gate_type.upper()
 
@@ -481,7 +506,7 @@ class RuntimeCertificationPipeline:
                 alpha, _ = self.model.forward_inference(context_tensor)
             alpha_np = alpha.detach().cpu().numpy()
             return CVaRGate(
-                confidence=self.config.cvar_confidence,
+                confidence=self._effective_cvar_confidence(cvar_confidence),
                 n_samples=self.config.cvar_samples,
             ).get_cvar(delta_r, delta_n, mdn_alpha=alpha_np)
 
