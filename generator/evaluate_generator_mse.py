@@ -8,7 +8,7 @@ Usage:
     python -m generator.evaluate_generator_mse \
       --model-path models/generator.pt \
       --data-dirs data/raw \
-      --seed 42
+      --split-manifest data/generator_split_manifest.json
 """
 import argparse
 import os
@@ -19,17 +19,16 @@ from torch.utils.data import DataLoader
 
 from generator.skill_generator import SkillGenerator
 from generator.train_generator import SkillDataset, InMemorySkillDataset
-from generator.dataset_split import split_dataset
+from generator.dataset_split import load_split_manifest, apply_split_manifest, DEFAULT_MANIFEST_PATH
 
 
-def evaluate_dataset(
-    model: SkillGenerator,
-    data_dir: str,
-    seed: int,
-    train_frac: float,
-    val_frac: float,
-    test_frac: float,
-) -> None:
+def evaluate_dataset(model: SkillGenerator, data_dir: str, manifest: dict) -> None:
+    """
+    Evaluate on the held-out TEST group only, identified by looking up each
+    file's label in the manifest train_generator.py already saved to disk --
+    never by recomputing a split from --seed/--frac flags, which could
+    silently drift out of sync with whatever training actually used.
+    """
     print(f"Loading dataset from: {data_dir}/ ...")
     if not os.path.exists(data_dir):
         print("  -> Directory not found, skipping.")
@@ -41,16 +40,10 @@ def evaluate_dataset(
         print("  -> No .npz files found, skipping.")
         return
 
-    split = split_dataset(
-        full_dataset.data,
-        train_frac=train_frac,
-        val_frac=val_frac,
-        test_frac=test_frac,
-        seed=seed,
-    )
+    split = apply_split_manifest(full_dataset.files, full_dataset.data, manifest)
     test_dataset = InMemorySkillDataset(split.test)
     print(f"  -> Using {len(test_dataset)} held-out TEST records "
-          f"(of {len(full_dataset)} total; train/val were excluded).")
+          f"(of {len(full_dataset)} total; train/val excluded per saved manifest).")
 
     loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
 
@@ -81,11 +74,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate SkillGenerator MSE on held-out test data.")
     parser.add_argument("--model-path", type=str, default="models/generator.pt")
     parser.add_argument("--data-dirs", type=str, nargs="+", default=["data/raw", "data/raw_mixed"])
-    parser.add_argument("--seed", type=int, default=42,
-                         help="Must match the --seed used in train_generator.py")
-    parser.add_argument("--train-frac", type=float, default=0.75)
-    parser.add_argument("--val-frac", type=float, default=0.125)
-    parser.add_argument("--test-frac", type=float, default=0.125)
+    parser.add_argument("--split-manifest", type=str, default=DEFAULT_MANIFEST_PATH)
     args = parser.parse_args()
 
     print("=" * 60)
@@ -97,21 +86,22 @@ def main() -> None:
         print("Run 'python -m generator.train_generator' first.")
         return
 
+    try:
+        manifest = load_split_manifest(args.split_manifest)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return
+
     model = SkillGenerator(input_dim=8, hidden_dim=64, motive_dim=2)
     model.load(args.model_path)
     model.eval()
     print(f"Loaded model from {args.model_path}")
+    print(f"Loaded split manifest from {args.split_manifest} "
+          f"(seed={manifest['seed']}, test_frac={manifest['test_frac']})")
     print("-" * 40)
 
     for data_dir in args.data_dirs:
-        evaluate_dataset(
-            model,
-            data_dir,
-            seed=args.seed,
-            train_frac=args.train_frac,
-            val_frac=args.val_frac,
-            test_frac=args.test_frac,
-        )
+        evaluate_dataset(model, data_dir, manifest)
 
 
 if __name__ == "__main__":

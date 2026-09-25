@@ -134,8 +134,8 @@ def build_report(
     for skill_id, bucket in per_skill.items():
         n = bucket["n"]
         per_skill_summary[skill_id] = {
-            "n_contexts": n,
-            "success_rate": bucket["n_admitted"] / n,               # candidate skill success rate
+            "n_contexts": n,        
+             "success_rate": bucket["n_admitted"] / n,        # candidate skill success rate
             "admission_rate": bucket["n_admitted"] / n,             # certification admission rate after CDS/PDS
             "rejection_rate": 1.0 - (bucket["n_admitted"] / n),
             "rejection_reasons": bucket["rejection_reasons"],

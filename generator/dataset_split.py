@@ -42,48 +42,6 @@ def _validate_fracs(train_frac: float, val_frac: float, test_frac: float) -> Non
         raise ValueError(f"train_frac + val_frac + test_frac must sum to 1.0, got {total}")
 
 
-def split_dataset(
-    records: Sequence[T],
-    train_frac: float = 0.75,
-    val_frac: float = 0.125,
-    test_frac: float = 0.125,
-    seed: int = 42,
-) -> DatasetSplit:
-    
-   # Split `records` into train/val/test groups by index (in-memory only,
-   # no file identity, no manifest). 
-
-    _validate_fracs(train_frac, val_frac, test_frac)
-    if len(records) == 0:
-        raise ValueError("Cannot split an empty dataset.")
-
-    indices = list(range(len(records)))
-    rng = random.Random(seed)
-    rng.shuffle(indices)
-
-    n_total = len(indices)
-    n_train = int(round(n_total * train_frac))
-    n_val = int(round(n_total * val_frac))
-    n_test = n_total - n_train - n_val
-
-    if n_train == 0 or n_val == 0 or n_test == 0:
-        raise ValueError(
-            f"Dataset too small to split into non-empty train/val/test "
-            f"groups (got {n_total} records -> train={n_train}, "
-            f"val={n_val}, test={n_test}). Collect more rollout data."
-        )
-
-    train_idx = indices[:n_train]
-    val_idx = indices[n_train:n_train + n_val]
-    test_idx = indices[n_train + n_val:]
-
-    return DatasetSplit(
-        train=[records[i] for i in train_idx],
-        val=[records[i] for i in val_idx],
-        test=[records[i] for i in test_idx],
-    )
-
-
 def compute_split_assignment(
     file_paths: Sequence[str],
     train_frac: float = 0.75,
@@ -91,7 +49,10 @@ def compute_split_assignment(
     test_frac: float = 0.125,
     seed: int = 42,
 ) -> dict[str, str]:
-   
+    """
+    Decide a train/val/test label for each file, keyed by basename.
+
+    """
     _validate_fracs(train_frac, val_frac, test_frac)
     if len(file_paths) == 0:
         raise ValueError("Cannot split an empty file list.")
@@ -165,7 +126,10 @@ def apply_split_manifest(
     records: Sequence[T],
     manifest: dict,
 ) -> DatasetSplit:
-   
+    """
+    Bucket `records` into train/val/test using a previously computed
+    manifest, matching each record to its label by its file's basename.
+    """
     if len(file_paths) != len(records):
         raise ValueError(
             f"file_paths ({len(file_paths)}) and records ({len(records)}) "
