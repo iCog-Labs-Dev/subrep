@@ -1,11 +1,8 @@
 """Tests for generator/dataset_split.py -- the train/val/test partitioning logic."""
 
-import json
-
 import pytest
 
 from generator.dataset_split import (
-    split_dataset,
     compute_split_assignment,
     save_split_manifest,
     load_split_manifest,
@@ -13,36 +10,40 @@ from generator.dataset_split import (
 )
 
 
-def test_split_dataset_covers_every_record_exactly_once():
-    records = list(range(100))
-    split = split_dataset(records, train_frac=0.75, val_frac=0.125, test_frac=0.125, seed=1)
-
-    assert len(split.train) + len(split.val) + len(split.test) == len(records)
-    # No record value should appear in more than one bucket.
-    all_values = split.train + split.val + split.test
-    assert sorted(all_values) == sorted(records)
-
-
-def test_split_dataset_is_deterministic_given_same_seed():
-    records = list(range(50))
-    split_a = split_dataset(records, seed=7)
-    split_b = split_dataset(records, seed=7)
-    assert split_a.train == split_b.train
-    assert split_a.val == split_b.val
-    assert split_a.test == split_b.test
-
-
-def test_split_dataset_rejects_bad_fractions():
-    with pytest.raises(ValueError):
-        split_dataset(list(range(10)), train_frac=0.5, val_frac=0.3, test_frac=0.3, seed=1)
-
-
-def test_split_dataset_rejects_too_small_dataset():
-    with pytest.raises(ValueError):
-        split_dataset(list(range(3)), train_frac=0.75, val_frac=0.125, test_frac=0.125, seed=1)
-
-
 def test_compute_split_assignment_covers_every_file_exactly_once():
+    files = [f"episode_{i}.npz" for i in range(100)]
+    assignment = compute_split_assignment(files, train_frac=0.75, val_frac=0.125, test_frac=0.125, seed=1)
+
+    assert set(assignment.keys()) == set(files)
+    assert set(assignment.values()) <= {"train", "val", "test"}
+
+
+def test_compute_split_assignment_is_deterministic_given_same_seed():
+    files = [f"episode_{i}.npz" for i in range(50)]
+    assignment_a = compute_split_assignment(files, seed=7)
+    assignment_b = compute_split_assignment(files, seed=7)
+    assert assignment_a == assignment_b
+
+
+def test_compute_split_assignment_rejects_bad_fractions():
+    files = [f"episode_{i}.npz" for i in range(10)]
+    with pytest.raises(ValueError):
+        compute_split_assignment(files, train_frac=0.5, val_frac=0.3, test_frac=0.3, seed=1)
+
+
+def test_compute_split_assignment_rejects_too_small_dataset():
+    files = [f"episode_{i}.npz" for i in range(3)]
+    with pytest.raises(ValueError):
+        compute_split_assignment(files, train_frac=0.75, val_frac=0.125, test_frac=0.125, seed=1)
+
+
+def test_compute_split_assignment_rejects_duplicate_basenames():
+    files = ["dir_a/episode_0.npz", "dir_b/episode_0.npz"] + [f"episode_{i}.npz" for i in range(1, 10)]
+    with pytest.raises(ValueError):
+        compute_split_assignment(files, seed=1)
+
+
+def test_compute_split_assignment_covers_every_file_exactly_once_larger():
     files = [f"episode_{i}.npz" for i in range(40)]
     assignment = compute_split_assignment(files, seed=3)
 
@@ -73,7 +74,6 @@ def test_apply_split_manifest_matches_records_to_saved_labels(tmp_path):
 
     split = apply_split_manifest(files, records, manifest)
 
-    # Every record must land in the bucket matching its file's saved label.
     for basename_path, record in zip(files, records):
         import os
         label = assignment[os.path.basename(basename_path)]
