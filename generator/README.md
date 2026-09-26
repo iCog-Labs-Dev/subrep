@@ -2,8 +2,8 @@
 
 This directory contains two learning components:
 
-- `SkillGenerator`: a 2-head MLP that predicts rollout payoff and 2D motive returns.
-- `MotiveDecompositionNetwork` (MDN): a shared network that predicts motive weights,
+| `SkillGenerator`: a 2-head MLP that predicts rollout payoff and 2D motive returns.
+| `MotiveDecompositionNetwork` (MDN): a shared network that predicts motive weights,
   support geometry, admission gates, and auxiliary motive returns.
 
 The shipping configuration targets MO-LunarLander with two objectives
@@ -47,8 +47,15 @@ learner in the current implementation.
 `mdn.py` exposes:
 
 - `forward_inference(context) -> (alpha, support_values)`
+| File | Purpose |
+|---|---|
+| `skill_generator.py` | 2-head MLP: scalar payoff + motive vector |
 - `forward_auxiliary(context, skill_id) -> (gate_logit, q_hat)`
-
+| `train_generator.py` | Trains from one `--data-dir`, selects by validation loss, and saves the model and split manifest |
+| `dataset_split.py` | Creates and persists the train/validation/test file assignment |
+| `evaluate_generator_mse.py` | Measures payoff and motive MSE on the held-out test split against a training-mean baseline |
+| `evaluate_generator_report.py` | Summarizes CDS/PDS outcomes on held-out candidate-set contexts |
+| `compare_dataset_sizes.py` | Compares test MSE for different total rollout dataset sizes |
 ### Support Geometry: SASP (Softmax-Anchored Slack Parameterization)
 
 Support values are decoded so that the admissible region
@@ -66,8 +73,11 @@ p = softmax(raw[..., :M])                              # sums to 1, p_i in (0, 1
 g = slack_floor + (1 - slack_floor) * sigmoid(raw[..., M:])  # g_i in (g_min, 1)
 s = p + (1 - p) * g
 ```
-
+   python -m generator.evaluate_generator_mse --model-path models/generator.pt --data-dir data/raw
 Each `s_i` interpolates between its base allocation `p_i` and the ceiling 1.
+The MSE evaluator is for the single-policy `data/raw` workflow. It accepts one
+data directory and a manifest for that same directory; `data/raw_mixed` is not
+the target of this evaluator.
 Boundedness holds because `s_i` is a convex combination of `p_i` and 1;
 non-emptiness because `sum(s) = sum(p) + sum((1 - p_i) * g_i) >= sum(p) = 1`.
 Both are algebraic, so they hold for any network weights, at every training
@@ -116,10 +126,9 @@ still feasible by construction, but not *fit*.
 Support values are trained separately by `MDNSupportTrainer`
 (`generator/mdn_support_trainer.py`), which regresses them against
 support-function targets from a `WeightSetStore`, driven via
-`utils.mdn_support_pipeline.observe_and_train_support`.
-
-For offline, leakage-controlled support fitting, use
-`generator.train_mdn_support`. It groups every observed vertex for one context
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10000 --prefix seed10000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 11000 --prefix seed11000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 12000 --prefix seed12000
 into the same train, validation, or test partition; uses validation MSE for
 model selection; and evaluates the untouched test partition against `StubMDN`
 and `FULL_SIMPLEX`. Generated reports include target semantics, metric
@@ -144,9 +153,9 @@ shared context and multiple candidate policy outcomes from that same reset seed.
 Recommended training collection:
 
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 42 --prefix seed42
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10042 --prefix seed10042
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 20042 --prefix seed20042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10000 --prefix seed10000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 11000 --prefix seed11000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 12000 --prefix seed12000
 ```
 
 This gives 3,000 contexts and 21,000 candidate outcomes with the default seven
@@ -155,9 +164,9 @@ candidate policies.
 Recommended held-out collection:
 
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 30042 --prefix seed30042
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 40042 --prefix seed40042
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 50042 --prefix seed50042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 1000 --prefix seed1000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 2000 --prefix seed2000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 3000 --prefix seed3000
 ```
 
 These ranges are intentionally separated. Do not use consecutive base seeds for
