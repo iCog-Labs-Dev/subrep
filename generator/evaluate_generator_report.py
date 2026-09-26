@@ -1,3 +1,7 @@
+"""
+Full certification-focused evaluation report for the SkillGenerator.
+
+"""
 
 from __future__ import annotations
 
@@ -20,19 +24,22 @@ from generator.skill_generator import SkillGenerator
 
 
 def compute_idle_baseline_stats(episodes: int = 20, seed: int = 42, gamma: float = 0.99) -> dict[str, Any]:
-    """Reuse the existing IdlePolicy baseline (same approach as train_mdn_candidate_sets.py)."""
+    """Reuse the existing IdlePolicy baseline """
     env = SubRepEnv(seed=seed)
     return IdlePolicy(env=env, gamma=gamma).run_baseline_episodes(num_episodes=episodes, seed=seed)
 
 
 def load_candidate_set_files(eval_dir: str, pattern: str = "*.npz") -> list[dict]:
+    """
+    Load candidate-set .npz files directly...).
+    """
     paths = sorted(glob.glob(os.path.join(eval_dir, pattern)))
     if not paths:
         raise FileNotFoundError(
             f"No candidate-set .npz files found in {eval_dir}. "
             f"Collect eval data first, e.g.:\n"
             f"  python -m data_collector.collect_candidate_sets "
-            f"--contexts 1000 --save-dir {eval_dir} --seed 100 --prefix seed100"
+            f"--contexts 1000 --save-dir {eval_dir} --seed 1000 --prefix seed1000"
         )
     records = []
     for path in paths:
@@ -48,6 +55,14 @@ def load_candidate_set_files(eval_dir: str, pattern: str = "*.npz") -> list[dict
     return records
 
 
+def _format_seed_range(seeds: set[int]) -> str:
+    """Compact 'min-max' display, not a full listing of every value."""
+    if not seeds:
+        return "none"
+    lo, hi = min(seeds), max(seeds)
+    return f"{lo}-{hi}" if lo != hi else str(lo)
+
+
 def certify_candidate(
     payoff: float,
     motives: np.ndarray,
@@ -55,35 +70,23 @@ def certify_candidate(
     cds_gate: CDSGate,
     pds_gate: PDSGate,
 ) -> dict[str, Any]:
-    
+    """
+    Run one candidate's real recorded outcome through CDS and PDS.
+    """
     delta_r, delta_n = calculator.compute_improvements(payoff, motives)
-    cds_admit = cds_gate.admit(delta_r, delta_n)
+
+    cds_admit = bool(cds_gate.admit(delta_r, delta_n))
     cds_margin = cds_gate.get_admission_margin(delta_r, delta_n)
 
-    try:
-        pds_admit = pds_gate.admit(delta_r, delta_n)
-    except Exception:
-        # PDS may require extra context (e.g. a weight-set/support region)
-        # not available for every candidate; treat as "not evaluated" rather
-        # than silently failing the whole report.
-        pds_admit = None
-
-    admitted = bool(cds_admit) and (pds_admit is not False)
-    if admitted:
-        reason = "admitted"
-    elif not cds_admit:
-        reason = f"rejected_by_CDS (margin={cds_margin:.4f}, worst-case motive coordinate dominates payoff gain)"
-    else:
-        reason = "rejected_by_PDS"
+    pds_admit = bool(pds_gate.admit(delta_r, delta_n))
 
     return {
         "delta_r": delta_r,
         "delta_n": delta_n.tolist(),
-        "cds_admit": bool(cds_admit),
+        "cds_admit": cds_admit,
         "cds_margin": cds_margin,
         "pds_admit": pds_admit,
-        "admitted": admitted,
-        "reason": reason,
+        "pds_reason": "admitted" if pds_admit else "rejected_by_PDS",
     }
 
 
@@ -92,14 +95,19 @@ def build_report(
     records: list[dict],
     baseline_stats: dict[str, Any],
 ) -> dict[str, Any]:
-   
+    """
+   Track cds_admission_rate and pds_admission_rate per skill --
+      
+    """
     calculator = ImprovementCalculator(baseline_stats)
     cds_gate = CDSGate()
     pds_gate = PDSGate()
 
     per_skill: dict[str, dict[str, Any]] = {}
     generator_predicted_payoffs = []
-    generator_actual_payoffs = []  # actual ppo_deterministic payoff, for correlation check
+    generator_actual_payoffs = []
+    generator_predicted_motives = []  
+    generator_actual_motives = []
 
     for record in records:
         context = torch.tensor(record["context"], dtype=torch.float32)
@@ -114,41 +122,53 @@ def build_report(
         for skill_id, payoff, motive in zip(skill_ids, payoffs, motives):
             result = certify_candidate(float(payoff), np.asarray(motive), calculator, cds_gate, pds_gate)
             bucket = per_skill.setdefault(skill_id, {
-                "n": 0, "n_admitted": 0, "delta_r_sum": 0.0,
+                "n": 0,
+                "n_cds_admitted": 0,
+                "n_pds_admitted": 0,
+                "delta_r_sum": 0.0,
                 "delta_n_sum": np.zeros_like(np.asarray(motive), dtype=np.float64),
                 "rejection_reasons": {},
             })
             bucket["n"] += 1
-            bucket["n_admitted"] += int(result["admitted"])
+            bucket["n_cds_admitted"] += int(result["cds_admit"])
+            bucket["n_pds_admitted"] += int(result["pds_admit"])
             bucket["delta_r_sum"] += result["delta_r"]
             bucket["delta_n_sum"] += np.asarray(result["delta_n"])
-            if not result["admitted"]:
-                bucket["rejection_reasons"][result["reason"]] = bucket["rejection_reasons"].get(result["reason"], 0) + 1
-
+            if not result["pds_admit"]:
+                bucket["rejection_reasons"][result["pds_reason"]] = (
+                    bucket["rejection_reasons"].get(result["pds_reason"], 0) + 1
+                )
             if skill_id == "ppo_deterministic":
-                generator_predicted_payoffs.append(pred_payoff)
-                generator_actual_payoffs.append(float(payoff))
-
-    # Summarize per-skill stats
+               generator_predicted_payoffs.append(pred_payoff)
+               generator_actual_payoffs.append(float(payoff))
+               generator_predicted_motives.append(pred_motives.tolist())   
+               generator_actual_motives.append(np.asarray(motive).tolist())  
     per_skill_summary = {}
     for skill_id, bucket in per_skill.items():
         n = bucket["n"]
         per_skill_summary[skill_id] = {
-            "n_contexts": n,        
-             "success_rate": bucket["n_admitted"] / n,        # candidate skill success rate
-            "admission_rate": bucket["n_admitted"] / n,             # certification admission rate after CDS/PDS
-            "rejection_rate": 1.0 - (bucket["n_admitted"] / n),
+            "n_contexts": n,
+            "cds_admission_rate": bucket["n_cds_admitted"] / n,
+            "pds_admission_rate": bucket["n_pds_admitted"] / n,
+            "rejection_rate": 1.0 - (bucket["n_pds_admitted"] / n),
             "rejection_reasons": bucket["rejection_reasons"],
-            "avg_payoff_improvement_over_baseline": bucket["delta_r_sum"] / n,   # avg reward/payoff improvement
-            "avg_motive_improvement_over_baseline": (bucket["delta_n_sum"] / n).tolist(),  # motive-feature improvement
+            "avg_payoff_improvement_over_baseline": bucket["delta_r_sum"] / n,
+            "avg_motive_improvement_over_baseline": (bucket["delta_n_sum"] / n).tolist(),
         }
 
     correlation = None
     if len(generator_predicted_payoffs) >= 2:
         correlation = float(np.corrcoef(generator_predicted_payoffs, generator_actual_payoffs)[0, 1])
+    generator_avg_predicted_payoff = None
+    generator_avg_actual_payoff = None
+    generator_avg_predicted_motives = None
+    generator_avg_actual_motives = None
+    if generator_predicted_payoffs:
+            generator_avg_predicted_payoff = float(np.mean(generator_predicted_payoffs))
+            generator_avg_actual_payoff = float(np.mean(generator_actual_payoffs))
+            generator_avg_predicted_motives = np.mean(generator_predicted_motives, axis=0).tolist()
+            generator_avg_actual_motives = np.mean(generator_actual_motives, axis=0).tolist()
 
-    # Baseline comparison: does the neural-pre-filtered skill (ppo_deterministic)
-    # actually beat the simple non-neural baselines (random, fixed policies)?
     comparison = {}
     if "ppo_deterministic" in per_skill_summary:
         target = per_skill_summary["ppo_deterministic"]
@@ -156,17 +176,25 @@ def build_report(
             if baseline_id in per_skill_summary:
                 base = per_skill_summary[baseline_id]
                 comparison[baseline_id] = {
-                    "ppo_deterministic_success_rate": target["success_rate"],
-                    f"{baseline_id}_success_rate": base["success_rate"],
+                    "ppo_deterministic_cds_admission_rate": target["cds_admission_rate"],
+                    f"{baseline_id}_cds_admission_rate": base["cds_admission_rate"],
+                    "ppo_deterministic_pds_admission_rate": target["pds_admission_rate"],
+                    f"{baseline_id}_pds_admission_rate": base["pds_admission_rate"],
                     "ppo_deterministic_avg_payoff_improvement": target["avg_payoff_improvement_over_baseline"],
                     f"{baseline_id}_avg_payoff_improvement": base["avg_payoff_improvement_over_baseline"],
                 }
 
+    unique_seeds = {r["context_seed"] for r in records}
     return {
         "n_contexts_evaluated": len(records),
-        "context_seeds_used": sorted({r["context_seed"] for r in records}),
+        "n_unique_context_seeds": len(unique_seeds),
+        "context_seed_range": _format_seed_range(unique_seeds),
         "per_skill": per_skill_summary,
         "generator_predicted_vs_actual_payoff_correlation": correlation,
+        "generator_avg_predicted_payoff": generator_avg_predicted_payoff,   
+        "generator_avg_actual_payoff": generator_avg_actual_payoff,         
+        "generator_avg_predicted_motives": generator_avg_predicted_motives, # [Safety, Fuel]
+        "generator_avg_actual_motives": generator_avg_actual_motives, 
         "baseline_comparison": comparison,
     }
 
@@ -195,8 +223,13 @@ def main() -> None:
         print(f"Error: {e}")
         return
 
-    print(f"Loaded {len(records)} held-out contexts from {args.eval_dir} "
-          f"(seeds: {sorted({r['context_seed'] for r in records})})")
+    unique_seeds = {r["context_seed"] for r in records}
+    print(f"Loaded {len(records)} candidate-set files from {args.eval_dir} "
+          f"({len(unique_seeds)} unique context seeds, range {_format_seed_range(unique_seeds)})")
+    if len(unique_seeds) != len(records):
+        print(f"  NOTE: {len(records)} files but only {len(unique_seeds)} unique context seeds -- "
+              f"some contexts were collected more than once. See docs/GENERATOR_TRAINING_PIPELINE.md "
+              f"for non-overlapping seed values to use on the next collection run.")
 
     baseline_stats = compute_idle_baseline_stats(episodes=args.baseline_episodes, seed=args.baseline_seed)
     report = build_report(model, records, baseline_stats)
@@ -209,13 +242,18 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("  Generator Evaluation Report (held-out seeds)")
     print("=" * 60)
-    print(f"Contexts evaluated : {report['n_contexts_evaluated']}")
-    print(f"Seeds              : {report['context_seeds_used']}")
+    print(f"Contexts evaluated (files) : {report['n_contexts_evaluated']}")
+    print(f"Unique context seeds       : {report['n_unique_context_seeds']} (range {report['context_seed_range']})")
     print(f"Predicted-vs-actual payoff correlation (ppo_deterministic): "
           f"{report['generator_predicted_vs_actual_payoff_correlation']}")
+    print(f"Avg predicted payoff  : {report['generator_avg_predicted_payoff']:.3f}   "  
+      f"Avg actual payoff  : {report['generator_avg_actual_payoff']:.3f}")          
+    print(f"Avg predicted motives : {report['generator_avg_predicted_motives']}   "     
+      f"Avg actual motives : {report['generator_avg_actual_motives']}")             
     print("\nPer-skill certification summary:")
     for skill_id, stats in report["per_skill"].items():
-        print(f"  {skill_id:20s} success_rate={stats['success_rate']:.2%} "
+        print(f"  {skill_id:20s} CDS={stats['cds_admission_rate']:.2%}  "
+              f"PDS={stats['pds_admission_rate']:.2%}  "
               f"avg_payoff_gain={stats['avg_payoff_improvement_over_baseline']:.3f}")
     print(f"\nFull report saved -> {out_path}")
 
