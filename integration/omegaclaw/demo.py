@@ -1,4 +1,4 @@
-"""Run synthetic or live SubRep-to-Omega recommendation scenarios."""
+"""Run synthetic or live SubRep-to-Omega explanation scenarios."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from .websocket_gateway import OmegaWebSocketGateway
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run recommendation-only SubRep to Omega scenarios."
+        description="Run explanation-only SubRep to Omega scenarios."
     )
     parser.add_argument("--backend", choices=("synthetic", "live"), default="synthetic")
     parser.add_argument(

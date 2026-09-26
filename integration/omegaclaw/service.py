@@ -1,4 +1,4 @@
-"""SubRep-owned orchestration before the Omega recommendation boundary."""
+"""SubRep-owned orchestration before the Omega explanation boundary."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from .contracts import (
 
 
 class SubRepOmegaRecommendationService:
-    """Create an eligible snapshot and request advice without executing a skill."""
+    """Create an authoritative decision and request an explanation without execution."""
 
     def __init__(self, adapter: OmegaRecommendationAdapter) -> None:
         self.adapter = adapter
@@ -41,6 +41,34 @@ class SubRepOmegaRecommendationService:
         evidence_label: str = "OBSERVED",
         request_id: str | None = None,
     ) -> RecommendationOutcome:
+        request = self.build_request_from_library(
+            task_context=task_context,
+            objective_weights=objective_weights,
+            risk_budget=risk_budget,
+            skill_library=skill_library,
+            exclusions=exclusions,
+            support_directions=support_directions,
+            support_values=support_values,
+            evidence_label=evidence_label,
+            request_id=request_id,
+        )
+        return self.adapter.recommend(request)
+
+    def build_request_from_library(
+        self,
+        *,
+        task_context: Mapping[str, Any],
+        objective_weights: Mapping[str, float],
+        risk_budget: RiskBudget,
+        skill_library: SkillLibrary,
+        exclusions: Sequence[SkillExclusion] = (),
+        support_directions: np.ndarray | None = None,
+        support_values: np.ndarray | None = None,
+        evidence_label: str = "OBSERVED",
+        request_id: str | None = None,
+    ) -> RecommendationRequest:
+        """Build the exact validated snapshot used by every recommendation path."""
+
         objectives = tuple(
             ObjectiveWeight(objective_id=name, weight=weight)
             for name, weight in objective_weights.items()
@@ -87,18 +115,16 @@ class SubRepOmegaRecommendationService:
                 )
             )
 
-        request = RecommendationRequest(
-            request_id=request_id or f"subrep-{uuid4().hex}",
+        return RecommendationRequest(
+            request_id=request_id or f"SR{uuid4().hex[:14].upper()}",
             created_at=datetime.now(timezone.utc).isoformat(),
             task_context=dict(task_context),
             objective_weights=objectives,
             risk_budget=risk_budget,
             admitted_skills=tuple(sorted(candidates, key=lambda item: item.skill_id)),
             exclusions=tuple(sorted(final_exclusions.values(), key=lambda item: item.skill_id)),
-            allow_abstain=True,
             evidence_label=evidence_label,
         )
-        return self.adapter.recommend(request)
 
 
 def _risk_or_shape_exclusion(

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
-from .contracts import RESPONSE_SCHEMA_VERSION
+from .contracts import (
+    INTEGRATION_MODE,
+    RESPONSE_SCHEMA_VERSION,
+    SELECTION_BASIS,
+)
 
 
 class SyntheticOmegaBackend:
@@ -18,8 +22,8 @@ class SyntheticOmegaBackend:
         if request["request_id"] != request_id:
             raise ValueError("prompt request_id does not match backend request_id")
 
-        admitted = request["admitted_skills"]
-        if not admitted:
+        decision = request["subrep_decision"]
+        if decision["abstain"]:
             excluded_count = len(request["exclusions"])
             return json.dumps(
                 {
@@ -27,32 +31,45 @@ class SyntheticOmegaBackend:
                     "request_id": request_id,
                     "selected_skill_id": None,
                     "abstain": True,
+                    "mode": INTEGRATION_MODE,
+                    "selection_basis": SELECTION_BASIS,
                     "explanation": (
-                        "No admitted skills were supplied; abstaining. "
+                        "No recommendation was made because SubRep found no admitted skills. "
                         f"The request listed {excluded_count} excluded option(s)."
                     ),
-                    "cited_skill_ids": [
-                        item["skill_id"] for item in request["exclusions"]
-                    ],
+                    "evidence_refs": ["subrep_decision.reason_code"],
+                    "advisory_concerns": [],
                 },
                 sort_keys=True,
             )
 
-        selected = min(
-            admitted,
-            key=lambda item: (-float(item["score"]), item["skill_id"]),
-        )
+        selected_id = decision["selected_skill_id"]
+        selected_score = float(decision["selected_score"])
+        runner_id = decision["runner_up_skill_id"]
+        runner_score = decision["runner_up_score"]
+        refs = ["subrep_decision.selected_score"]
+        if runner_id is not None:
+            refs.append("subrep_decision.runner_up_score")
+            explanation = (
+                f"{selected_id} was selected by SubRep with score {selected_score:.3f}, "
+                f"ahead of {runner_id} at {float(runner_score):.3f}."
+            )
+        else:
+            explanation = (
+                f"{selected_id} was selected by SubRep as the only admitted skill "
+                f"with score {selected_score:.3f}."
+            )
         return json.dumps(
             {
                 "schema_version": RESPONSE_SCHEMA_VERSION,
                 "request_id": request_id,
-                "selected_skill_id": selected["skill_id"],
+                "selected_skill_id": selected_id,
                 "abstain": False,
-                "explanation": (
-                    f"{selected['skill_id']} has the highest supplied score "
-                    f"{float(selected['score']):.3f} under the supplied objective weights."
-                ),
-                "cited_skill_ids": [selected["skill_id"]],
+                "mode": INTEGRATION_MODE,
+                "selection_basis": SELECTION_BASIS,
+                "explanation": explanation,
+                "evidence_refs": refs,
+                "advisory_concerns": [],
             },
             sort_keys=True,
         )
