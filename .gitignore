@@ -7,6 +7,7 @@ __pycache__/
 *.pyc
 doc/
 # Generated dataset (run DataCollector locally to regenerate)
+data/dataset_size_comparison_rollouts
 data/raw/
 data/mdn_candidate_sets/
 data/mdn_candidate_sets_eval/
