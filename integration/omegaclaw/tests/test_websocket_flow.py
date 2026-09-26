@@ -6,7 +6,11 @@ from uuid import uuid4
 
 from integration.omegaclaw.adapter import OmegaRecommendationAdapter
 from integration.omegaclaw.audit import JsonlAuditStore
-from integration.omegaclaw.contracts import RESPONSE_SCHEMA_VERSION
+from integration.omegaclaw.contracts import (
+    INTEGRATION_MODE,
+    RESPONSE_SCHEMA_VERSION,
+    SELECTION_BASIS,
+)
 from integration.omegaclaw.scenarios import predefined_scenarios
 from integration.omegaclaw.service import SubRepOmegaRecommendationService
 from integration.omegaclaw.websocket_gateway import OmegaWebSocketGateway
@@ -87,7 +91,7 @@ def _simulated_omega_client(url: str, token: str) -> None:
             "\nSUBREP_REQUEST_JSON_END", 1
         )[0]
         request = json.loads(request_json)
-        selected = max(request["admitted_skills"], key=lambda item: item["score"])
+        decision = request["subrep_decision"]
         websocket.send(
             json.dumps(
                 {
@@ -102,13 +106,19 @@ def _simulated_omega_client(url: str, token: str) -> None:
         response = {
             "schema_version": RESPONSE_SCHEMA_VERSION,
             "request_id": request["request_id"],
-            "selected_skill_id": selected["skill_id"],
-            "abstain": False,
+            "mode": INTEGRATION_MODE,
+            "selected_skill_id": decision["selected_skill_id"],
+            "abstain": decision["abstain"],
+            "selection_basis": SELECTION_BASIS,
             "explanation": (
-                f"{selected['skill_id']} has the highest supplied score "
-                f"{selected['score']:.3f}."
+                f"{decision['selected_skill_id']} was selected by SubRep with score "
+                f"{decision['selected_score']:.3f}."
             ),
-            "cited_skill_ids": [selected["skill_id"]],
+            "evidence_refs": [
+                "subrep_decision.selected_score",
+                "subrep_decision.runner_up_score",
+            ],
+            "advisory_concerns": [],
         }
         websocket.send(
             json.dumps(

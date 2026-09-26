@@ -48,5 +48,7 @@ def test_risk_budget_filters_skill_before_backend_request(tmp_path):
 
     assert outcome.status == "abstained"
     record = json.loads(audit_path.read_text(encoding="utf-8"))
-    assert record["request"]["admitted_skills"] == []
+    assert record["request"]["admitted_skills"] == {}
+    assert record["request"]["subrep_decision"]["abstain"] is True
+    assert record["request"]["subrep_decision"]["reason_code"] == "NO_ADMISSIBLE_SKILLS"
     assert record["request"]["exclusions"][0]["reason_code"] == "RISK_BUDGET_EXCEEDED"

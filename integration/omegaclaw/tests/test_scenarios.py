@@ -34,7 +34,7 @@ def test_predefined_scenarios_cover_acceptance_cases(tmp_path):
     assert outcomes["excluded_skill"].selected_skill_id == "skill_safety"
     assert outcomes["no_admissible_options"].status == "abstained"
     assert "0.820" in outcomes["clear_preferred_skill"].explanation
-    assert "No admitted skills" in outcomes["no_admissible_options"].explanation
+    assert "No recommendation" in outcomes["no_admissible_options"].explanation
 
     records = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
     assert len(records) == 4

@@ -1,4 +1,4 @@
-# SubRep to Omega Recommendation Integration
+# SubRep to Omega Explanation Integration
 
 ## What This Integrates
 
@@ -9,12 +9,12 @@ SubRep and Omega have different responsibilities:
 - **Omega** is a stateful neural-symbolic agent. The sibling checkout currently
   identifies itself as `Omega`, although the task and some upstream artifacts use
   the OmegaClaw name.
-- **This package** sends an immutable SubRep decision snapshot to Omega and accepts
-  only a recommendation or abstention. It never certifies, admits, or executes a
-  skill.
+- **This package** sends an immutable, authoritative SubRep decision snapshot to
+  Omega and accepts only an explanation that echoes that decision. It never asks
+  Omega to select, certify, admit, exclude, or execute a skill.
 
 The integration belongs in SubRep because SubRep owns the safety boundary and must
-validate the external recommendation before anything downstream can use it. The
+validate the external explanation before anything downstream can use it. The
 Omega repository remains an independently runnable dependency.
 
 ## Safety Boundary
@@ -24,17 +24,19 @@ SubRep SkillLibrary
   -> query_admissible()                 owned by SubRep
   -> apply local risk budget            owned by SubRep
   -> apply explicit exclusions          owned by SubRep
-  -> build versioned evidence snapshot
-  -> request recommendation from Omega
-  -> parse and validate response         owned by SubRep
+  -> compute final selection/abstention  owned by SubRep
+  -> build versioned decision snapshot
+  -> request explanation from Omega
+  -> validate exact decision echo         owned by SubRep
   -> save request and response
-  -> return recommendation only          no skill execution
+  -> return decision plus explanation     no skill execution
 ```
 
-Omega cannot add a skill to the admitted set. A non-abstaining response is valid
-only when `selected_skill_id` appears in the exact `admitted_skills` snapshot sent
-with that request. Unknown IDs, excluded IDs, malformed JSON, mismatched request
-IDs, and backend failures are recorded as explicit outcomes.
+Omega has no selection authority. SubRep deterministically computes the largest
+`final_selection_score`, using lexical skill ID order for exact ties, before the
+request leaves the process. Omega must echo `subrep_decision.selected_skill_id` and
+`subrep_decision.abstain` exactly. Unknown evidence references, changed decisions,
+unsupported modes, malformed JSON, and mismatched request IDs are rejected.
 
 ## Package Structure
 
@@ -59,8 +61,10 @@ Each request contains:
 - task context,
 - named normalized objective weights,
 - a local risk budget,
-- locally admitted skills,
-- each admitted skill's SubRep score and certificate evidence,
+- the authoritative `subrep_decision`, including the selected and runner-up scores,
+- admitted skill IDs and final scores for auditability,
+- explanation evidence containing weights and objective deltas,
+- audit-only certificate evidence that cannot affect ranking,
 - explicit exclusions and SubRep-owned reason codes,
 - an evidence label, either `OBSERVED` or `SYNTHETIC`.
 
@@ -68,17 +72,24 @@ Omega must return one JSON object containing:
 
 ```json
 {
-  "schema_version": "subrep.omegaclaw.recommendation.response.v1",
+  "schema_version": "subrep.omegaclaw.explanation.response.v1",
   "request_id": "the supplied request ID",
-  "selected_skill_id": "an admitted skill ID or null",
+  "mode": "EXPLANATION_ONLY",
+  "selected_skill_id": "the exact SubRep decision skill ID or null",
   "abstain": false,
+  "selection_basis": "SUBREP_DECISION",
   "explanation": "a short explanation using only supplied evidence",
-  "cited_skill_ids": ["IDs referenced by the explanation"]
+  "evidence_refs": ["subrep_decision.selected_score"],
+  "advisory_concerns": []
 }
 ```
 
-When `abstain` is `true`, `selected_skill_id` must be `null`. When selecting, the
-selected ID must be admitted and cited. Citations to unknown skills are invalid.
+For a selection, `evidence_refs` must include `subrep_decision.selected_score` and,
+when present, `subrep_decision.runner_up_score`. For abstention, it must include
+`subrep_decision.reason_code`. Every reference must resolve to a leaf in the exact
+request snapshot. Optional advisory concerns are non-binding, restricted to known
+codes, and require their own valid evidence references. One invalid response may be
+retried; all attempts remain in the audit record.
 
 ## Install
 
@@ -141,7 +152,7 @@ export ASI_API_KEY='your-provider-key'
 ./scripts/omega start -d omega:local -p ASICloud -t websocket
 ```
 
-No recommendation text is copied into Telegram or IRC. The demo sends each
+No explanation text is copied into Telegram or IRC. The demo sends each
 request over the channel and validates the returned JSON automatically.
 
 If Omega runs directly on the host rather than in Docker, use
@@ -197,12 +208,12 @@ agent and configured model provider.
   channel does not natively correlate a response with an inbound sequence.
 - Request IDs provide application-level correlation.
 - Startup, progress, and unrelated Omega messages are not accepted as valid
-  recommendations.
+  explanations.
 - Audit files contain task context and model output. Protect them as decision
   records and do not include secrets in task context.
 - The prompt tells Omega not to execute tools, but a natural-language prompt is
   not a sandbox. Run Omega isolated, do not mount the SubRep repository into its
-  container, and keep SubRep's final stage recommendation-only.
+  container, and keep SubRep's final stage explanation-only.
 - Omega logs may retain prompts and outputs. Apply the same data handling policy
   to Omega logs as to the SubRep audit trail.
 - The current Omega configuration logger may also record resolved WebSocket
