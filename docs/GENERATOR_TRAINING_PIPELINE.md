@@ -1,107 +1,107 @@
 # SkillGenerator Training/Evaluation Pipeline
 
-This document describes the end-to-end, rerunnable pipeline for training
-and evaluating the neural `SkillGenerator` (`generator/skill_generator.py`).
+Documented, rerunnable pipeline for training and evaluating the neural
+`SkillGenerator` (`generator/skill_generator.py`). No changes are made to
+`certification/*` or `baseline/*` -- this pipeline only feeds real,
+already-computed outcomes into those existing modules and reports what
+comes back.
 
-## 1. Collect training data 
+The generator trains on `data/raw` (single-policy, `ppo_deterministic`
+rollouts) only. `data/raw_mixed` reuses one starting context across
+multiple policies and is out of scope for this model -- see
+`generator/README.md`.
+
+## 1. Collect training data
 
 ```bash
 python -m data_collector.collect --episodes 2000 --save-dir data/raw --seed 42
 ```
 
-## 2. Collect held-out evaluation data
+## 2. Collect held-out evaluation data (non-overlapping seeds)
 
-Used for the certification-focused report (Step 5) and for the
-"generalization to unseen seeds" metric. Seeds 100-102 are never used in
-Step 1, so a context evaluated here was never seen during training.
-
+Each `--seed` value below is spaced 1000 apart, which is larger than
+`--contexts`, so the three runs' `context_seed` ranges cannot overlap:
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 100 --prefix seed100
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 101 --prefix seed101
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 102 --prefix seed102
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 1000 --prefix seed1000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 2000 --prefix seed2000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 3000 --prefix seed3000
 ```
 
-## 3. Train the generator (train/val split, model selection, early stopping)
+## 3. Train
 
 ```bash
-python -m generator.train_generator \
-  --data-dir data/raw \
-  --output models/generator.pt \
-  --train-frac 0.75 --val-frac 0.125 --test-frac 0.125 \
-  --epochs 100 --patience 10 --seed 42
+python -m generator.train_generator --data-dir data/raw --output models/generator.pt
 ```
 
-What this does, concretely:
-- Splits every collected `.npz` file into train/val/test by filename (see
-  `generator/dataset_split.py`), and **saves the assignment** to
-  `data/generator_split_manifest.json`.
-- Trains only on the train split.
-- Tracks validation loss every epoch; saves the checkpoint from whichever
-  epoch had the best (lowest) validation loss -- not necessarily the last.
-- Stops early if validation loss hasn't improved for `--patience` epochs.
-- Writes `plots/generator_training_log.csv` (per-epoch train/val loss) and
-  `plots/generator_training.png` (both curves, with the selected best epoch
-  marked).
-- Never touches the test split.
+Splits collected files into train (70-80%), validation (10-15%), and test
+(10-15%) sets by filename, saves the assignment to
+`data/generator_split_manifest.json`, trains on the train split only,
+tracks validation loss for model selection and early stopping, and writes
+mid-training checkpoints (`models/generator_checkpoint.pt`) as new best
+epochs are found. Device (GPU/CPU) is selected automatically.
 
-## 4. Evaluate raw prediction error on the held-out TEST split
+## 4. Evaluate prediction error on the held-out test split
 
 ```bash
-python -m generator.evaluate_generator_mse \
-  --model-path models/generator.pt \
-  --data-dirs data/raw \
-  --split-manifest data/generator_split_manifest.json
+python -m generator.evaluate_generator_mse --model-path models/generator.pt --data-dir data/raw
 ```
 
-Loads the manifest Step 3 saved and evaluates MSE **only** on the records
-labeled `"test"` in that manifest -- data the model never trained on.
+Reads back the manifest from Step 3 and evaluates only the records labeled
+`"test"`. Reports payoff MSE and each motive feature's MSE (Safety, Fuel)
+separately, and compares the trained model against a mean-outcome baseline
+(the training set's mean payoff/motives, predicted for every input,
+ignoring the state) -- a model that does not beat this baseline has not
+demonstrably learned a useful, state-dependent pattern.
 
-## 5. Evaluate certification-focused usefulness on unseen seeds
+## 5. Certification-focused report on held-out seeds
 
 ```bash
-python -m generator.evaluate_generator_report \
-  --model-path models/generator.pt \
-  --eval-dir data/mdn_candidate_sets_eval \
-  --output demo/artifacts/generator_evaluation_report.json
+python -m generator.evaluate_generator_report --model-path models/generator.pt --eval-dir data/mdn_candidate_sets_eval
 ```
 
- For every held-out context (from Step 2's seeds 100-102), it:
-- Runs every real candidate skill's recorded outcome through the
-  unmodified `CDSGate`/`PDSGate` (via `ImprovementCalculator` against the  `IdlePolicy` baseline) to get admit/reject + reason.
-- Reports, per skill (`ppo_deterministic`, `ppo_stochastic`, `random`,
-  `noop`, `left_engine`, `main_engine`, `right_engine`):
-  - candidate skill success rate
-  - certification admission rate after CDS/PDS checks
-  - rejection rate and reason for rejection
-  - average payoff improvement over the idle baseline
-  - average motive-feature (Safety/Fuel) improvement over the idle baseline
-- Compares `ppo_deterministic` (the skill the generator is meant to
-  pre-filter contexts for, per `generator/README.md`) against the simple
-  non-neural baselines (`random`, fixed-action policies).
-- Reports the correlation between the generator's predicted payoff and the
-  real recorded `ppo_deterministic` payoff for the same held-out contexts
-  -- directly answering "is the model actually learning useful candidate
-  skill-generation behavior."
+For every held-out context (Step 2), certifies every real candidate
+outcome under the unmodified `CDSGate` and `PDSGate`, reporting each
+separately: `cds_admission_rate` (unconditionally beneficial, zero
+tolerance) and `pds_admission_rate` (usable under permitted trade-off --
+the operative admission decision, since PDS with `epsilon >= 0` is a
+relaxation of CDS: `cds_admit` always implies `pds_admit`). Rejection
+reasons are tracked against PDS only, since a PDS rejection is what
+actually excludes a candidate. Also reports the generator's predicted
+payoff correlated against the real `ppo_deterministic` outcome (the only
+skill the generator's training data covers), plus average predicted vs.
+actual payoff and motives, and a comparison of `ppo_deterministic` against
+the five non-neural candidate policies.
 
-Output is written to `demo/artifacts/generator_evaluation_report.json`.
+## 6. Does more training data help?
+
+Requires at least 7,000 episodes already collected into `data/raw`: as the default maximum dataset used it 7000.
+```bash
+python -m data_collector.collect --episodes 7000 --save-dir data/raw --seed 42
+python -m generator.compare_dataset_sizes --data-dir data/raw --sizes 1000 3000 7000 --epochs 150 --patience 10
+```
+
+Trains one model per size, all sharing the same seed/epoch-ceiling/patience. these models are trained independently on the given dataset according to the ration 0.75 for training, 0.125 for validation and test each. See `generator/README.md` for the full output list.
 
 ## Rerunning end to end
 
 ```bash
 python -m data_collector.collect --episodes 2000 --save-dir data/raw --seed 42
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 100 --prefix seed100
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 101 --prefix seed101
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 102 --prefix seed102
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 1000 --prefix seed1000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 2000 --prefix seed2000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 3000 --prefix seed3000
 python -m generator.train_generator --data-dir data/raw --output models/generator.pt
-python -m generator.evaluate_generator_mse --model-path models/generator.pt --data-dirs data/raw
+python -m generator.evaluate_generator_mse --model-path models/generator.pt --data-dir data/raw
 python -m generator.evaluate_generator_report --model-path models/generator.pt --eval-dir data/mdn_candidate_sets_eval
 ```
 
-## Files important for this pipeline
+## Files in this pipeline
 
 | File | Role |
 |---|---|
 | `generator/dataset_split.py` | Computes and persists the train/val/test file assignment |
 | `generator/train_generator.py` | Trains on train split, selects best checkpoint via val split |
-| `generator/evaluate_generator_mse.py` | Raw MSE on the test split only |
-| `generator/evaluate_generator_report.py` | Certification/baseline metrics on held-out seeds |
+| `generator/evaluate_generator_mse.py` | Test-split MSE per feature, vs. mean-outcome baseline |
+| `generator/evaluate_generator_report.py` | CDS/PDS admission, rejection reasons, baseline comparison, on held-out seeds |
+| `generator/compare_dataset_sizes.py` | Test MSE across multiple training-data sizes, fixed val/test |
+| `generator/skill_generator.py` | Model definition (unchanged) |
+| `certification/*`, `baseline/*` | Reused as-is; not modified |
