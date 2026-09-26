@@ -71,8 +71,6 @@ class OmegaWebSocketGateway:
             self.host,
             self.port,
             max_size=self.max_message_bytes,
-            ping_interval=20,
-            ping_timeout=20,
         )
         if self.port == 0:
             self.port = int(self._server.socket.getsockname()[1])
@@ -121,26 +119,26 @@ class OmegaWebSocketGateway:
             self._pending_frame = frame
             try:
                 self._send(frame)
-                unrelated: list[str] = []
+                last_unrelated: str | None = None
                 while True:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        if unrelated:
-                            return unrelated[-1]
+                        if last_unrelated is not None:
+                            return last_unrelated
                         raise OmegaGatewayTimeout(
                             f"Omega did not answer request {request_id!r} before timeout"
                         )
                     try:
                         message = self._responses.get(timeout=remaining)
                     except queue.Empty as exc:
-                        if unrelated:
-                            return unrelated[-1]
+                        if last_unrelated is not None:
+                            return last_unrelated
                         raise OmegaGatewayTimeout(
                             f"Omega did not answer request {request_id!r} before timeout"
                         ) from exc
                     if _looks_like_structured_response(message, request_id):
                         return message
-                    unrelated.append(message)
+                    last_unrelated = message
             finally:
                 self._pending_frame = None
 

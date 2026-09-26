@@ -1,1 +1,1 @@
-"""Tests for the recommendation-only Omega integration."""
+"""Tests for the explanation-only Omega integration."""
