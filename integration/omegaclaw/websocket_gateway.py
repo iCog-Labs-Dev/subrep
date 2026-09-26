@@ -11,6 +11,9 @@ from collections import deque
 from typing import Any
 
 
+MAX_CLIENT_SEQUENCE_CHARS = 128
+
+
 class OmegaGatewayError(RuntimeError):
     """Base error for live Omega transport failures."""
 
@@ -35,11 +38,14 @@ class OmegaWebSocketGateway:
             raise ValueError("token must be a non-empty dedicated bearer token")
         if not path.startswith("/"):
             raise ValueError("path must start with '/'")
+        max_message_bytes = int(max_message_bytes)
+        if max_message_bytes <= 0:
+            raise ValueError("max_message_bytes must be positive")
         self.host = host
         self.port = int(port)
         self.token = token
         self.path = path
-        self.max_message_bytes = int(max_message_bytes)
+        self.max_message_bytes = max_message_bytes
 
         self._server = None
         self._server_thread: threading.Thread | None = None
@@ -119,26 +125,20 @@ class OmegaWebSocketGateway:
             self._pending_frame = frame
             try:
                 self._send(frame)
-                last_unrelated: str | None = None
                 while True:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        if last_unrelated is not None:
-                            return last_unrelated
                         raise OmegaGatewayTimeout(
                             f"Omega did not answer request {request_id!r} before timeout"
                         )
                     try:
                         message = self._responses.get(timeout=remaining)
                     except queue.Empty as exc:
-                        if last_unrelated is not None:
-                            return last_unrelated
                         raise OmegaGatewayTimeout(
                             f"Omega did not answer request {request_id!r} before timeout"
                         ) from exc
                     if _looks_like_structured_response(message, request_id):
                         return message
-                    last_unrelated = message
             finally:
                 self._pending_frame = None
 
@@ -194,8 +194,20 @@ class OmegaWebSocketGateway:
         if frame_type == "agent_message":
             client_seq = frame.get("client_seq")
             text = frame.get("text")
-            if not isinstance(client_seq, str) or not client_seq or not isinstance(text, str):
-                self._send_to(websocket, {"type": "error", "code": "INVALID_AGENT_MESSAGE", "message": "client_seq and text are required"})
+            if (
+                not isinstance(client_seq, str)
+                or not client_seq
+                or len(client_seq) > MAX_CLIENT_SEQUENCE_CHARS
+                or not isinstance(text, str)
+            ):
+                self._send_to(
+                    websocket,
+                    {
+                        "type": "error",
+                        "code": "INVALID_AGENT_MESSAGE",
+                        "message": "client_seq must be 1-128 characters and text is required",
+                    },
+                )
                 return
             if client_seq not in self._seen_client_sequences:
                 self._seen_client_sequences.append(client_seq)
@@ -242,14 +254,18 @@ def _looks_like_structured_response(message: str, request_id: str) -> bool:
     """Ignore progress chatter while still surfacing malformed response attempts."""
 
     text = message.strip()
-    if "selected_skill_id" in text:
-        return True
     if text.startswith("```"):
         lines = text.splitlines()
-        if len(lines) >= 3 and lines[-1].strip() == "```":
-            text = "\n".join(lines[1:-1]).strip()
+        if len(lines) < 3 or lines[-1].strip() != "```":
+            return True
+        text = "\n".join(lines[1:-1]).strip()
+    if not text.startswith(("{", "[")):
+        return False
     try:
         payload = json.loads(text)
-    except (TypeError, json.JSONDecodeError):
-        return False
-    return isinstance(payload, dict) and payload.get("request_id") == request_id
+    except json.JSONDecodeError:
+        return True
+    if not isinstance(payload, dict):
+        return True
+    response_request_id = payload.get("request_id")
+    return response_request_id is None or response_request_id == request_id

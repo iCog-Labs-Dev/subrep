@@ -1,4 +1,4 @@
-"""Versioned JSON contracts for recommendation requests and responses."""
+"""Versioned JSON contracts for SubRep decisions and Omega explanations."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from math import isclose, isfinite
+from types import MappingProxyType
 from typing import Any, Mapping
 
 
@@ -53,6 +54,22 @@ def _json_safe(value: Any, field_name: str) -> None:
         json.dumps(value, allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field_name} must be JSON serializable") from exc
+
+
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_json(child) for key, child in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(child) for child in value)
+    return value
+
+
+def _thaw_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw_json(child) for child in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -143,7 +160,7 @@ class SkillEvidence:
         }
         if not deltas:
             raise ValueError("objective_deltas must not be empty")
-        object.__setattr__(self, "objective_deltas", deltas)
+        object.__setattr__(self, "objective_deltas", MappingProxyType(deltas))
 
         label = _non_empty(self.evidence_label, "evidence_label").upper()
         if label not in VALID_EVIDENCE_LABELS:
@@ -298,7 +315,9 @@ class RecommendationRequest:
             raise ValueError("created_at must include a timezone offset")
         if not isinstance(self.task_context, Mapping):
             raise ValueError("task_context must be a mapping")
-        _json_safe(self.task_context, "task_context")
+        task_context = _thaw_json(self.task_context)
+        _json_safe(task_context, "task_context")
+        object.__setattr__(self, "task_context", _freeze_json(task_context))
 
         if not isinstance(self.risk_budget, RiskBudget):
             raise ValueError("risk_budget must be a RiskBudget")
@@ -389,7 +408,7 @@ class RecommendationRequest:
             "created_at": self.created_at,
             "mode": INTEGRATION_MODE,
             "subrep_decision": asdict(self.subrep_decision),
-            "task_context": dict(self.task_context),
+            "task_context": _thaw_json(self.task_context),
             "admitted_skills": {
                 skill.skill_id: {
                     "skill_id": skill.skill_id,
@@ -425,11 +444,6 @@ class RecommendationRequest:
             },
             "evidence_label": self.evidence_label,
         }
-
-    def expected_selected_skill_id(self) -> str | None:
-        """Return the authoritative selected skill, if any."""
-
-        return self.subrep_decision.selected_skill_id
 
     def valid_evidence_refs(self) -> set[str]:
         """Return every leaf path OmegaClaw may cite in its explanation."""
@@ -622,6 +636,79 @@ def validate_response_for_request(
         if unknown_concern_refs:
             raise ValueError(
                 f"advisory concern contains unknown evidence_refs: {sorted(unknown_concern_refs)}"
+            )
+        _validate_advisory_concern(request, concern)
+
+
+def _validate_advisory_concern(
+    request: RecommendationRequest,
+    concern: AdvisoryConcern,
+) -> None:
+    """Require each advisory code to cite evidence that is relevant to its claim."""
+
+    decision = request.subrep_decision
+    if decision.abstain:
+        raise ValueError("advisory concerns are not allowed for an abstaining decision")
+
+    selected = next(
+        skill for skill in request.admitted_skills if skill.skill_id == decision.selected_skill_id
+    )
+    refs = set(concern.evidence_refs)
+    decision_prefix = "subrep_decision"
+    explanation_prefix = f"explanation_evidence.skills.{selected.skill_id}"
+    certificate_prefix = f"audit_only_certificate_evidence.skills.{selected.skill_id}"
+
+    if concern.code == "SMALL_SCORE_GAP":
+        if decision.runner_up_skill_id is None or f"{decision_prefix}.score_gap" not in refs:
+            raise ValueError("SMALL_SCORE_GAP must cite subrep_decision.score_gap")
+        return
+
+    if concern.code == "NEGATIVE_OBJECTIVE_TRADEOFF":
+        negative_refs = {
+            f"{explanation_prefix}.objective_deltas.{objective_id}"
+            for objective_id, delta in selected.objective_deltas.items()
+            if delta < 0.0
+        }
+        if not refs.intersection(negative_refs):
+            raise ValueError(
+                "NEGATIVE_OBJECTIVE_TRADEOFF must cite a negative selected-skill objective delta"
+            )
+        return
+
+    if concern.code == "PDS_EPSILON_USED":
+        required = {
+            f"{certificate_prefix}.gate_type",
+            f"{certificate_prefix}.epsilon",
+        }
+        if selected.gate_type != "PDS" or selected.epsilon <= 0.0 or not required.issubset(refs):
+            raise ValueError(
+                "PDS_EPSILON_USED requires a positive PDS epsilon and its gate_type and epsilon refs"
+            )
+        return
+
+    if concern.code == "LOW_CERTIFICATE_MARGIN":
+        required_ref = f"{certificate_prefix}.certificate_admission_margin"
+        if required_ref not in refs:
+            raise ValueError(
+                "LOW_CERTIFICATE_MARGIN must cite the selected skill's certificate margin"
+            )
+        return
+
+    if concern.code == "HIGH_PRIORITY_OBJECTIVE_DECLINE":
+        weights = {item.objective_id: item.weight for item in request.objective_weights}
+        maximum_weight = max(weights.values())
+        supported = any(
+            delta < 0.0
+            and weights[objective_id] == maximum_weight
+            and {
+                f"explanation_evidence.objective_weights.{objective_id}",
+                f"{explanation_prefix}.objective_deltas.{objective_id}",
+            }.issubset(refs)
+            for objective_id, delta in selected.objective_deltas.items()
+        )
+        if not supported:
+            raise ValueError(
+                "HIGH_PRIORITY_OBJECTIVE_DECLINE must cite the weight and negative delta of a highest-weight objective"
             )
 
 

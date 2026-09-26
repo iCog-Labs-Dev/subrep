@@ -51,7 +51,6 @@ unsupported modes, malformed JSON, and mismatched request IDs are rejected.
 | `synthetic_backend.py` | Deterministic non-LLM backend used only for tests and review |
 | `demo.py` | Reproducible synthetic and live demo entry point |
 | `tests/` | Contract, adapter, scenario, and WebSocket flow tests |
-| `FINDINGS.md` | Short qualitative findings report |
 
 ## Data Contract
 
@@ -87,9 +86,10 @@ Omega must return one JSON object containing:
 For a selection, `evidence_refs` must include `subrep_decision.selected_score` and,
 when present, `subrep_decision.runner_up_score`. For abstention, it must include
 `subrep_decision.reason_code`. Every reference must resolve to a leaf in the exact
-request snapshot. Optional advisory concerns are non-binding, restricted to known
-codes, and require their own valid evidence references. One invalid response may be
-retried; all attempts remain in the audit record.
+request snapshot. Optional advisory concerns are non-binding, restricted to the
+codes defined in `contracts.py`, and must cite evidence relevant to that specific
+concern. One invalid response may be retried; all attempts remain in the audit
+record.
 
 ## Install
 
@@ -112,7 +112,7 @@ python -m integration.omegaclaw.demo --backend synthetic `
   --report-path data/omegaclaw/synthetic_demo_report.json
 ```
 
-Expected recommendations:
+Expected decisions:
 
 | Scenario | Expected result |
 |---|---|
@@ -204,7 +204,7 @@ agent and configured model provider.
 
 ## Operational Notes
 
-- One recommendation request is in flight at a time because Omega's current
+- One explanation request is in flight at a time because Omega's current
   channel does not natively correlate a response with an inbound sequence.
 - Request IDs provide application-level correlation.
 - Startup, progress, and unrelated Omega messages are not accepted as valid

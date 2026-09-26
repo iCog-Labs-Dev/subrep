@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from integration.omegaclaw.adapter import OmegaRecommendationAdapter
+from integration.omegaclaw.adapter import (
+    OmegaRecommendationAdapter,
+    build_recommendation_prompt,
+)
 from integration.omegaclaw.audit import JsonlAuditStore
 from integration.omegaclaw.contracts import (
     INTEGRATION_MODE,
@@ -73,6 +76,30 @@ def _request_with_runner() -> RecommendationRequest:
         objective_weights=request.objective_weights,
         risk_budget=request.risk_budget,
         admitted_skills=request.admitted_skills + (runner,),
+    )
+
+
+def _request_with_selected_skill(**skill_changes) -> RecommendationRequest:
+    request = _request()
+    values = {
+        "skill_id": "safe_skill",
+        "score": 1.5,
+        "delta_r": 1.0,
+        "objective_deltas": {"safety": 0.6, "fuel": 0.2},
+        "gate_type": "CDS",
+        "admission_margin": 1.2,
+        "epsilon": 0.0,
+        "weight_region_type": "FULL_SIMPLEX",
+    }
+    values.update(skill_changes)
+    skill = SkillEvidence(**values)
+    return RecommendationRequest(
+        request_id=request.request_id,
+        created_at=request.created_at,
+        task_context=request.task_context,
+        objective_weights=request.objective_weights,
+        risk_budget=RiskBudget(max_certificate_epsilon=max(0.0, skill.epsilon)),
+        admitted_skills=(skill,),
     )
 
 
@@ -306,6 +333,97 @@ def test_accepts_evidence_grounded_advisory_concern(tmp_path):
     assert outcome.response["advisory_concerns"][0]["code"] == "SMALL_SCORE_GAP"
 
 
+def test_rejects_advisory_concern_with_irrelevant_valid_evidence(tmp_path):
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(
+            response=_response(
+                advisory_concerns=[
+                    {
+                        "code": "LOW_CERTIFICATE_MARGIN",
+                        "message": "The margin may be low.",
+                        "evidence_refs": ["subrep_decision.selected_score"],
+                    }
+                ]
+            )
+        ),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+
+    outcome = adapter.recommend(_request())
+
+    assert outcome.status == "invalid_response"
+    assert "certificate margin" in outcome.error
+
+
+def test_accepts_certificate_advisories_with_relevant_evidence(tmp_path):
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(
+            response=_response(
+                advisory_concerns=[
+                    {
+                        "code": "PDS_EPSILON_USED",
+                        "message": "The selected skill uses a positive PDS epsilon.",
+                        "evidence_refs": [
+                            "audit_only_certificate_evidence.skills.safe_skill.gate_type",
+                            "audit_only_certificate_evidence.skills.safe_skill.epsilon",
+                        ],
+                    },
+                    {
+                        "code": "LOW_CERTIFICATE_MARGIN",
+                        "message": "Review the selected skill's certificate margin.",
+                        "evidence_refs": [
+                            "audit_only_certificate_evidence.skills.safe_skill.certificate_admission_margin"
+                        ],
+                    },
+                ]
+            )
+        ),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+    request = _request_with_selected_skill(gate_type="PDS", epsilon=0.1)
+
+    outcome = adapter.recommend(request)
+
+    assert outcome.status == "accepted"
+
+
+def test_accepts_negative_high_priority_objective_advisories(tmp_path):
+    objective_ref = "explanation_evidence.skills.safe_skill.objective_deltas.safety"
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(
+            response=_response(
+                advisory_concerns=[
+                    {
+                        "code": "NEGATIVE_OBJECTIVE_TRADEOFF",
+                        "message": "The selected skill reduces the safety objective.",
+                        "evidence_refs": [objective_ref],
+                    },
+                    {
+                        "code": "HIGH_PRIORITY_OBJECTIVE_DECLINE",
+                        "message": "The highest-weight objective declines.",
+                        "evidence_refs": [
+                            "explanation_evidence.objective_weights.safety",
+                            objective_ref,
+                        ],
+                    },
+                ]
+            )
+        ),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+    request = _request_with_selected_skill(
+        delta_r=1.6,
+        objective_deltas={"safety": -0.2, "fuel": 0.2},
+    )
+
+    outcome = adapter.recommend(request)
+
+    assert outcome.status == "accepted"
+
+
 def test_rejects_advisory_concern_with_unknown_evidence(tmp_path):
     adapter = OmegaRecommendationAdapter(
         StaticBackend(
@@ -349,6 +467,15 @@ def test_prompt_contains_all_required_decision_inputs(tmp_path):
             assert payload["subrep_decision"]["selected_skill_id"] == "safe_skill"
             assert payload["admitted_skills"]["safe_skill"]["final_selection_score"] == 1.5
             assert payload["exclusions"] == []
+            response_shape = json.loads(
+                prompt.split("Required response shape: ", 1)[1].split("\n", 1)[0]
+            )
+            assert response_shape["selected_skill_id"] == "safe_skill"
+            assert response_shape["abstain"] is False
+            assert response_shape["evidence_refs"] == [
+                "subrep_decision.selected_score"
+            ]
+            assert "LOW_CERTIFICATE_MARGIN" in prompt
             return _response(request_id=request_id)
 
     adapter = OmegaRecommendationAdapter(
@@ -357,6 +484,27 @@ def test_prompt_contains_all_required_decision_inputs(tmp_path):
     )
 
     assert adapter.recommend(_request()).status == "accepted"
+
+
+def test_abstention_prompt_uses_the_authoritative_abstention_shape():
+    request = _request()
+    request = RecommendationRequest(
+        request_id=request.request_id,
+        created_at=request.created_at,
+        task_context=request.task_context,
+        objective_weights=request.objective_weights,
+        risk_budget=request.risk_budget,
+        admitted_skills=(),
+    )
+
+    prompt = build_recommendation_prompt(request)
+    response_shape = json.loads(
+        prompt.split("Required response shape: ", 1)[1].split("\n", 1)[0]
+    )
+
+    assert response_shape["selected_skill_id"] is None
+    assert response_shape["abstain"] is True
+    assert response_shape["evidence_refs"] == ["subrep_decision.reason_code"]
 
 
 def test_rejects_suboptimal_admitted_skill(tmp_path):

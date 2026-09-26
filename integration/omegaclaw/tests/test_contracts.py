@@ -83,7 +83,7 @@ def test_expected_selection_uses_lexical_tie_breaker():
     lexical_winner = _skill(skill_id="alpha_skill")
     request = _request(admitted_skills=(tied, lexical_winner))
 
-    assert request.expected_selected_skill_id() == "alpha_skill"
+    assert request.subrep_decision.selected_skill_id == "alpha_skill"
 
 
 def test_serialized_request_separates_selection_from_audit_evidence():
@@ -134,3 +134,22 @@ def test_request_rejects_caller_supplied_decision_that_changes_winner():
 
     with pytest.raises(ValueError, match="does not match"):
         _request(subrep_decision=tampered_decision)
+
+
+def test_request_copies_and_freezes_nested_evidence():
+    task_context = {"mission": {"phases": ["approach", "land"]}}
+    objective_deltas = {"safety": 0.6, "fuel": 0.2}
+    skill = _skill(objective_deltas=objective_deltas)
+    request = _request(skill=skill, task_context=task_context)
+
+    task_context["mission"]["phases"].append("mutated")
+    objective_deltas["safety"] = -10.0
+
+    assert request.to_dict()["task_context"] == {
+        "mission": {"phases": ["approach", "land"]}
+    }
+    assert request.admitted_skills[0].objective_deltas["safety"] == 0.6
+    with pytest.raises(TypeError):
+        request.task_context["mission"] = {}
+    with pytest.raises(TypeError):
+        request.admitted_skills[0].objective_deltas["safety"] = -10.0

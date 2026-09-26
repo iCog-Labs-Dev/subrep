@@ -10,6 +10,7 @@ from .contracts import (
     INTEGRATION_MODE,
     RESPONSE_SCHEMA_VERSION,
     SELECTION_BASIS,
+    VALID_ADVISORY_CONCERN_CODES,
     OmegaRecommendationResponse,
     RecommendationOutcome,
     RecommendationRequest,
@@ -51,7 +52,7 @@ class OmegaRecommendationAdapter:
 
         for attempt_number in range(1, self.invalid_response_retries + 2):
             if attempt_number > 1:
-                prompt = build_correction_prompt(request, validation_error or "invalid response")
+                prompt = build_correction_prompt(request)
             try:
                 raw_response = self.backend.complete(
                     prompt=prompt,
@@ -127,17 +128,26 @@ class OmegaRecommendationAdapter:
 def build_recommendation_prompt(request: RecommendationRequest) -> str:
     """Build a bounded explanation-only instruction with embedded JSON data."""
 
+    decision = request.subrep_decision
+    required_refs = [
+        "subrep_decision.reason_code"
+        if decision.abstain
+        else "subrep_decision.selected_score"
+    ]
+    if decision.runner_up_skill_id is not None:
+        required_refs.append("subrep_decision.runner_up_score")
     response_shape = {
         "schema_version": RESPONSE_SCHEMA_VERSION,
         "request_id": request.request_id,
-        "selected_skill_id": "an admitted skill id, or null",
-        "abstain": False,
+        "selected_skill_id": decision.selected_skill_id,
+        "abstain": decision.abstain,
         "mode": INTEGRATION_MODE,
         "selection_basis": SELECTION_BASIS,
         "explanation": "short explanation grounded only in supplied evidence",
-        "evidence_refs": ["exact dotted paths from the request"],
+        "evidence_refs": required_refs,
         "advisory_concerns": [],
     }
+    concern_codes = ", ".join(sorted(VALID_ADVISORY_CONCERN_CODES))
     request_json = json.dumps(request.to_dict(), sort_keys=True, allow_nan=False)
     response_json = json.dumps(response_shape, sort_keys=True)
     return (
@@ -151,9 +161,10 @@ def build_recommendation_prompt(request: RecommendationRequest) -> str:
         "dotted request paths in evidence_refs; every reference must exist in the request. "
         "For a selection, cite subrep_decision.selected_score and, when present, "
         "subrep_decision.runner_up_score. For abstention, cite subrep_decision.reason_code. "
-        "(5) advisory_concerns are optional and non-binding; use only allowed concern codes "
-        "and support each concern with request evidence paths. Prefer an empty list unless a "
-        "clear concern exists. (6) Return mode and selection_basis exactly as required. "
+        "(5) advisory_concerns are optional and non-binding. The allowed codes are: "
+        f"{concern_codes}. Each concern must cite directly relevant request evidence; prefer "
+        "an empty list unless a clear concern exists. (6) Return mode and selection_basis "
+        "exactly as required. "
         "Do not invent measurements or outcomes. "
         "In Omega's internal command protocol, "
         "invoke only the channel send action, exactly once, with the response JSON as its "
@@ -166,10 +177,9 @@ def build_recommendation_prompt(request: RecommendationRequest) -> str:
     )
 
 
-def build_correction_prompt(request: RecommendationRequest, validation_error: str) -> str:
+def build_correction_prompt(request: RecommendationRequest) -> str:
     """Request one corrected response while preserving the exact decision snapshot."""
 
-    del validation_error
     return (
         "Your previous response was rejected by SubRep validation. "
         "Return a fresh response that follows the exact explanation-only contract. "
