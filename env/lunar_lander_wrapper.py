@@ -3,12 +3,12 @@ MO-LunarLander Environment Wrapper for SubRep.
 
 This wrapper standardizes the MO-Gymnasium interface to ensure consistent 
 vector reward output (Safety, Fuel) required for CDS/PDS certification.
-
 """
 
 import numpy as np
 import mo_gymnasium as mo_gym
 from gymnasium.spaces import Box  
+
 class SubRepEnv:
     """
     Wraps mo-lunar-lander-v3 to enforce SubRep reward structure.
@@ -54,7 +54,7 @@ class SubRepEnv:
 
     def _map_rewards(self, raw_rewards: np.ndarray) -> np.ndarray:
         """
-        Map 4 raw MO-LunarLander rewards → 2 SubRep objectives.
+        Map 4 raw MO-LunarLander rewards -> 2 SubRep objectives.
         
         Raw rewards (index):
           [0] Terminal result reward (+100 if landed, -100 if crashed)
@@ -73,8 +73,13 @@ class SubRepEnv:
         fuel = -(raw_rewards[2] + raw_rewards[3])
         return np.array([safety, fuel], dtype=np.float32)
 
-    def reset(self, seed=None):
-        """Reset the environment and return initial observation."""
+    def reset(self, seed=None, options=None):
+        """Reset the environment and return initial observation.
+
+        The ``options`` parameter is accepted for protocol compatibility
+        and is currently unused (passed through to the underlying env
+        if it supports it, silently ignored otherwise).
+        """
         # Only update the stored seed when the caller explicitly provides one.
         # Otherwise Gym continues from its current RNG stream, so repeated
         # `reset()` calls are stochastic instead of replaying one start state.
@@ -110,7 +115,22 @@ class SubRepEnv:
         if reward_vector.shape != (2,):
             raise ValueError(f"Reward vector shape mismatch: expected (2,), got {reward_vector.shape}")
             
+        # Inject task_payoff for SubRepBaseEnv compliance
+        info["task_payoff"] = float(np.sum(reward_vector))
+        
         return obs, reward_vector, terminated, truncated, info
+
+    @property
+    def metadata(self) -> dict:
+        """Environment metadata dictionary conforming to SubRep specification."""
+        return {
+            "environment_id": "subrep_lunarlander_v1",
+            "motive_names": ["Safety", "Fuel"],
+            "motive_schema_version": "1.0",
+            "payoff_schema_version": "1.0",
+            "observation_schema_version": "1.0",
+            "action_schema_version": "1.0",
+        }
 
     def close(self):
         """Close the environment."""

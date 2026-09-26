@@ -63,8 +63,8 @@ class SkillEntry:
         return self.certificate.delta_r
 
     @property
-    def delta_n(self) -> tuple[float, float]:
-        """Motive improvement vector from the certificate."""
+    def delta_n(self) -> tuple[float, ...]:
+        """Motive improvement vector from the certificate (N-dimensional)."""
         return self.certificate.delta_n
 
     @property
@@ -104,6 +104,14 @@ class SkillEntry:
             data["wx_support_directions"] = [list(d) for d in self.wx_support_directions]
         if self.wx_support_values is not None:
             data["wx_support_values"] = list(self.wx_support_values)
+
+        # Persist schema identity when present.
+        if self.certificate.domain_id is not None:
+            data["domain_id"] = self.certificate.domain_id
+        if self.certificate.motive_schema_version is not None:
+            data["motive_schema_version"] = self.certificate.motive_schema_version
+        if self.certificate.motive_names is not None:
+            data["motive_names"] = list(self.certificate.motive_names)
 
         return data
 

@@ -96,11 +96,12 @@ def test_reset_accepts_seed_and_reseeds_rng():
     env_b.reset(seed=5)
 
     for _ in range(50):
-        state_a, motives_a, done_a, info_a = env_a.step("idle")
-        state_b, motives_b, done_b, info_b = env_b.step("idle")
+        state_a, motives_a, terminated_a, truncated_a, info_a = env_a.step("idle")
+        state_b, motives_b, terminated_b, truncated_b, info_b = env_b.step("idle")
         assert state_a == state_b
         np.testing.assert_array_equal(motives_a, motives_b)
-        assert done_a == done_b
+        assert terminated_a == terminated_b
+        assert truncated_a == truncated_b
         assert info_a["raid_active"] == info_b["raid_active"]
 
 
@@ -121,10 +122,11 @@ def test_reset_same_seed_reproduces_trace_on_same_env():
         done = False
         while not done:
             action = safe_policy(env.state)
-            state, motive_vec, done, info = env.step(action)
+            state, motive_vec, terminated, truncated, info = env.step(action)
             states.append(state)
             motives.append(motive_vec)
             raids.append(info["raid_active"])
+            done = terminated or truncated
             dones.append(done)
         return states, motives, raids, dones
 
@@ -149,7 +151,7 @@ def test_reset_returns_fresh_default_state():
     env.reset()
     env.state.villager_hp = 3.0
     env.state.task_completed = True
-    state = env.reset()
+    state, _ = env.reset()
 
     assert state.villager_hp == 20.0
     assert state.time_step == 0
@@ -158,7 +160,7 @@ def test_reset_returns_fresh_default_state():
 
 def test_policy_cannot_mutate_env_state_via_returned_snapshot():
     env = _controlled_env()
-    returned_state, _, _, _ = env.step("trade")
+    returned_state, _, _, _, _ = env.step("trade")
 
     # Policies only receive copies; mutating them must not corrupt the env.
     returned_state.inventory_value = 999.0
@@ -187,7 +189,7 @@ def test_policy_cannot_mutate_env_state_via_returned_snapshot():
 )
 def test_action_has_expected_state_effect(action, checks):
     env = _controlled_env()
-    state, motives, done, info = env.step(action)
+    state, motives, done, _, info = env.step(action)
     assert all(checks(state))
 
 
@@ -196,7 +198,7 @@ def test_archer_kite_ends_raid_when_successful():
     env.state.raid_active = True
     env.state.raid_intensity = 0.5
     env.rng = _QueueRng([1.0, 0.0])  # survives damage phase, then archer succeeds
-    _, _, done, info = env.step("archer_kite")
+    _, _, done, _, info = env.step("archer_kite")
     assert env.state.raid_active is False
 
 
@@ -205,7 +207,7 @@ def test_archer_kite_leaves_raid_when_unsuccessful():
     env.state.raid_active = True
     env.state.raid_intensity = 0.5
     env.rng = _QueueRng([1.0, 0.9])  # survives damage phase, archer fails the 0.8 check
-    _, _, done, info = env.step("archer_kite")
+    _, _, done, _, info = env.step("archer_kite")
     assert env.state.raid_active is True
 
 
@@ -273,7 +275,7 @@ def test_episode_terminates_exactly_at_deadline():
     done = False
     steps = 0
     while not done:
-        _, _, done, info = env.step("idle")
+        _, _, done, _, info = env.step("idle")
         steps += 1
     assert steps == env.state.total_steps
     assert env.state.time_step == env.state.total_steps
@@ -304,7 +306,7 @@ def test_payoff_and_motives_accumulate_independently():
     t = 0
     done = False
     while not done:
-        state, motives, done, info = env.step("trade")
+        state, motives, done, _, info = env.step("trade")
         discount = 0.99 ** t
         total_payoff += discount * float(info["task_reward"])
         total_motives += discount * motives
@@ -402,7 +404,7 @@ def test_delivery_completed_via_repeated_trades():
     rewards = []
     done = False
     while not done:
-        _, _, done, info = env.step("trade")
+        _, _, done, _, info = env.step("trade")
         rewards.append(info["task_reward"])
 
     assert env.state.task_completed is True

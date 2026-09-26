@@ -9,4 +9,8 @@ Public API:
 
 from .skill_metadata import SkillEntry
 from .skill_library import SkillLibrary
-from .skill_selector import SkillSelector
+try:
+    from .skill_selector import SkillSelector
+except ImportError:
+    # SkillSelector requires torch; skip when not installed.
+    pass
