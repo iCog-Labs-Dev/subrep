@@ -33,8 +33,8 @@ python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/
 python -m generator.train_generator --data-dir data/raw --output models/generator.pt
 ```
 
-Splits collected files into train (70-80%), validation (10-15%), and test
-(10-15%) sets by filename, saves the assignment to
+Splits collected files into train (75%), validation (12.5%), and test
+(12.5%) sets by filename, saves the assignment to
 `data/generator_split_manifest.json`, trains on the train split only,
 tracks validation loss for model selection and early stopping, and writes
 mid-training checkpoints (`models/generator_checkpoint.pt`) as new best
@@ -74,7 +74,7 @@ the five non-neural candidate policies.
 
 ## 6. Does more training data help?
 
-Requires at least 7,000 episodes already collected into `data/raw`: as the default maximum dataset used it 7000.
+Requires at least 7,000 episodes already collected into `data/raw` if the default `--sizes` is used .
 ```bash
 python -m data_collector.collect --episodes 7000 --save-dir data/raw --seed 42
 python -m generator.compare_dataset_sizes --data-dir data/raw --sizes 1000 3000 7000 --epochs 150 --patience 10
