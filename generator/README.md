@@ -13,205 +13,160 @@ correct for any objective count `M >= 2`.
 
 ## Skill Generator
 
-The `SkillGenerator` is a supervised model that maps an 8-value starting
-observation to a predicted payoff and two motive returns (`Safety`, `Fuel`).
-It can rank or filter candidate contexts without running each candidate in the
-simulator. Its predictions are not certification: final admission still
-requires measured execution through CDS/PDS (`certification/`).
+The skill generator is a supervised rollout-outcome model.
 
 | File | Purpose |
 |---|---|
-| `skill_generator.py` | Two-head model for payoff and motive-return predictions |
-| `losses.py` | Weighted payoff and motive MSE loss |
-| `dataset_split.py` | Creates, saves, loads, and applies the train/validation/test assignment |
-| `train_generator.py` | Trains from one rollout directory; selects the checkpoint using validation loss |
-| `evaluate_generator_mse.py` | Compares model and training-mean baseline MSE on the held-out test split |
-| `evaluate_generator_report.py` | Summarizes CDS/PDS outcomes and candidate performance on held-out candidate-set contexts |
-| `compare_dataset_sizes.py` | Trains/evaluates independent dataset-size experiments and saves their splits and results |
+| `skill_generator.py` | 2-head MLP: scalar payoff + motive vector |
+| `losses.py` | Weighted MSE loss for payoff and motives |
+| `train_generator.py` | Trains from `--data-dir` (default `data/raw`) and writes `models/generator.pt` |
 
-### Training data
+### Quickstart (mixed candidate training)
 
-The standard training set is single-policy rollout data, normally collected
-from the deterministic PPO pilot into `data/raw`. Each top-level `.npz` file is
-one record with an observation, payoff, and motive returns. Training loads all
-matching files in the selected directory.
+**Note:** The Generator is trained on a "mixed candidate set" (PPO variants, fixed engines, and random policies) to match the actual candidates encountered by the SubRep admission pipeline. The generator remains purely a **prediction pre-filter**. Final skill admission always requires a measured real-world execution.
 
-`data/raw_mixed` is another supported source: the mixed collector runs its
-candidate policies from shared starting contexts and saves one record per
-policy outcome. The current `SkillGenerator` does not take a policy identifier
-as input, so training on this directory models the pooled outcome distribution;
-it does not predict a particular policy's outcome. Use single-policy data when
-the prediction target is specifically the deterministic PPO pilot, or mixed
-data when the target is the pooled candidate-outcome distribution.
+To reproduce or update the trained model (`models/generator.pt`):
 
-### Training workflows
-
-Collect and train the single-policy PPO rollout model:
-
+1. **Collect Mixed Data:**
 ```bash
-python -m data_collector.collect --episodes 2000 --save-dir data/raw --seed 42
-python -m generator.train_generator --data-dir data/raw --output models/generator.pt
+   python -m data_collector.collect_mixed_generator_data --episodes 1000 --save-dir data/raw_mixed --seed 42
 ```
-
-The trainer uses 75% of records for training, 12.5% for validation, and 12.5%
-for testing. It selects the best checkpoint using validation loss and does not
-use the test split. It writes `models/generator.pt`, a mid-training checkpoint
-beside it, `data/generator_split_manifest.json`,
-`plots/generator_training_log.csv`, and `plots/generator_training.png`.
-
-The mixed-policy collection and training workflow is also supported:
-
+2. **Train Generator:**
 ```bash
-python -m data_collector.collect_mixed_generator_data \
-  --episodes 1000 \
-  --save-dir data/raw_mixed \
-  --seed 42
-
-python -m generator.train_generator \
-  --data-dir data/raw_mixed \
-  --output models/generator.pt
+   python -m generator.train_generator --data-dir data/raw_mixed --output models/generator.pt
 ```
-
-The mixed collector records outcomes for multiple policies from shared
-starting contexts. Since `SkillGenerator` has no policy-ID input, a model
-trained on `data/raw_mixed` predicts the pooled outcome distribution rather
-than one particular policy's outcome. Both workflows use the same trainer
-and model output path.
-
-Each training run writes `data/generator_split_manifest.json`. Use the
-manifest produced by the matching training run when evaluating that model and
-data directory; a subsequent run replaces this default manifest. Pass
-`--split-manifest` to retain separate manifests for separate datasets.
-
-## Evaluation
-
-#### Held-out MSE
-
-Evaluate against the mean-outcome baseline on the held-out test split. The
-baseline is computed from training records only, and the evaluator accepts
-one data directory per invocation:
-
+3. **Evaluate Predictions:**
 ```bash
-python -m generator.evaluate_generator_mse \
-  --model-path models/generator.pt \
-  --data-dir data/raw \
-  --split-manifest data/generator_split_manifest.json
+   python -m generator.evaluate_generator_mse --model-path models/generator.pt --data-dirs data/raw data/raw_mixed
 ```
+The generator predicts collected rollout totals. It is not a bootstrapped TD
+learner in the current implementation.
 
-For a model trained on mixed data, use `--data-dir data/raw_mixed` and the
-manifest produced by that training run. The default report path is
-`demo/artifacts/generator_mse_report.json`; `--output-dir` changes it.
+## MDN Model Contract
 
-#### Certification report
+`mdn.py` exposes:
 
-Collect held-out candidate-set contexts with seed bases 1000, 2000, and 3000:
+- `forward_inference(context) -> (alpha, support_values)`
+- `forward_auxiliary(context, skill_id) -> (gate_logit, q_hat)`
 
-```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 1000 --prefix seed1000
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 2000 --prefix seed2000
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 3000 --prefix seed3000
-```
+### Support Geometry: SASP (Softmax-Anchored Slack Parameterization)
 
-The collector sets each context seed to the base seed plus its 1-based context
-index. The batches therefore cover 1001-2000, 2001-3000, and 3001-4000 without
-overlapping. Use this directory for both the generator report and the MDN
-evaluation below.
+Support values are decoded so that the admissible region
+`W_x = { w in simplex : w_i <= s_i }` is **feasible by construction at every
+objective count M**, not just at M = 2:
 
-```bash
-python -m generator.evaluate_generator_report \
-  --model-path models/generator.pt \
-  --eval-dir data/mdn_candidate_sets_eval \
-  --output demo/artifacts/generator_evaluation_report.json
-```
+- `0 <= s_i <= 1` for every objective (boundedness)
+- `sum(s) >= 1` (non-emptiness — otherwise no weight vector can respect every
+  per-objective cap while summing to 1, and `W_x` describes nothing)
 
-The report compares recorded candidate outcomes with an idle-policy baseline
-(20 episodes by default) through CDS/PDS. It summarizes per-skill admission
-rates, rejection reasons, and payoff/motive improvements. For
-`ppo_deterministic`, it also reports predicted-versus-actual payoff correlation
-and averages. The JSON is written to the path passed with `--output`.
+The support head emits `2M` logits, split into two groups:
 
-#### Dataset-size comparison
-
-Run the default comparison with:
-
-```bash
-python -m generator.compare_dataset_sizes --data-dir data/raw
-```
-
-The input directory needs at least 7,000 top-level `.npz` rollout files to run
-all default sizes. The script compares 1,000, 3,000, and 7,000 records, each
-with a reproducible 75% / 12.5% / 12.5% train/validation/test split. Their
-split counts are 750/125/125, 2,250/375/375, and 5,250/875/875. A size larger
-than the available pool is skipped. Use `--sizes` to select sizes and
-`--data-dir` to choose the rollout pool.
-
-Selected files are copied to
-`data/dataset_size_comparison_rollouts/size_N/{train,val,test}`. By default,
-plots and results go to `plots/dataset_size_comparison`:
-`combined_training_curves_epochs150.png`,
-`test_mse_vs_dataset_size_epochs150.png`, and
-`dataset_size_comparison_results_epochs150.json`. Use `--rollout-output-dir`
-and `--output-dir` to change those locations. The selected datasets are nested
-by size but each size is split independently, so a file can be in the test
-split for one size and the training split for another.
-
-### MDN Model Contract
-
-`mdn.py` exposes two paths:
-
-- `forward_inference(context)` returns Dirichlet concentration parameters
-  (`alpha`) and support values.
-- `forward_auxiliary(context, skill_id)` returns an admission-gate logit and
-  predicted motive returns (`q_hat`) for the given skill.
-
-The shipped LunarLander configuration has two objectives, `[Safety, Fuel]`.
-The support parameterization and certification geometry support any objective
-count `M >= 2`.
-
-### Support geometry: SASP
-
-The support head uses Softmax-Anchored Slack Parameterization (SASP). It emits
-`2M` values: `M` base-allocation logits and `M` slack-gate logits. The decoder
-computes:
-
-```text
-p = softmax(base_logits)
-g = slack_floor + (1 - slack_floor) * sigmoid(gate_logits)
+```python
+p = softmax(raw[..., :M])                              # sums to 1, p_i in (0, 1)
+g = slack_floor + (1 - slack_floor) * sigmoid(raw[..., M:])  # g_i in (g_min, 1)
 s = p + (1 - p) * g
 ```
 
-The resulting support values satisfy `0 <= s_i <= 1` and `sum(s) >= 1` for
-any finite network output. These constraints make
-`W_x = {w in simplex : w_i <= s_i}` non-empty by construction, rather than
-relying on a loss penalty. The construction is symmetric across objectives.
-`slack_floor` defaults to `0.02` and must be in `[0, 1)`; it prevents the
-support region from collapsing to the single point `s = p`.
+Each `s_i` interpolates between its base allocation `p_i` and the ceiling 1.
+Boundedness holds because `s_i` is a convex combination of `p_i` and 1;
+non-emptiness because `sum(s) = sum(p) + sum((1 - p_i) * g_i) >= sum(p) = 1`.
+Both are algebraic, so they hold for any network weights, at every training
+step and at inference — no penalty term or loss tuning is involved.
 
-### Checkpoint compatibility
+The construction is **permutation-equivariant**: softmax is applied jointly and
+symmetrically across objectives and the gates are elementwise, so no objective
+is structurally privileged by its index. This is what a sequentially chained
+construction cannot offer, and SubRep's objectives have no natural ordering.
 
-SASP widened the support head from `M` outputs to `2M`. Checkpoints from before
-this change are not compatible and must be retrained; their weights are not
-reinterpreted. `utils.mdn_checkpoint_loader.load_mdn_checkpoint` raises
-`IncompatibleCheckpointError`. `utils.mdn_stub.load_mdn_or_stub` reports the
-migration requirement and falls back to `StubMDN`.
+`slack_floor` (default `0.02`, must lie in `[0, 1)`) keeps `W_x` from
+collapsing to the single point `s = p`. A collapsed region would certify skills
+against essentially one weighting — mathematically valid but a fragile
+certificate.
 
-### MDN training data and phases
+> **Replaces the previous behavior.** Earlier versions decoded a feasible
+> interval only for `num_objectives == 2` and fell back to a raw Softplus path
+> (range `(0, inf)`) for every other M. Softplus enforces positivity but neither
+> constraint above, so support values could exceed 1 or sum below 1. The
+> downstream effect was silent: the skill library excluded every MDN_WX-certified
+> skill at that context and fell back to full-simplex skills behind a log line.
 
-Candidate-set files contain one starting context and the recorded outcomes of
-the default seven candidate policies on that same context. Three 1,000-context
-collections produce 3,000 contexts and 21,000 candidate outcomes:
+### Checkpoint compatibility (breaking change)
+
+The support head widened from `M` to `2M` outputs, so **pre-SASP checkpoints
+cannot be loaded** — their weights are not a subset of the new head's meaning.
+Both loaders detect this and raise `IncompatibleCheckpointError` with a
+migration message:
+
+- `utils.mdn_stub.load_mdn_or_stub` — logs the message and falls back to
+  `StubMDN`; weights are never reinterpreted.
+- `utils.mdn_checkpoint_loader.load_mdn_checkpoint` — propagates, since callers
+  of this function have no stub contract.
+
+A legacy checkpoint must be retrained (see *Train the MDN* below).
+
+### Where support values are actually trained
+
+`train_mdn_candidate_sets` optimizes a **policy** loss
+(`compute_mdn_policy_loss(log_prob, advantage)`) that is a function of the
+Dirichlet `alpha` only, so **the support head receives no gradient from it**.
+Re-running candidate-set training after a SASP migration produces a
+shape-correct checkpoint with a freshly initialized support head — which is
+still feasible by construction, but not *fit*.
+
+Support values are trained separately by `MDNSupportTrainer`
+(`generator/mdn_support_trainer.py`), which regresses them against
+support-function targets from a `WeightSetStore`, driven via
+`utils.mdn_support_pipeline.observe_and_train_support`.
+
+For offline, leakage-controlled support fitting, use
+`generator.train_mdn_support`. It groups every observed vertex for one context
+into the same train, validation, or test partition; uses validation MSE for
+model selection; and evaluates the untouched test partition against `StubMDN`
+and `FULL_SIMPLEX`. Generated reports include target semantics, metric
+definitions, and limitations.
+
+Two things to know about that trainer:
+
+- It exposes `last_feasibility_violation_rate`, a **diagnostic only** — never
+  added to the loss. It must read exactly `0.0`; a nonzero value indicates a
+  code regression, not a hyperparameter to tune.
+- Targets are left at their measured values, including the exact `1.0` that the
+  full simplex produces. SASP yields `s_i < 1` strictly, so the support-head MSE
+  **plateaus slightly above zero** rather than converging to ~0, and slack-gate
+  logits grow large. This is expected, not a bug: gradient clipping is already
+  applied, and the feasibility guarantee is unaffected.
+
+## Candidate-Set Data Collection
+
+Candidate-set files are the preferred MDN training input. Each file stores one
+shared context and multiple candidate policy outcomes from that same reset seed.
+
+Recommended training collection:
 
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10000 --prefix seed10000
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 11000 --prefix seed11000
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 12000 --prefix seed12000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 42 --prefix seed42
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10042 --prefix seed10042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 20042 --prefix seed20042
 ```
 
-Each collection uses context seeds `base seed + 1` through `base seed +
-1000`; these training ranges are disjoint from each other and from the held-out
-evaluation seeds below.
+This gives 3,000 contexts and 21,000 candidate outcomes with the default seven
+candidate policies.
 
-Train from those files with the policy and auxiliary phases:
+Recommended held-out collection:
+
+```bash
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 30042 --prefix seed30042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 40042 --prefix seed40042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 50042 --prefix seed50042
+```
+
+These ranges are intentionally separated. Do not use consecutive base seeds for
+multi-context collections: each run uses `base_seed + context_index`, so
+consecutive bases create almost entirely overlapping context seeds.
+
+## Train the MDN
+
+Final recommended configuration:
 
 ```bash
 python -m generator.train_mdn_candidate_sets \
@@ -224,71 +179,166 @@ python -m generator.train_mdn_candidate_sets \
   --q-loss mse
 ```
 
-The policy phase learns the alpha distribution for candidate selection. The
-auxiliary phase learns gate acceptance and motive-return predictions. Q-target
-normalization is enabled by default and is saved with the checkpoint. The
-best auxiliary validation state is restored before the shared model is saved.
-Optional auxiliary settings include `--q-loss huber`,
-`--calibrate-auxiliary-q`, `--use-ips`, and `--use-doubly-robust`; IPS and
-doubly robust estimation cannot be enabled together.
+Training phases:
 
-Candidate-set training does not fit the support head. Support values are
-trained separately by `MDNSupportTrainer` against support-function targets
-stored in `WeightSetStore`; `utils.mdn_support_pipeline.observe_and_train_support`
-records a certified weight and runs a support-training step. The trainer's
-`last_feasibility_violation_rate` is a diagnostic and should remain exactly
-`0.0` under SASP. Targets may include the exact value `1.0`, while SASP outputs
-remain strictly below `1.0` for finite logits, so support MSE can plateau above
-zero; this is expected and does not invalidate feasibility.
+- policy phase: learns alpha/selection behavior from candidate outcomes,
+- auxiliary phase: learns gate acceptance and motive-return prediction,
+- Q-target normalization: enabled by default and stored in checkpoints,
+- best auxiliary checkpoint restore: final policy and auxiliary checkpoints share
+  the best validation state.
 
-### Held-out candidate-set evaluation
+### Train and evaluate the support head
 
-Collect held-out contexts once, using seed bases 1000, 2000, and 3000. The
-collector adds each 1-based context index to its base seed, so the resulting
-context-seed ranges (1001-2000, 2001-3000, and 3001-4000) do not overlap.
-Use this evaluation directory for both the generator certification report and
-the MDN evaluation; do not include it in the MDN training directory.
+Collect probability-aware runtime decisions with the trained policy checkpoint.
+These logs contain the context, certified selected weight, and every candidate's
+certification deltas, so the same collected records can provide support targets
+and held-out downstream metrics:
 
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 1000 --prefix seed1000
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 2000 --prefix seed2000
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 3000 --prefix seed3000
+python -m data_collector.collect_probability_aware_runtime_logs \
+  --decisions 3000 \
+  --save-dir data/mdn_support_runtime_logs \
+  --seed 60042 \
+  --prefix learned \
+  --behavior-mdn-checkpoint models/mdn_policy_best.pth \
+  --map-location cpu
 ```
 
-Evaluate the MDN on those held-out candidate sets:
+Support prediction and admission metrics need one observation per context. A
+real motive-shift reuse metric needs at least two distinct observed weights at
+the same context. Collect a second pass with the same context seeds and a
+different behavior weight when that metric is required:
+
+```bash
+python -m data_collector.collect_probability_aware_runtime_logs \
+  --decisions 3000 \
+  --save-dir data/mdn_support_runtime_logs \
+  --seed 60042 \
+  --prefix comparison \
+  --behavior-weights 0.2 0.8 \
+  --gate-type PDS \
+  --pds-epsilon 0.1 \
+  --map-location cpu
+```
+
+This second pass also supplies PDS examples; the first pass supplies CDS
+examples. The evaluator reports motive-shift context coverage and leaves reuse
+metrics unavailable instead of treating a single observed weight as a shift.
+
+Fit only the support head, select it on a context-disjoint validation split, and
+evaluate the untouched test split:
+
+```bash
+python -m generator.train_mdn_support \
+  --base-checkpoint models/mdn_policy_best.pth \
+  --runtime-log-dir data/mdn_support_runtime_logs \
+  --runtime-log-pattern "*.npz" \
+  --output-checkpoint models/mdn_support_best.pth \
+  --output-dir data/mdn_support_evaluation \
+  --seed 42 \
+  --device cpu
+```
+
+This writes the split stores and manifest, the selected support checkpoint,
+`support_experiment.json`, and `support_test_report.md`. The report includes
+support error and feasibility, CDS/PDS agreement, false admission/rejection,
+reuse under the logged motive weights, and comparisons with `StubMDN`,
+`FULL_SIMPLEX`, and the training-mean constant baseline.
+
+`--weight-store` remains available when a `RuntimeCertificationPipeline` has
+already persisted `data/weight_store.json`. In that mode, pass a matching
+`--candidate-data-dir` to compute downstream candidate metrics; otherwise those
+metrics are explicitly reported as unavailable.
+
+Optional experimental flags:
+
+- `--q-loss huber`: supported, but did not improve held-out Q error in final validation.
+- `--calibrate-auxiliary-q`: supported, but kept disabled because it worsened held-out Q error.
+- `--use-ips` / `--use-doubly-robust`: available for future off-policy logged-data settings; not used for the final candidate-set checkpoint.
+
+## Evaluate the MDN
 
 ```bash
 python -m generator.evaluate_mdn_candidate_sets \
   --checkpoint models/mdn_policy_best.pth \
   --data-dir data/mdn_candidate_sets_eval \
   --pattern "*.npz" \
-  --seed 1000 \
+  --seed 100 \
   --device cpu
 ```
 
-The evaluator reports candidate-selection lift against random certified
-candidates and deterministic PPO, regret and balanced top-1 metrics, gate
-precision/recall/F1, motive-return MSE/MAE, and bootstrap confidence intervals.
+The evaluator reports:
 
-## Tests
+- lift vs deterministic PPO,
+- lift vs random certified candidate,
+- balanced top-1 accuracy,
+- balanced regret,
+- gate precision/recall/F1,
+- Q/motive MSE and MAE,
+- per-objective Q MSE and MAE,
+- bootstrap confidence intervals.
 
-Run the focused SkillGenerator evaluation regressions:
+Historical candidate-set validation after the support-geometry fix (not a
+support-head evaluation, and not leakage-free under the old overlapping seed
+commands):
+
+| Metric | Mean |
+|---|---:|
+| Lift vs always-PPO | +9.54 |
+| Lift vs random certified | +49.34 |
+| Balanced top-1 accuracy | 0.989 |
+| Gate F1 | 0.900 |
+| Q/motive MSE | 601.65 |
+| Q/motive MAE | 13.37 |
+
+### 5. Validate Support Geometry
+
+After training, the MDN must still produce feasible support values. Under SASP
+this is guaranteed algebraically, so this check is a regression tripwire rather
+than a quality measurement — it should be impossible to fail:
 
 ```bash
-python -m pytest tests/test_generator_evaluations.py -v
+python - <<'PY'
+from pathlib import Path
+import numpy as np
+import torch
+from generator.evaluate_mdn_candidate_sets import load_mdn_checkpoint
+
+model = load_mdn_checkpoint("models/mdn_policy_best.pth", map_location="cpu")
+files = sorted(Path("data/mdn_candidate_sets_eval").glob("*.npz"))[:500]
+contexts = np.stack([np.load(path)["context"] for path in files], axis=0)
+
+with torch.no_grad():
+    alpha, support = model.forward_inference(torch.tensor(contexts, dtype=torch.float32))
+
+print("contexts_checked:", len(files))
+print("objectives:", support.shape[-1])
+print("alpha_min:", float(alpha.min()))
+print("support_min:", float(support.min()))
+print("support_max:", float(support.max()))
+print("support_sum_min:", float(support.sum(dim=-1).min()))
+
+assert torch.all(alpha > 0)
+assert torch.all(support >= 0)
+assert torch.all(support <= 1)
+assert torch.all(support.sum(dim=-1) >= 1.0)
+print("MDN support geometry check passed")
+PY
 ```
 
-They cover comparison splits and defaults, held-out MSE and its training-only
-baseline, candidate-set loading, and certification-report aggregation.
+Note this reads `data/mdn_candidate_sets_eval`, which is **not** committed —
+collect it first with the held-out command under *Candidate-Set Data
+Collection* above. A legacy checkpoint will raise
+`IncompatibleCheckpointError` here rather than producing wrong geometry.
 
-The support-geometry and MDN test suites cover model behavior, selection,
-training, checkpoint compatibility, and held-out evaluation:
+## Tests
 
 ```bash
 python -m pytest tests/test_generator.py tests/test_generator_training.py -v
 python -m pytest tests/test_mdn.py tests/test_mdn_skill_selection.py -v
+# SASP guarantees + downstream generalization
 python -m pytest tests/test_skill_library.py tests/test_mdn_support_trainer.py tests/test_mdn_stub.py -v
-python -m pytest tests/test_mdn_support_geometry.py tests/test_mdn_support_pipeline.py -v
+python -m pytest tests/test_mdn_support_data.py tests/test_evaluate_mdn_support.py tests/test_train_mdn_support.py -v
 python -m pytest tests/test_train_mdn_candidate_sets.py tests/test_evaluate_mdn_candidate_sets.py -v
 python -m pytest tests/test_trained_mdn_end_to_end.py tests/test_trained_mdn_zero_shot.py -v
 ```

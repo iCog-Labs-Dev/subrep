@@ -52,6 +52,8 @@ class ProbabilityAwareRuntimeLogCollector:
         pilot_checkpoint: str = "models/pilot_ppo.pt",
         map_location: str = "cpu",
         behavior_config: BehaviorPolicyConfig | None = None,
+        gate_type: str = "CDS",
+        pds_epsilon: float = 0.1,
     ) -> None:
         self.seed = int(seed)
         self.save_dir = Path(save_dir)
@@ -61,6 +63,12 @@ class ProbabilityAwareRuntimeLogCollector:
         self.baseline_episodes = int(baseline_episodes)
         self.rng = np.random.default_rng(self.seed)
         self.behavior_config = behavior_config or BehaviorPolicyConfig()
+        self.gate_type = str(gate_type).strip().upper()
+        self.pds_epsilon = float(pds_epsilon)
+        if self.gate_type not in {"CDS", "PDS"}:
+            raise ValueError(f"gate_type must be CDS or PDS, got {gate_type!r}")
+        if not np.isfinite(self.pds_epsilon) or self.pds_epsilon < 0.0:
+            raise ValueError("pds_epsilon must be finite and non-negative")
 
         random.seed(self.seed)
         np.random.seed(self.seed)
@@ -94,6 +102,8 @@ class ProbabilityAwareRuntimeLogCollector:
         candidate_records = build_candidate_skill_records(
             skill_outcomes=outcomes,
             baseline_stats=self.baseline_stats,
+            gate_type=self.gate_type,
+            epsilon=self.pds_epsilon if self.gate_type == "PDS" else None,
         )
         if not any(candidate.is_certified for candidate in candidate_records):
             return None
@@ -121,6 +131,8 @@ class ProbabilityAwareRuntimeLogCollector:
             "behavior_temperature": self.behavior_config.temperature,
             "behavior_weight_source": "mdn_checkpoint" if self.behavior_model is not None else "fixed_weights",
             "behavior_mdn_checkpoint": self.behavior_config.mdn_checkpoint,
+            "gate_type": self.gate_type,
+            "pds_epsilon": self.pds_epsilon if self.gate_type == "PDS" else None,
         }
         record = {
             "context": context,
@@ -313,6 +325,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--behavior-temperature", type=float, default=1.0)
     parser.add_argument("--behavior-weights", type=float, nargs=2, default=(0.5, 0.5))
     parser.add_argument("--behavior-mdn-checkpoint", type=str, default=None)
+    parser.add_argument("--gate-type", choices=("CDS", "PDS"), default="CDS")
+    parser.add_argument("--pds-epsilon", type=float, default=0.1)
     return parser.parse_args()
 
 
@@ -334,6 +348,8 @@ def main() -> None:
             weights=tuple(float(v) for v in behavior_weights),
             mdn_checkpoint=args.behavior_mdn_checkpoint,
         ),
+        gate_type=args.gate_type,
+        pds_epsilon=args.pds_epsilon,
     )
     collector.collect(args.decisions, prefix=args.prefix, max_attempts=args.max_attempts, resume=args.resume)
     print(f"[Done] Probability-aware runtime logs saved to '{args.save_dir}/'")
