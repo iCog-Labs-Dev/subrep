@@ -8,6 +8,8 @@ every input, ignoring the state entirely).
 
 
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
