@@ -84,11 +84,22 @@ class CertificateStore:
 
         CDS certificates are globally admitted under valid simplex constraints.
         PDS certificates are checked with: delta_r + w^T delta_n >= -epsilon.
+
+        Raises:
+            ValueError: If the weight vector length does not match any certificate's
+                        delta_n length. Dimension mismatches indicate a schema error
+                        that must not be silently swallowed.
         """
         w = self._validated_weights_array(weights)
         results: list[Certificate] = []
 
         for cert in self.load_all():
+            if len(w) != len(cert.delta_n):
+                raise ValueError(
+                    f"Weight vector length ({len(w)}) does not match certificate "
+                    f"'{cert.skill_id}' delta_n length ({len(cert.delta_n)}). "
+                    "Use schema-filtered queries to avoid cross-dimension mismatches."
+                )
             if cert.gate_type == "CDS":
                 # CDS is globally admissible under the simplex assumption.
                 results.append(cert)
@@ -98,6 +109,7 @@ class CertificateStore:
             if score >= -float(cert.epsilon):
                 results.append(cert)
         return results
+
 
     def remove_skill(self, skill_id: str) -> bool:
         """Remove a certificate by skill_id. Returns False when missing."""
@@ -187,12 +199,18 @@ class CertificateStore:
 
     @staticmethod
     def _validated_weights_array(weights: list[float]) -> np.ndarray:
-        """Validate and return a 2D simplex weight array for this phase."""
+        """
+        Validate and return an N-dimensional simplex weight array.
+
+        Accepts any non-empty simplex vector (length N >= 1).
+        """
         if weights is None:
             raise ValueError("weights must not be None")
         arr = np.asarray(weights, dtype=float)
-        if arr.shape != (2,):
-            raise ValueError(f"weights must be a length-2 vector, got shape {arr.shape}")
+        if arr.ndim != 1 or arr.shape[0] == 0:
+            raise ValueError(
+                f"weights must be a non-empty 1D vector, got shape {arr.shape}"
+            )
         if not validate_simplex_weights(arr):
             raise ValueError(
                 "weights must be a valid simplex vector (finite, non-negative, sum to 1)"

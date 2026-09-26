@@ -81,9 +81,22 @@ def test_certificate_cds_nonzero_epsilon_fails():
         _sample_certificate(gate_type="CDS", epsilon=0.1)
 
 
-def test_certificate_wrong_delta_n_length_fails():
-    with pytest.raises(ValueError):
-        _sample_certificate(delta_n=(0.1, 0.2, 0.3))  # type: ignore[arg-type]
+def test_certificate_empty_delta_n_fails():
+    """delta_n must be non-empty; any N >= 1 is accepted (N-dimensional)."""
+    with pytest.raises((ValueError, TypeError)):
+        Certificate(
+            skill_id="s",
+            gate_type="CDS",
+            delta_r=0.5,
+            delta_n=(),
+            admission_margin=0.4,
+            epsilon=0.0,
+            timestamp=datetime.utcnow().isoformat(),
+            weight_region_type="FULL_SIMPLEX",
+        )
+    # 3D is now valid — no exception expected.
+    cert_3d = _sample_certificate(delta_n=(0.1, 0.2, 0.3))  # type: ignore[arg-type]
+    assert len(cert_3d.delta_n) == 3
 
 
 def test_certificate_negative_admission_margin_fails():
@@ -258,8 +271,10 @@ def test_query_by_weights_invalid_values_raise():
         store.query_by_weights([-0.1, 1.1])  # negative component
     with pytest.raises(ValueError):
         store.query_by_weights([0.5, np.inf])  # non-finite
-    with pytest.raises(ValueError):
-        store.query_by_weights([0.5, 0.3, 0.2])  # wrong shape
+    # [0.5, 0.3, 0.2] is a valid 3D simplex but the store cert is 2D
+    # — raises due to dimension mismatch (B4 dimension-safe store queries).
+    with pytest.raises(ValueError, match="delta_n length"):
+        store.query_by_weights([0.5, 0.3, 0.2])
 
 
 def test_query_by_weights_raises_even_when_store_empty():

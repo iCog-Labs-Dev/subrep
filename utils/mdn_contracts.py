@@ -20,13 +20,18 @@ class CandidateSkillRecord:
 
     skill_id: str
     delta_r: float
-    delta_n: tuple[float, float]
+    # delta_n is an N-dimensional motive improvement vector (N >= 1).
+    delta_n: tuple[float, ...]
     is_certified: bool
     gate_type: str
     metadata: dict[str, Any] = field(default_factory=dict)
     admission_margin: float | None = None
     epsilon: float | None = None
     baseline_id: str | None = None
+    # Optional schema identity for cross-domain rejection.
+    domain_id: str | None = None
+    motive_schema_version: str | None = None
+    motive_names: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.skill_id, str) or not self.skill_id.strip():
@@ -46,8 +51,8 @@ class CandidateSkillRecord:
         object.__setattr__(self, "delta_r", delta_r)
 
         delta_n = tuple(float(v) for v in self.delta_n)
-        if len(delta_n) != 2:
-            raise ValueError(f"delta_n must have length 2, got {len(delta_n)}")
+        if len(delta_n) == 0:
+            raise ValueError("delta_n must be non-empty")
         if not all(isfinite(v) for v in delta_n):
             raise ValueError(f"delta_n must contain only finite values, got {delta_n}")
         object.__setattr__(self, "delta_n", delta_n)
@@ -70,6 +75,25 @@ class CandidateSkillRecord:
         if not isinstance(self.metadata, dict):
             raise ValueError(f"metadata must be a dict, got {type(self.metadata).__name__}")
 
+        # All-or-none schema identity: must have all three or none.
+        schema_fields = (self.domain_id, self.motive_schema_version, self.motive_names)
+        present = sum(f is not None for f in schema_fields)
+        if present not in (0, 3):
+            raise ValueError(
+                "Schema identity must be all-or-none: provide all of "
+                "domain_id, motive_schema_version, and motive_names, or none of them."
+            )
+
+        # When motive_names is provided, length must match delta_n.
+        if self.motive_names is not None:
+            names = tuple(self.motive_names)
+            object.__setattr__(self, "motive_names", names)
+            if len(names) != len(delta_n):
+                raise ValueError(
+                    f"motive_names length ({len(names)}) must match "
+                    f"delta_n length ({len(delta_n)}) when provided"
+                )
+
 
 @dataclass(frozen=True)
 class MDNDecisionRecord:
@@ -84,7 +108,8 @@ class MDNDecisionRecord:
     selected_score: float | None = None
     behavior_probability: float | None = None
     actual_payoff: float | None = None
-    actual_motives: tuple[float, float] | None = None
+    # actual_motives is an N-dimensional observed motive vector (N >= 1).
+    actual_motives: tuple[float, ...] | None = None
     utility: float | None = None
     schema_version: str = "1.0"
 
@@ -123,6 +148,15 @@ class MDNDecisionRecord:
             raise ValueError("candidate_skills must not be empty")
         if not all(isinstance(candidate, CandidateSkillRecord) for candidate in self.candidate_skills):
             raise ValueError("candidate_skills must contain only CandidateSkillRecord instances")
+
+        # Every candidate's delta_n dimension must equal len(alpha).
+        n = len(alpha)
+        for candidate in self.candidate_skills:
+            if len(candidate.delta_n) != n:
+                raise ValueError(
+                    f"Candidate '{candidate.skill_id}' has delta_n of length {len(candidate.delta_n)}, "
+                    f"but alpha has length {n}. All candidates must share the same motive dimension."
+                )
 
         if not isinstance(self.selected_skill_id, str) or not self.selected_skill_id.strip():
             raise ValueError("selected_skill_id must be a non-empty string")

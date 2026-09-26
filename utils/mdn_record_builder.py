@@ -22,10 +22,15 @@ class PreparedCandidateOutcome:
     context: tuple[float, ...]
     skill_id: str
     payoff: float
-    motives: tuple[float, float]
+    # motives is an N-dimensional observed motive vector (N >= 1).
+    motives: tuple[float, ...]
     metadata: dict[str, Any] = field(default_factory=dict)
     gate_type: str = "CDS"
     epsilon: float | None = None
+    # Optional schema identity — propagated into the CandidateSkillRecord.
+    domain_id: str | None = None
+    motive_schema_version: str | None = None
+    motive_names: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         context = np.asarray(self.context, dtype=np.float32).reshape(-1)
@@ -44,8 +49,8 @@ class PreparedCandidateOutcome:
         object.__setattr__(self, "payoff", payoff)
 
         motives = np.asarray(self.motives, dtype=np.float32).reshape(-1)
-        if motives.shape != (2,):
-            raise ValueError(f"motives must have shape (2,), got {motives.shape}")
+        if motives.shape[0] == 0:
+            raise ValueError("motives must be non-empty")
         if not np.all(np.isfinite(motives)):
             raise ValueError("motives must contain only finite values")
         object.__setattr__(self, "motives", tuple(float(v) for v in motives))
@@ -76,6 +81,9 @@ def build_candidate_skill_record(
     baseline_id: str | None = None,
     epsilon: float | None = None,
     weight_set: WeightSet | None = None,
+    domain_id: str | None = None,
+    motive_schema_version: str | None = None,
+    motive_names: tuple[str, ...] | None = None,
 ) -> CandidateSkillRecord:
     """Build a certified-candidate record from baseline-relative improvements."""
     calculator = ImprovementCalculator(baseline_stats)
@@ -104,6 +112,9 @@ def build_candidate_skill_record(
         admission_margin=admission_margin,
         epsilon=effective_epsilon,
         baseline_id=baseline_id,
+        domain_id=domain_id,
+        motive_schema_version=motive_schema_version,
+        motive_names=motive_names,
     )
 
 
@@ -135,6 +146,9 @@ def build_candidate_skill_records(
                 baseline_id=baseline_id,
                 epsilon=prepared.epsilon,
                 weight_set=weight_set,
+                domain_id=prepared.domain_id,
+                motive_schema_version=prepared.motive_schema_version,
+                motive_names=prepared.motive_names,
             )
         )
     return tuple(records)

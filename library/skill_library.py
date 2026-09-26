@@ -20,6 +20,44 @@ from certification.pds_test import PDSGate
 
 logger = logging.getLogger(__name__)
 
+# Import schema compatibility helpers.
+try:
+    from schemas.objective_schema import (
+        ObjectiveSchema,
+        schemas_compatible,
+        schemas_loadable,
+    )
+    _SCHEMAS_AVAILABLE = True
+except ImportError:
+    _SCHEMAS_AVAILABLE = False
+    ObjectiveSchema = None        # type: ignore[assignment,misc]
+    schemas_loadable = None       # type: ignore[assignment]
+
+
+def _entry_schema_compatible(entry: "SkillEntry", schema: "ObjectiveSchema | None") -> bool:
+    """
+    Return True when *entry* is runtime-compatible with *schema*.
+
+    Rules (strict mode):
+    - schema is None  → True (no domain filter requested; accept all).
+    - entry has no schema fields (all None)  → False (legacy, quarantined).
+    - entry has an explicit schema  → use strict schemas_compatible().
+    """
+    if schema is None:
+        return True  # No filter requested — backward compat.
+    cert = entry.certificate
+    if cert.domain_id is None or cert.motive_schema_version is None or cert.motive_names is None:
+        return False  # Legacy artifact — quarantined at runtime.
+    if not _SCHEMAS_AVAILABLE:
+        return False
+    from schemas.objective_schema import ObjectiveSchema as _OS
+    cert_schema = _OS(
+        domain_id=cert.domain_id,
+        motive_schema_version=cert.motive_schema_version,
+        motive_names=cert.motive_names,
+    )
+    return schemas_compatible(cert_schema, schema)
+
 def _validate_wx_geometry(support_directions: np.ndarray, support_values: np.ndarray,) -> tuple[np.ndarray, np.ndarray]:
     """Validate W_x support geometry for M=2 standard basis"""
     sd = np.asarray(support_directions, dtype=np.float64)
@@ -91,9 +129,23 @@ def _build_wx_weight_set(support_directions: tuple[tuple[float, ...], ...], supp
 class SkillLibrary:
     """ In-memory store of certified skills """
 
-    def __init__(self, cert_store=None, save_path: str = "data/library.json") -> None:
+    def __init__(
+        self,
+        cert_store=None,
+        save_path: str = "data/library.json",
+        schema: "ObjectiveSchema | None" = None,
+    ) -> None:
+        """
+        Args:
+            cert_store: Optional certificate store for validation.
+            save_path: Default file path for save/load.
+            schema: Optional root ObjectiveSchema for this library.
+                When set, save() persists the schema identity and load()
+                raises if the file's schema conflicts with this one.
+        """
         self.cert_store = cert_store
         self.save_path = save_path
+        self.schema: "ObjectiveSchema | None" = schema
         self._skills: Dict[str, SkillEntry] = {}
 
     def add_skill(
@@ -221,8 +273,20 @@ class SkillLibrary:
         current_weight: np.ndarray,
         support_directions: Optional[np.ndarray] = None,
         support_values: Optional[np.ndarray] = None,
+        schema: "ObjectiveSchema | None" = None,
     ) -> List[SkillEntry]:
-        """Return skills admissible under the current MDN weight and W_x region."""
+        """
+        Return skills admissible under the current MDN weight and W_x region.
+
+        Args:
+            current_weight: Simplex weight vector (N-dimensional).
+            support_directions: Required for MDN_WX skills.
+            support_values: Required for MDN_WX skills.
+            schema: When provided, only skills explicitly tagged with a
+                compatible schema are returned.  Legacy skills (no schema
+                fields) are EXCLUDED (strict mode).  Pass None to disable
+                schema filtering and return all admissible skills.
+        """
         w = np.asarray(current_weight, dtype=np.float64).reshape(-1)
         if not validate_simplex_weights(w):
             raise ValueError(
@@ -240,8 +304,20 @@ class SkillLibrary:
 
         admissible: list[SkillEntry] = []
         for entry in self._skills.values():
+            # Schema filter: reject entries that don't match the requested domain.
+            if not _entry_schema_compatible(entry, schema):
+                continue
+
             if entry.weight_region_type == FULL_SIMPLEX:
-                # Globally certified
+                # Dimension guard: skip with warning if weight dim doesn't match.
+                entry_dim = len(entry.delta_n)
+                if entry_dim != len(w):
+                    logger.warning(
+                        "Skipping skill '%s': weight dim %d != delta_n dim %d.",
+                        entry.skill_id, len(w), entry_dim,
+                    )
+                    continue
+                # Globally certified across the full simplex.
                 admissible.append(entry)
 
             elif entry.weight_region_type == MDN_WX:
@@ -271,6 +347,35 @@ class SkillLibrary:
         """Return the number of skills in the library."""
         return len(self._skills)
 
+    def query_by_schema(self, schema: "ObjectiveSchema") -> "List[SkillEntry]":
+        """
+        Return skills whose certificate is strictly compatible with *schema*.
+
+        Uses strict runtime compatibility: legacy skills (domain_id, version,
+        or motive_names any of which is None) are EXCLUDED.  Only skills with
+        an explicit schema that matches all three fields of *schema* are
+        returned.
+
+        Args:
+            schema: The objective schema to filter by.
+
+        Returns:
+            List of SkillEntry whose certificates match schema exactly.
+
+        Raises:
+            ImportError: If the schemas package is not available.
+        """
+        if not _SCHEMAS_AVAILABLE:
+            raise ImportError(
+                "schemas package is not available; cannot use query_by_schema()"
+            )
+
+        result = []
+        for entry in self._skills.values():
+            if _entry_schema_compatible(entry, schema):
+                result.append(entry)
+        return result
+
     def register_policy(self, skill_id: str, policy: Callable) -> bool:
         """ Attach a policy to a skill that was loaded from disk. """
         entry = self._skills.get(skill_id)
@@ -285,7 +390,7 @@ class SkillLibrary:
         filepath = Path(path)
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
-        data = {
+        data: dict = {
             "version": 1,
             "skill_count": self.count(),
             "skills": {
@@ -293,6 +398,14 @@ class SkillLibrary:
                 for sid, entry in self._skills.items()
             },
         }
+
+        # Persist root schema identity when set.
+        if self.schema is not None:
+            data["schema"] = {
+                "domain_id": self.schema.domain_id,
+                "motive_schema_version": self.schema.motive_schema_version,
+                "motive_names": list(self.schema.motive_names),
+            }
 
         with open(filepath, "w") as f:
             json.dump(data, f, indent=2)
@@ -304,6 +417,27 @@ class SkillLibrary:
 
         with open(filepath, "r") as f:
             data = json.load(f)
+
+        # Restore and validate root schema if present in the file.
+        file_schema_dict = data.get("schema")
+        if file_schema_dict is not None and _SCHEMAS_AVAILABLE:
+            from schemas.objective_schema import ObjectiveSchema as _OS
+            file_schema = _OS(
+                domain_id=file_schema_dict["domain_id"],
+                motive_schema_version=file_schema_dict["motive_schema_version"],
+                motive_names=tuple(file_schema_dict["motive_names"]),
+            )
+            if self.schema is not None:
+                from schemas.objective_schema import schemas_compatible as _compat
+                if not _compat(self.schema, file_schema):
+                    raise ValueError(
+                        f"Library file schema ({file_schema.domain_id!r} v{file_schema.motive_schema_version}) "
+                        f"conflicts with this library's schema ({self.schema.domain_id!r} v{self.schema.motive_schema_version}). "
+                        "Load aborted to prevent cross-domain skill mixing."
+                    )
+            else:
+                # Adopt the file schema when none was set.
+                self.schema = file_schema
 
         self._skills = {
             sid: SkillEntry.from_dict(entry_data)

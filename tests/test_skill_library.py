@@ -637,3 +637,90 @@ def test_certification_to_library_flow():
     selector = SkillSelector(library=lib, seed=42)
     chosen = selector.select_random(np.zeros(8))
     assert chosen in {"cert-int-a", "cert-int-b"}
+
+
+# ---------------------------------------------------------------------------
+# Group C2: SkillLibrary schema persistence tests
+# ---------------------------------------------------------------------------
+
+from schemas.objective_schema import ObjectiveSchema
+from schemas.minecraft_objective_schema import MINECRAFT_OBJECTIVE_SCHEMA, LUNARLANDER_OBJECTIVE_SCHEMA
+
+
+def test_library_save_persists_schema(tmp_path):
+    """save() writes schema identity to JSON when schema is set."""
+    import json
+    lib = SkillLibrary(schema=LUNARLANDER_OBJECTIVE_SCHEMA)
+    path = str(tmp_path / "lib.json")
+    lib.save(path)
+
+    with open(path) as f:
+        data = json.load(f)
+
+    assert "schema" in data
+    assert data["schema"]["domain_id"] == "lunarlander"
+    assert data["schema"]["motive_schema_version"] == "1.0"
+    assert data["schema"]["motive_names"] == ["Safety", "Fuel"]
+
+
+def test_library_save_no_schema_key_when_unset(tmp_path):
+    """save() does NOT write a 'schema' key when no schema is set."""
+    import json
+    lib = SkillLibrary()
+    path = str(tmp_path / "lib.json")
+    lib.save(path)
+
+    with open(path) as f:
+        data = json.load(f)
+
+    assert "schema" not in data
+
+
+def test_library_load_adopts_file_schema(tmp_path):
+    """load() adopts schema from file when instance has none."""
+    lib_writer = SkillLibrary(schema=LUNARLANDER_OBJECTIVE_SCHEMA)
+    path = str(tmp_path / "lib.json")
+    lib_writer.save(path)
+
+    lib_reader = SkillLibrary()   # no schema set
+    assert lib_reader.schema is None
+    lib_reader.load(path)
+    assert lib_reader.schema is not None
+    assert lib_reader.schema.domain_id == "lunarlander"
+
+
+def test_library_load_keeps_compatible_schema(tmp_path):
+    """load() succeeds when instance schema matches file schema."""
+    lib_writer = SkillLibrary(schema=LUNARLANDER_OBJECTIVE_SCHEMA)
+    path = str(tmp_path / "lib.json")
+    lib_writer.save(path)
+
+    lib_reader = SkillLibrary(schema=LUNARLANDER_OBJECTIVE_SCHEMA)
+    lib_reader.load(path)   # same schema — must not raise
+    assert lib_reader.schema.domain_id == "lunarlander"
+
+
+def test_library_load_raises_on_schema_conflict(tmp_path):
+    """load() raises ValueError when file schema conflicts with instance schema."""
+    # Save a Minecraft library.
+    lib_writer = SkillLibrary(schema=MINECRAFT_OBJECTIVE_SCHEMA)
+    path = str(tmp_path / "minecraft_lib.json")
+    lib_writer.save(path)
+
+    # Try to load it into a Lunar library.
+    lib_lunar = SkillLibrary(schema=LUNARLANDER_OBJECTIVE_SCHEMA)
+    with pytest.raises(ValueError, match="conflicts"):
+        lib_lunar.load(path)
+
+
+def test_library_roundtrip_no_schema(tmp_path):
+    """save/load roundtrip works when no schema is set (backward compat)."""
+    lib = SkillLibrary()
+    path = str(tmp_path / "lib.json")
+    lib.save(path)
+
+    lib2 = SkillLibrary()
+    lib2.load(path)
+    assert lib2.schema is None
+    assert lib2.count() == 0
+
