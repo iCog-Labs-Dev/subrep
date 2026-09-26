@@ -9,9 +9,21 @@ from math import isclose, isfinite
 from typing import Any, Mapping
 
 
-REQUEST_SCHEMA_VERSION = "subrep.omegaclaw.recommendation.request.v1"
-RESPONSE_SCHEMA_VERSION = "subrep.omegaclaw.recommendation.response.v1"
-AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.recommendation.audit.v1"
+REQUEST_SCHEMA_VERSION = "subrep.omegaclaw.explanation.request.v1"
+RESPONSE_SCHEMA_VERSION = "subrep.omegaclaw.explanation.response.v1"
+AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.explanation.audit.v1"
+SELECTION_RULE = "MAX_FINAL_SELECTION_SCORE"
+TIE_BREAKER = "LEXICOGRAPHIC_SKILL_ID"
+INTEGRATION_MODE = "EXPLANATION_ONLY"
+SELECTION_BASIS = "SUBREP_DECISION"
+NO_ADMISSIBLE_SKILLS = "NO_ADMISSIBLE_SKILLS"
+VALID_ADVISORY_CONCERN_CODES = {
+    "SMALL_SCORE_GAP",
+    "NEGATIVE_OBJECTIVE_TRADEOFF",
+    "PDS_EPSILON_USED",
+    "LOW_CERTIFICATE_MARGIN",
+    "HIGH_PRIORITY_OBJECTIVE_DECLINE",
+}
 VALID_EVIDENCE_LABELS = {"OBSERVED", "SYNTHETIC"}
 VALID_GATE_TYPES = {"CDS", "PDS"}
 VALID_WEIGHT_REGION_TYPES = {"FULL_SIMPLEX", "MDN_WX"}
@@ -159,8 +171,109 @@ class SkillExclusion:
 
 
 @dataclass(frozen=True)
+class SubRepDecision:
+    """Authoritative selection or abstention computed entirely by SubRep."""
+
+    selected_skill_id: str | None
+    selected_score: float | None
+    runner_up_skill_id: str | None
+    runner_up_score: float | None
+    score_gap: float | None
+    abstain: bool
+    reason_code: str | None = None
+    selection_rule: str = SELECTION_RULE
+    tie_breaker: str = TIE_BREAKER
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.abstain, bool):
+            raise ValueError("abstain must be bool")
+        if self.selection_rule != SELECTION_RULE:
+            raise ValueError(f"selection_rule must be {SELECTION_RULE!r}")
+        if self.tie_breaker != TIE_BREAKER:
+            raise ValueError(f"tie_breaker must be {TIE_BREAKER!r}")
+
+        if self.abstain:
+            if any(
+                value is not None
+                for value in (
+                    self.selected_skill_id,
+                    self.selected_score,
+                    self.runner_up_skill_id,
+                    self.runner_up_score,
+                    self.score_gap,
+                )
+            ):
+                raise ValueError("abstaining decisions must not contain selected or runner-up values")
+            if self.reason_code != NO_ADMISSIBLE_SKILLS:
+                raise ValueError(f"abstaining reason_code must be {NO_ADMISSIBLE_SKILLS!r}")
+            return
+
+        object.__setattr__(
+            self,
+            "selected_skill_id",
+            _non_empty(self.selected_skill_id, "selected_skill_id"),
+        )
+        object.__setattr__(
+            self,
+            "selected_score",
+            _finite(self.selected_score, "selected_score"),
+        )
+        if self.reason_code is not None:
+            raise ValueError("non-abstaining decisions must have reason_code == None")
+
+        if self.runner_up_skill_id is None:
+            if self.runner_up_score is not None or self.score_gap is not None:
+                raise ValueError("runner_up_score and score_gap require runner_up_skill_id")
+            return
+
+        runner_id = _non_empty(self.runner_up_skill_id, "runner_up_skill_id")
+        if runner_id == self.selected_skill_id:
+            raise ValueError("runner_up_skill_id must differ from selected_skill_id")
+        runner_score = _finite(self.runner_up_score, "runner_up_score")
+        score_gap = _finite(self.score_gap, "score_gap")
+        if score_gap < 0.0:
+            raise ValueError("score_gap must be non-negative")
+        if not isclose(
+            score_gap,
+            float(self.selected_score) - runner_score,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ):
+            raise ValueError("score_gap must equal selected_score - runner_up_score")
+        object.__setattr__(self, "runner_up_skill_id", runner_id)
+        object.__setattr__(self, "runner_up_score", runner_score)
+        object.__setattr__(self, "score_gap", score_gap)
+
+
+def build_subrep_decision(skills: tuple[SkillEvidence, ...]) -> SubRepDecision:
+    """Create the authoritative decision using SubRep's stable score ordering."""
+
+    ranked = sorted(skills, key=lambda skill: (-skill.score, skill.skill_id))
+    if not ranked:
+        return SubRepDecision(
+            selected_skill_id=None,
+            selected_score=None,
+            runner_up_skill_id=None,
+            runner_up_score=None,
+            score_gap=None,
+            abstain=True,
+            reason_code=NO_ADMISSIBLE_SKILLS,
+        )
+    selected = ranked[0]
+    runner_up = ranked[1] if len(ranked) > 1 else None
+    return SubRepDecision(
+        selected_skill_id=selected.skill_id,
+        selected_score=selected.score,
+        runner_up_skill_id=runner_up.skill_id if runner_up else None,
+        runner_up_score=runner_up.score if runner_up else None,
+        score_gap=selected.score - runner_up.score if runner_up else None,
+        abstain=False,
+    )
+
+
+@dataclass(frozen=True)
 class RecommendationRequest:
-    """Complete immutable snapshot sent to Omega for recommendation only."""
+    """Complete immutable SubRep decision sent to OmegaClaw for explanation."""
 
     request_id: str
     created_at: str
@@ -168,8 +281,8 @@ class RecommendationRequest:
     objective_weights: tuple[ObjectiveWeight, ...]
     risk_budget: RiskBudget
     admitted_skills: tuple[SkillEvidence, ...]
+    subrep_decision: SubRepDecision | None = None
     exclusions: tuple[SkillExclusion, ...] = ()
-    allow_abstain: bool = True
     evidence_label: str = "OBSERVED"
     schema_version: str = REQUEST_SCHEMA_VERSION
 
@@ -261,40 +374,169 @@ class RecommendationRequest:
         object.__setattr__(self, "admitted_skills", admitted)
         object.__setattr__(self, "exclusions", exclusions)
 
-        if not isinstance(self.allow_abstain, bool):
-            raise ValueError("allow_abstain must be bool")
+        expected_decision = build_subrep_decision(admitted)
+        decision = self.subrep_decision or expected_decision
+        if not isinstance(decision, SubRepDecision):
+            raise ValueError("subrep_decision must be a SubRepDecision")
+        if decision != expected_decision:
+            raise ValueError("subrep_decision does not match the admitted skill scores")
+        object.__setattr__(self, "subrep_decision", decision)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "schema_version": self.schema_version,
+            "request_id": self.request_id,
+            "created_at": self.created_at,
+            "mode": INTEGRATION_MODE,
+            "subrep_decision": asdict(self.subrep_decision),
+            "task_context": dict(self.task_context),
+            "admitted_skills": {
+                skill.skill_id: {
+                    "skill_id": skill.skill_id,
+                    "final_selection_score": skill.score,
+                }
+                for skill in self.admitted_skills
+            },
+            "risk_budget": asdict(self.risk_budget),
+            "exclusions": [asdict(item) for item in self.exclusions],
+            "explanation_evidence": {
+                "objective_weights": {
+                    item.objective_id: item.weight for item in self.objective_weights
+                },
+                "skills": {
+                    skill.skill_id: {
+                        "delta_r": skill.delta_r,
+                        "objective_deltas": dict(skill.objective_deltas),
+                    }
+                    for skill in self.admitted_skills
+                },
+            },
+            "audit_only_certificate_evidence": {
+                "instruction": "Do not use these fields to rank or abstain.",
+                "skills": {
+                    skill.skill_id: {
+                        "gate_type": skill.gate_type,
+                        "certificate_admission_margin": skill.admission_margin,
+                        "epsilon": skill.epsilon,
+                        "weight_region_type": skill.weight_region_type,
+                    }
+                    for skill in self.admitted_skills
+                },
+            },
+            "evidence_label": self.evidence_label,
+        }
+
+    def expected_selected_skill_id(self) -> str | None:
+        """Return the authoritative selected skill, if any."""
+
+        return self.subrep_decision.selected_skill_id
+
+    def valid_evidence_refs(self) -> set[str]:
+        """Return every leaf path OmegaClaw may cite in its explanation."""
+
+        payload = self.to_dict()
+        references: set[str] = set()
+
+        def visit(value: Any, prefix: str) -> None:
+            if isinstance(value, Mapping):
+                for key, child in value.items():
+                    visit(child, f"{prefix}.{key}" if prefix else str(key))
+            elif isinstance(value, (list, tuple)):
+                for index, child in enumerate(value):
+                    visit(child, f"{prefix}.{index}")
+            else:
+                references.add(prefix)
+
+        for root in (
+            "subrep_decision",
+            "task_context",
+            "risk_budget",
+            "admitted_skills",
+            "exclusions",
+            "explanation_evidence",
+            "audit_only_certificate_evidence",
+        ):
+            visit(payload[root], root)
+        return references
+
+
+@dataclass(frozen=True)
+class AdvisoryConcern:
+    """A non-binding, evidence-grounded concern about the SubRep decision."""
+
+    code: str
+    message: str
+    evidence_refs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        code = _non_empty(self.code, "advisory concern code").upper()
+        if code not in VALID_ADVISORY_CONCERN_CODES:
+            raise ValueError(
+                f"advisory concern code must be one of {VALID_ADVISORY_CONCERN_CODES}"
+            )
+        object.__setattr__(self, "code", code)
+        object.__setattr__(self, "message", _non_empty(self.message, "advisory concern message"))
+        refs = tuple(_non_empty(item, "advisory evidence reference") for item in self.evidence_refs)
+        if not refs:
+            raise ValueError("advisory concerns require at least one evidence reference")
+        if len(refs) != len(set(refs)):
+            raise ValueError("advisory evidence references must not contain duplicates")
+        object.__setattr__(self, "evidence_refs", refs)
 
 
 @dataclass(frozen=True)
 class OmegaRecommendationResponse:
-    """Structured response expected from Omega."""
+    """Structured explanation response expected from OmegaClaw."""
 
     request_id: str
     selected_skill_id: str | None
     abstain: bool
     explanation: str
-    cited_skill_ids: tuple[str, ...] = ()
+    selection_basis: str
+    evidence_refs: tuple[str, ...]
+    advisory_concerns: tuple[AdvisoryConcern, ...] = ()
+    mode: str = INTEGRATION_MODE
     schema_version: str = RESPONSE_SCHEMA_VERSION
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "OmegaRecommendationResponse":
-        required = {"schema_version", "request_id", "selected_skill_id", "abstain", "explanation"}
+        required = {
+            "schema_version",
+            "request_id",
+            "selected_skill_id",
+            "abstain",
+            "selection_basis",
+            "explanation",
+            "evidence_refs",
+            "advisory_concerns",
+            "mode",
+        }
         missing = required.difference(payload)
         if missing:
             raise ValueError(f"response is missing required fields: {sorted(missing)}")
-        citations = payload.get("cited_skill_ids", ())
-        if not isinstance(citations, (list, tuple)):
-            raise ValueError("cited_skill_ids must be an array")
+        unexpected = set(payload).difference(required)
+        if unexpected:
+            raise ValueError(f"response contains unexpected fields: {sorted(unexpected)}")
+        refs = payload["evidence_refs"]
+        if not isinstance(refs, (list, tuple)):
+            raise ValueError("evidence_refs must be an array")
+        concerns_payload = payload["advisory_concerns"]
+        if not isinstance(concerns_payload, (list, tuple)):
+            raise ValueError("advisory_concerns must be an array")
+        concerns = tuple(
+            item if isinstance(item, AdvisoryConcern) else AdvisoryConcern(**item)
+            for item in concerns_payload
+        )
         return cls(
             schema_version=payload["schema_version"],
             request_id=payload["request_id"],
             selected_skill_id=payload["selected_skill_id"],
             abstain=payload["abstain"],
+            selection_basis=payload["selection_basis"],
             explanation=payload["explanation"],
-            cited_skill_ids=tuple(citations),
+            evidence_refs=tuple(refs),
+            advisory_concerns=concerns,
+            mode=payload["mode"],
         )
 
     def __post_init__(self) -> None:
@@ -303,6 +545,10 @@ class OmegaRecommendationResponse:
         object.__setattr__(self, "request_id", _non_empty(self.request_id, "request_id"))
         if not isinstance(self.abstain, bool):
             raise ValueError("abstain must be bool")
+        if self.selection_basis != SELECTION_BASIS:
+            raise ValueError(f"selection_basis must be {SELECTION_BASIS!r}")
+        if self.mode != INTEGRATION_MODE:
+            raise ValueError(f"mode must be {INTEGRATION_MODE!r}")
         explanation = _non_empty(self.explanation, "explanation")
         if len(explanation) > 1000:
             raise ValueError("explanation must be at most 1000 characters")
@@ -318,10 +564,16 @@ class OmegaRecommendationResponse:
                 _non_empty(self.selected_skill_id, "selected_skill_id"),
             )
 
-        citations = tuple(_non_empty(item, "cited_skill_ids item") for item in self.cited_skill_ids)
-        if len(citations) != len(set(citations)):
-            raise ValueError("cited_skill_ids must not contain duplicates")
-        object.__setattr__(self, "cited_skill_ids", citations)
+        refs = tuple(_non_empty(item, "evidence_refs item") for item in self.evidence_refs)
+        if not refs:
+            raise ValueError("evidence_refs must not be empty")
+        if len(refs) != len(set(refs)):
+            raise ValueError("evidence_refs must not contain duplicates")
+        object.__setattr__(self, "evidence_refs", refs)
+        concerns = tuple(self.advisory_concerns)
+        if not all(isinstance(item, AdvisoryConcern) for item in concerns):
+            raise ValueError("advisory_concerns must contain AdvisoryConcern values")
+        object.__setattr__(self, "advisory_concerns", concerns)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -336,21 +588,41 @@ def validate_response_for_request(
     if response.request_id != request.request_id:
         raise ValueError("response request_id does not match the request")
 
-    admitted_ids = {item.skill_id for item in request.admitted_skills}
-    known_ids = admitted_ids.union(item.skill_id for item in request.exclusions)
-    unknown_citations = set(response.cited_skill_ids).difference(known_ids)
-    if unknown_citations:
-        raise ValueError(f"response cites unknown skills: {sorted(unknown_citations)}")
+    decision = request.subrep_decision
+    if response.selected_skill_id != decision.selected_skill_id:
+        raise ValueError("selected_skill_id does not echo the authoritative SubRep decision")
+    if response.abstain != decision.abstain:
+        raise ValueError("response abstain does not echo the authoritative SubRep decision")
 
-    if response.abstain:
-        if not request.allow_abstain:
-            raise ValueError("response abstained when the request disallowed abstention")
-        return
+    valid_refs = request.valid_evidence_refs()
+    unknown_refs = set(response.evidence_refs).difference(valid_refs)
+    if unknown_refs:
+        raise ValueError(f"response contains unknown evidence_refs: {sorted(unknown_refs)}")
 
-    if response.selected_skill_id not in admitted_ids:
-        raise ValueError("selected_skill_id is not in the supplied admitted set")
-    if response.selected_skill_id not in response.cited_skill_ids:
-        raise ValueError("selected_skill_id must appear in cited_skill_ids")
+    required_ref = (
+        "subrep_decision.reason_code"
+        if decision.abstain
+        else "subrep_decision.selected_score"
+    )
+    if required_ref not in response.evidence_refs:
+        raise ValueError(f"response must cite {required_ref!r}")
+    if decision.runner_up_skill_id is not None and not decision.abstain:
+        if "subrep_decision.runner_up_score" not in response.evidence_refs:
+            raise ValueError("response must cite 'subrep_decision.runner_up_score'")
+
+    explanation_lower = response.explanation.lower()
+    if decision.abstain:
+        if not any(term in explanation_lower for term in ("abstain", "no admissible", "no recommendation")):
+            raise ValueError("abstention explanation must describe the lack of a recommendation")
+    elif decision.selected_skill_id.lower() not in explanation_lower:
+        raise ValueError("explanation must mention the selected skill ID")
+
+    for concern in response.advisory_concerns:
+        unknown_concern_refs = set(concern.evidence_refs).difference(valid_refs)
+        if unknown_concern_refs:
+            raise ValueError(
+                f"advisory concern contains unknown evidence_refs: {sorted(unknown_concern_refs)}"
+            )
 
 
 @dataclass(frozen=True)
@@ -364,11 +636,15 @@ class RecommendationOutcome:
     error: str | None = None
     raw_response: str | None = field(default=None, repr=False)
     response: Mapping[str, Any] | None = None
+    attempts: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_id", _non_empty(self.request_id, "request_id"))
         if self.status not in VALID_OUTCOME_STATUSES:
             raise ValueError(f"status must be one of {VALID_OUTCOME_STATUSES}")
+        attempts = tuple(dict(item) for item in self.attempts)
+        _json_safe(attempts, "attempts")
+        object.__setattr__(self, "attempts", attempts)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
