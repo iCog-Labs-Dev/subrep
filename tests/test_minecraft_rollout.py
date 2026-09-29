@@ -247,6 +247,37 @@ def test_evaluate_candidates_leaves_the_live_env_untouched():
     assert before[3] == after[3]
 
 
+def _candidates_after(steps: int):
+    """Noiseless candidates evaluated after idling `steps` steps."""
+    env = _fresh_env()
+    for _ in range(steps):
+        env.step(0)
+    return evaluate_candidates(env, gamma=GAMMA, horizon=DEFAULT_HORIZON)
+
+
+def test_candidate_deltas_track_the_state_they_are_evaluated_in():
+    """Threat rises between step 0 and step 9. An option's improvement over
+    idling depends on how exposed it is, so its delta must change too -- a
+    delta computed once and reused would miss this entirely."""
+    _, early = _candidates_after(0)
+    _, late = _candidates_after(9)
+
+    early_golem = next(r for r in early if r.skill_id == "IronGolemSpawn")
+    late_golem = next(r for r in late if r.skill_id == "IronGolemSpawn")
+
+    # IronGolemSpawn is far less threat-exposed than idling (0.05 vs 0.35),
+    # so its Safety advantage grows as threat rises.
+    assert late_golem.delta_n[0] > early_golem.delta_n[0]
+
+
+def test_baseline_is_re_evaluated_at_each_state():
+    early_baseline, _ = _candidates_after(0)
+    late_baseline, _ = _candidates_after(9)
+    assert early_baseline["baseline_payoff"] != pytest.approx(
+        late_baseline["baseline_payoff"]
+    )
+
+
 # ---------------------------------------------------------------------------
 # Shared settings
 # ---------------------------------------------------------------------------

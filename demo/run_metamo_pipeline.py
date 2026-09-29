@@ -118,8 +118,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("MetaMo -> SubRep, 6-objective Minecraft stub")
     print("=" * 78)
 
-    # 1-2. Baseline and candidate skills, both rolled out from the same start
-    #      state (env/minecraft_rollout.py).
+    # 1-2. Baseline and candidate skills at the start state, for display and
+    #      for sizing the appraisal scales. The loop re-evaluates both at every
+    #      decision, from whatever state the episode has reached.
     env.reset(seed=args.seed)
     baseline_stats, candidates = evaluate_candidates(
         env, gamma=GAMMA, horizon=args.horizon
@@ -150,7 +151,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     # 4. Governor + controller, with appraisal inputs scaled to this
-    #    environment's actual magnitudes (see appraisal_scales).
+    #    environment's actual magnitudes (see appraisal_scales). The governor
+    #    takes its scales once, at construction (bridge/governor.py:135-136),
+    #    so they come from the start-state candidates and stay fixed.
     payoff_scale, motive_scale = appraisal_scales(candidates)
     print(f"\nAppraisal scales: payoff={payoff_scale:.3f}  motive={motive_scale:.3f}")
 
@@ -169,11 +172,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     # epsilon actually biting.
     from certification.pds_test import PDSGate  # noqa: E402
 
-    def pds_only_admitted(epsilon: float) -> int:
+    def pds_only_admitted(epsilon: float, records: List[Any]) -> int:
         gate = PDSGate(epsilon=epsilon)
         return sum(
             1
-            for r in candidates
+            for r in records
             if gate.admit(r.delta_r, np.asarray(r.delta_n, dtype=np.float64))
         )
 
@@ -211,6 +214,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     for _ in range(args.steps):
         threat_before = env.threat
+        # Per-state evaluation: delta(x, o) is only meaningful against the
+        # baseline at the SAME state x. Rollouts run on copies, so the live
+        # episode is untouched (env/minecraft_rollout.py:evaluate_option).
+        baseline_stats, candidates = evaluate_candidates(
+            env, gamma=GAMMA, horizon=args.horizon
+        )
         record = controller.step(
             context=env.observation(),
             candidate_skills=candidates,
@@ -225,7 +234,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"{mods.get('threshold', float('nan')):>7.3f} "
             f"{record.pds_epsilon:>7.4f} {record.cvar_tail_level:>7.4f} "
             f"{record.admitted_count:>2}/{record.candidate_count:<2} "
-            f"{pds_only_admitted(record.pds_epsilon):>4} "
+            f"{pds_only_admitted(record.pds_epsilon, candidates):>4} "
             f"{(record.selected_skill_id or '-'):<20} "
             f"{record.weights[0]:>9.3f}"
         )
