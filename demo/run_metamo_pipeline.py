@@ -23,21 +23,23 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from baseline.idle_policy import IdlePolicy  # noqa: E402
-from baseline.improvement_calculator import ImprovementCalculator  # noqa: E402
 from bridge import weights as weights_mod  # noqa: E402
 from bridge.controller import MetaMoController  # noqa: E402
 from bridge.governor import MetaMoGovernor  # noqa: E402
 from bridge.protocol import SkillOutcome  # noqa: E402
+from env.minecraft_rollout import (  # noqa: E402
+    MINECRAFT_INITIAL_GOALS,
+    appraisal_scales,
+    evaluate_candidates,
+)
 from env.minecraft_stub import SKILL_NAMES, MinecraftStubEnv  # noqa: E402
 from generator.mdn import MotiveDecompositionNetwork  # noqa: E402
-from utils.mdn_contracts import CandidateSkillRecord  # noqa: E402
 from utils.mdn_runtime_pipeline import (  # noqa: E402
     RuntimeCertificationPipeline,
     RuntimePipelineConfig,
@@ -45,77 +47,6 @@ from utils.mdn_runtime_pipeline import (  # noqa: E402
 from utils.weight_set_store import WeightSetStore  # noqa: E402
 
 GAMMA = 0.99
-
-# A survival-oriented starting goal vector, in MetaMo's goal order
-# (core/config.py:1-3): Individuation, Transcendence, Help, Curiosity, Novelty,
-# Self, Ethical, Social.
-#
-# MetaMo's own default (core/engine.py:47-58) is tuned for a chat assistant
-# (Help=0.8, Ethical=0.9) and makes Reputation dominate from the first step,
-# which is the wrong prior for an agent that has to survive the night.
-MINECRAFT_INITIAL_GOALS = np.array(
-    [0.70, 0.40, 0.30, 0.50, 0.40, 0.60, 0.50, 0.30], dtype=np.float64
-)
-
-
-def rollout_fixed_action(
-    env: MinecraftStubEnv,
-    action: int,
-    *,
-    seed: int,
-    gamma: float = GAMMA,
-) -> Tuple[float, np.ndarray]:
-    """Run one episode always taking `action`.
-
-    Uses the same discounting convention as `IdlePolicy.run_baseline_episodes`
-    (baseline/idle_policy.py:35-56) so the results are directly comparable.
-    """
-    obs, _ = env.reset(seed=seed)
-    discount = 1.0
-    total_payoff = 0.0
-    motives: Optional[np.ndarray] = None
-
-    while True:
-        obs, reward_vec, terminated, truncated, _ = env.step(action)
-        reward_vec = np.asarray(reward_vec, dtype=np.float32)
-        if motives is None:
-            motives = np.zeros_like(reward_vec)
-        total_payoff += discount * float(np.sum(reward_vec))
-        motives += discount * reward_vec
-        if terminated or truncated:
-            break
-        discount *= gamma
-
-    return float(total_payoff), np.asarray(motives, dtype=np.float32)
-
-
-def build_candidates(
-    env: MinecraftStubEnv,
-    baseline_stats: Dict[str, Any],
-    *,
-    seed: int,
-) -> List[CandidateSkillRecord]:
-    """Evaluate each non-idle action as a candidate skill."""
-    calculator = ImprovementCalculator(baseline_stats)
-    records: List[CandidateSkillRecord] = []
-
-    for action in range(1, len(SKILL_NAMES)):
-        payoff, motives = rollout_fixed_action(env, action, seed=seed)
-        delta_r, delta_n = calculator.compute_improvements(
-            skill_payoff=payoff,
-            skill_motives=motives,
-        )
-        records.append(
-            CandidateSkillRecord(
-                skill_id=SKILL_NAMES[action],
-                delta_r=float(delta_r),
-                delta_n=tuple(float(v) for v in delta_n),
-                is_certified=False,
-                gate_type="PDS",
-                metadata={"action": action},
-            )
-        )
-    return records
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -132,14 +63,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("MetaMo -> SubRep, 6-objective Minecraft stub")
     print("=" * 78)
 
-    # 1. Baseline.
-    idle = IdlePolicy(env=env, idle_action=0, gamma=GAMMA)
-    baseline_stats = idle.run_baseline_episodes(num_episodes=5, seed=args.seed)
+    # 1-2. Baseline and candidate skills, both rolled out from the same start
+    #      state (env/minecraft_rollout.py).
+    env.reset(seed=args.seed)
+    baseline_stats, candidates = evaluate_candidates(
+        env, gamma=GAMMA, horizon=None
+    )
     print(f"\nBaseline payoff: {baseline_stats['baseline_payoff']:.4f}")
     print(f"Baseline motives: {np.round(baseline_stats['baseline_motives'], 3)}")
 
-    # 2. Candidate skills.
-    candidates = build_candidates(env, baseline_stats, seed=args.seed)
     print(f"\nCandidate skills ({len(candidates)}):")
     for record in candidates:
         print(
@@ -168,16 +100,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
 
-    # 4. Governor + controller.
-    #
-    # Scale the appraisal inputs to this environment's actual magnitudes. The
-    # stimulus builder squashes through tanh, so leaving the scales at 1.0
-    # while deltas run to |10| saturates risk on the first step and pins the
-    # modulators at their bounds, flattening the coupling into a constant.
-    payoff_scale = float(np.mean([abs(r.delta_r) for r in candidates])) or 1.0
-    motive_scale = float(
-        np.mean([np.mean(np.abs(r.delta_n)) for r in candidates])
-    ) or 1.0
+    # 4. Governor + controller, with appraisal inputs scaled to this
+    #    environment's actual magnitudes (see appraisal_scales).
+    payoff_scale, motive_scale = appraisal_scales(candidates)
     print(f"\nAppraisal scales: payoff={payoff_scale:.3f}  motive={motive_scale:.3f}")
 
     governor = MetaMoGovernor(

@@ -41,15 +41,18 @@ THREE TRAPS THIS FILE HAS TO AVOID
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import List
 
 import numpy as np
 import pytest
 
-from baseline.idle_policy import IdlePolicy
-from baseline.improvement_calculator import ImprovementCalculator
 from bridge._loader import is_available
 from bridge.protocol import GovernorSignal, SkillOutcome
+from env.minecraft_rollout import (
+    MINECRAFT_INITIAL_GOALS,
+    appraisal_scales,
+    evaluate_candidates,
+)
 from env.minecraft_stub import SKILL_NAMES, MinecraftStubEnv
 from generator.mdn import MotiveDecompositionNetwork
 from utils.mdn_contracts import CandidateSkillRecord
@@ -69,68 +72,21 @@ SEED = 42
 NUM_OBJECTIVES = 6
 SAFETY = 0  # index into phi(x)
 
-# Survival-oriented starting goals, matching demo/run_metamo_pipeline.py.
-# MetaMo's own default is tuned for a chat assistant and makes Reputation
-# dominate from step 0, which is the wrong prior here.
-MINECRAFT_INITIAL_GOALS = np.array(
-    [0.70, 0.40, 0.30, 0.50, 0.40, 0.60, 0.50, 0.30], dtype=np.float64
-)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
 
 
-def _discounted_rollout(env, action: int, *, seed: int) -> Tuple[float, np.ndarray]:
-    """One episode always taking `action`.
-
-    Matches IdlePolicy.run_baseline_episodes' discounting exactly
-    (baseline/idle_policy.py:35-56) so results are directly comparable.
-    """
-    env.reset(seed=seed)
-    discount = 1.0
-    total_payoff = 0.0
-    motives: Optional[np.ndarray] = None
-
-    while True:
-        _, reward_vec, terminated, truncated, _ = env.step(action)
-        reward_vec = np.asarray(reward_vec, dtype=np.float32)
-        if motives is None:
-            motives = np.zeros_like(reward_vec)
-        total_payoff += discount * float(np.sum(reward_vec))
-        motives += discount * reward_vec
-        if terminated or truncated:
-            break
-        discount *= GAMMA
-
-    return float(total_payoff), np.asarray(motives, dtype=np.float32)
-
-
 def build_world(seed: int = SEED):
-    """Noiseless env + idle baseline + one candidate per non-idle action."""
-    env = MinecraftStubEnv(seed=seed, noise_scale=0.0)
-    baseline = IdlePolicy(env=env, idle_action=0, gamma=GAMMA).run_baseline_episodes(
-        num_episodes=2, seed=seed
-    )
-    calculator = ImprovementCalculator(baseline)
+    """Noiseless env + idle baseline + one candidate per non-idle action.
 
-    candidates: List[CandidateSkillRecord] = []
-    for action in range(1, len(SKILL_NAMES)):
-        payoff, motives = _discounted_rollout(env, action, seed=seed)
-        delta_r, delta_n = calculator.compute_improvements(
-            skill_payoff=payoff, skill_motives=motives
-        )
-        candidates.append(
-            CandidateSkillRecord(
-                skill_id=SKILL_NAMES[action],
-                delta_r=float(delta_r),
-                delta_n=tuple(float(v) for v in delta_n),
-                is_certified=False,
-                gate_type="PDS",
-                metadata={"action": action},
-            )
-        )
+    Uses the same rollout module as the demo (env/minecraft_rollout.py), so
+    these tests exercise the estimation the demo actually runs.
+    """
+    env = MinecraftStubEnv(seed=seed, noise_scale=0.0)
+    env.reset(seed=seed)
+    baseline, candidates = evaluate_candidates(env, gamma=GAMMA, horizon=None)
 
     obs, _ = env.reset(seed=seed)
     return env, baseline, candidates, obs
@@ -163,10 +119,7 @@ def make_governor(candidates: List[CandidateSkillRecord]):
     """
     from bridge.governor import MetaMoGovernor
 
-    payoff_scale = float(np.mean([abs(c.delta_r) for c in candidates])) or 1.0
-    motive_scale = float(
-        np.mean([np.mean(np.abs(c.delta_n)) for c in candidates])
-    ) or 1.0
+    payoff_scale, motive_scale = appraisal_scales(candidates)
     return MetaMoGovernor(
         initial_goals=MINECRAFT_INITIAL_GOALS,
         payoff_scale=payoff_scale,
