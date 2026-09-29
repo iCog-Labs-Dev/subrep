@@ -49,6 +49,7 @@ import pytest
 from bridge._loader import is_available
 from bridge.protocol import GovernorSignal, SkillOutcome
 from env.minecraft_rollout import (
+    DEFAULT_HORIZON,
     MINECRAFT_INITIAL_GOALS,
     appraisal_scales,
     evaluate_candidates,
@@ -86,7 +87,9 @@ def build_world(seed: int = SEED):
     """
     env = MinecraftStubEnv(seed=seed, noise_scale=0.0)
     env.reset(seed=seed)
-    baseline, candidates = evaluate_candidates(env, gamma=GAMMA, horizon=None)
+    baseline, candidates = evaluate_candidates(
+        env, gamma=GAMMA, horizon=DEFAULT_HORIZON
+    )
 
     obs, _ = env.reset(seed=seed)
     return env, baseline, candidates, obs

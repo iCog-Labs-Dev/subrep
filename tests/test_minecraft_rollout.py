@@ -9,10 +9,12 @@ import pytest
 
 from baseline.idle_policy import IdlePolicy
 from env.minecraft_rollout import (
+    DEFAULT_HORIZON,
     MINECRAFT_INITIAL_GOALS,
     appraisal_scales,
     evaluate_candidates,
     evaluate_option,
+    execute_option,
     run_option,
 )
 from env.minecraft_stub import SKILL_NAMES, MinecraftStubEnv
@@ -45,6 +47,23 @@ def test_run_option_without_horizon_runs_to_episode_end():
     env = _fresh_env()
     run_option(env, 1, horizon=None, gamma=GAMMA)
     assert env._t == env.episode_length
+
+
+def test_run_option_takes_exactly_horizon_steps():
+    env = _fresh_env()
+    run_option(env, 1, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+    assert env._t == DEFAULT_HORIZON
+
+
+def test_run_option_stops_at_episode_end_mid_option():
+    env = _fresh_env()
+    for _ in range(env.episode_length - 1):
+        env.step(0)
+
+    run_option(env, 1, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    assert env._t == env.episode_length  # one step, not three
+    assert env.episode_over
 
 
 def test_run_option_rejects_non_positive_horizon():
@@ -91,6 +110,63 @@ def _clone_by_replay(*, noise_scale: float, prefix):
     for action in prefix:
         env.step(action)
     return env
+
+
+# ---------------------------------------------------------------------------
+# execute_option
+# ---------------------------------------------------------------------------
+
+
+def test_execute_option_advances_the_live_env_by_the_horizon():
+    env = _fresh_env()
+    execute_option(env, 2, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+    assert env._t == DEFAULT_HORIZON
+
+
+def test_execute_option_measures_against_idle_from_the_same_state():
+    env = _fresh_env(noise_scale=0.02)
+    for _ in range(6):
+        env.step(1)
+    prefix = [1] * 6
+
+    delta_r, delta_n = execute_option(env, 4, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    option = run_option(
+        _clone_by_replay(noise_scale=0.02, prefix=prefix),
+        4,
+        horizon=DEFAULT_HORIZON,
+        gamma=GAMMA,
+    )
+    idle = run_option(
+        _clone_by_replay(noise_scale=0.02, prefix=prefix),
+        0,
+        horizon=DEFAULT_HORIZON,
+        gamma=GAMMA,
+    )
+    assert delta_r == pytest.approx(option[0] - idle[0], abs=1e-5)
+    np.testing.assert_allclose(delta_n, option[1] - idle[1], atol=1e-5)
+
+
+def test_executing_the_baseline_action_is_a_zero_improvement():
+    env = _fresh_env(noise_scale=0.02)
+    delta_r, delta_n = execute_option(env, 0, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+    assert delta_r == pytest.approx(0.0, abs=1e-6)
+    np.testing.assert_allclose(delta_n, 0.0, atol=1e-6)
+
+
+def test_evaluation_and_execution_use_the_same_horizon():
+    """A candidate's evaluated delta is exactly what executing it realizes."""
+    env = _fresh_env(noise_scale=0.02)
+    for _ in range(5):
+        env.step(3)
+
+    _, records = evaluate_candidates(env, gamma=GAMMA, horizon=DEFAULT_HORIZON)
+    record = next(r for r in records if r.metadata["action"] == 2)
+
+    delta_r, delta_n = execute_option(env, 2, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    assert delta_r == pytest.approx(record.delta_r, abs=1e-5)
+    np.testing.assert_allclose(delta_n, record.delta_n, atol=1e-5)
 
 
 # ---------------------------------------------------------------------------

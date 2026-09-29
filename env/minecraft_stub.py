@@ -163,6 +163,24 @@ class MinecraftStubEnv:
     def num_objectives(self) -> int:
         return _NUM_OBJECTIVES
 
+    @property
+    def threat(self) -> float:
+        """Current threat level, in [0, 1]."""
+        return float(self._threat)
+
+    @property
+    def episode_over(self) -> bool:
+        """True once the episode has reached its declared length."""
+        return self._t >= self.episode_length
+
+    def observation(self) -> np.ndarray:
+        """The current observation, without stepping.
+
+        Option execution steps the env several times, so callers need the
+        state it ended in without holding on to the last `step()` return.
+        """
+        return self._observation()
+
     def _threat_at(self, t: int) -> float:
         """Threat rises to a mid-episode peak, then falls.
 

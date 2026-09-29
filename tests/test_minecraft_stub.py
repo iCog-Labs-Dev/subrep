@@ -20,6 +20,27 @@ def test_declares_six_objectives(env):
     assert env.reward_space.shape == (NUM_OBJECTIVES,)
 
 
+def test_accessors_report_the_current_state(env):
+    obs, info = env.reset(seed=7)
+    np.testing.assert_array_equal(env.observation(), obs)
+    assert env.threat == pytest.approx(info["threat"])
+    assert not env.episode_over
+
+    obs, _, _, _, info = env.step(1)
+    np.testing.assert_array_equal(env.observation(), obs)
+    assert env.threat == pytest.approx(info["threat"])
+
+
+def test_episode_over_flips_at_the_declared_length():
+    env = MinecraftStubEnv(seed=1, episode_length=3)
+    env.reset(seed=1)
+    for _ in range(2):
+        env.step(0)
+        assert not env.episode_over
+    env.step(0)
+    assert env.episode_over
+
+
 def test_reset_returns_obs_and_info(env):
     obs, info = env.reset(seed=7)
     assert obs.shape == env.observation_space.shape

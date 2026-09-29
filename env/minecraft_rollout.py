@@ -39,6 +39,13 @@ MINECRAFT_INITIAL_GOALS = np.array(
     [0.70, 0.40, 0.30, 0.50, 0.40, 0.60, 0.50, 0.30], dtype=np.float64
 )
 
+# Option duration, in environment steps. The reference specification draws a
+# per-option duration tau; a fixed H simplifies that and keeps variance low for
+# the ablation. Candidate evaluation, execution and feedback all use the SAME
+# horizon -- measuring an option over one duration and running it for another
+# is what made the old estimates meaningless.
+DEFAULT_HORIZON = 3
+
 
 def appraisal_scales(
     candidates: Sequence[Any],
@@ -108,6 +115,29 @@ def evaluate_option(
 ) -> Tuple[float, np.ndarray]:
     """`run_option` on a deep copy of `env`. Never touches the live env."""
     return run_option(copy.deepcopy(env), action, horizon=horizon, gamma=gamma)
+
+
+def execute_option(
+    env: Any,
+    action: int,
+    *,
+    horizon: Optional[int],
+    gamma: float,
+    baseline_action: int = 0,
+) -> Tuple[float, np.ndarray]:
+    """Run `action` on the LIVE env and return its realized (delta_r, delta_n).
+
+    The baseline is rolled out on a copy from the same starting state over the
+    same horizon, so the realized improvement is measured against what doing
+    nothing would have produced right here -- not against an average over some
+    other part of the episode. Advances `env`.
+    """
+    baseline_payoff, baseline_motives = evaluate_option(
+        env, baseline_action, horizon=horizon, gamma=gamma
+    )
+    payoff, motives = run_option(env, action, horizon=horizon, gamma=gamma)
+    delta_n = np.asarray(motives - baseline_motives, dtype=np.float64)
+    return float(payoff - baseline_payoff), delta_n
 
 
 def evaluate_candidates(
