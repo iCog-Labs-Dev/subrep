@@ -41,6 +41,39 @@ def test_episode_over_flips_at_the_declared_length():
     assert env.episode_over
 
 
+def test_task_reward_is_reported_and_only_trade_earns_it(env):
+    env.reset(seed=7)
+    for action, name in enumerate(SKILL_NAMES):
+        _, reward, _, _, info = env.step(action)
+        assert "task_reward" in info
+        if name == "DiscountChain":
+            assert info["task_reward"] > 0.0
+        else:
+            assert info["task_reward"] == 0.0
+        # The objective vector is untouched: IdlePolicy's contract still holds.
+        assert reward.shape == (NUM_OBJECTIVES,)
+
+
+def test_task_reward_constants_match_the_rollout_and_the_demo():
+    """The stub restates the horizon and discount rather than importing the
+    rollout module; pin them so they cannot drift apart."""
+    from demo.run_metamo_pipeline import GAMMA
+    from env import minecraft_stub
+    from env.minecraft_rollout import DEFAULT_HORIZON
+
+    assert minecraft_stub._TASK_REWARD_HORIZON == DEFAULT_HORIZON
+    assert minecraft_stub._TASK_REWARD_GAMMA == GAMMA
+
+
+def test_per_action_tables_are_aligned():
+    from env import minecraft_stub
+
+    n = len(SKILL_NAMES)
+    assert len(minecraft_stub._BASE_REWARDS) == n
+    assert len(minecraft_stub._THREAT_VULNERABILITY) == n
+    assert len(minecraft_stub._TASK_REWARD) == n
+
+
 def test_reset_returns_obs_and_info(env):
     obs, info = env.reset(seed=7)
     assert obs.shape == env.observation_space.shape

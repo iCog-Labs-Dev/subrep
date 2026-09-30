@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from baseline.idle_policy import IdlePolicy
 from env.minecraft_rollout import (
     DEFAULT_HORIZON,
     MINECRAFT_INITIAL_GOALS,
@@ -174,29 +173,6 @@ def test_evaluation_and_execution_use_the_same_horizon():
 # ---------------------------------------------------------------------------
 
 
-def test_baseline_matches_idle_policy_on_a_noiseless_stub():
-    """The refactor away from IdlePolicy changed nothing numerically.
-
-    Valid only while the rollout keeps IdlePolicy's accumulation rules; it is
-    removed when the task reward is separated from the motive vector.
-    """
-    env = _fresh_env()
-    baseline, _ = evaluate_candidates(env, gamma=GAMMA, horizon=None)
-
-    reference = IdlePolicy(
-        env=MinecraftStubEnv(seed=SEED, noise_scale=0.0),
-        idle_action=0,
-        gamma=GAMMA,
-    ).run_baseline_episodes(num_episodes=1, seed=SEED)
-
-    assert baseline["baseline_payoff"] == pytest.approx(
-        reference["baseline_payoff"]
-    )
-    np.testing.assert_allclose(
-        baseline["baseline_motives"], reference["baseline_motives"], rtol=1e-6
-    )
-
-
 def test_one_candidate_per_non_baseline_action():
     env = _fresh_env()
     _, records = evaluate_candidates(env, gamma=GAMMA, horizon=None)
@@ -247,6 +223,41 @@ def test_evaluate_candidates_leaves_the_live_env_untouched():
     assert before[3] == after[3]
 
 
+def test_task_reward_is_not_the_sum_of_the_objectives():
+    """Bug 1: delta_r used to be identical to sum(delta_n)."""
+    _, records = evaluate_candidates(
+        _fresh_env(noise_scale=0.02), gamma=GAMMA, horizon=DEFAULT_HORIZON
+    )
+    for record in records:
+        assert record.delta_r != pytest.approx(sum(record.delta_n), abs=1e-3), (
+            record.skill_id
+        )
+
+
+def test_only_trade_earns_task_reward():
+    """Specified: defensive options have delta_r = 0, DiscountChain 0.01."""
+    _, records = evaluate_candidates(
+        _fresh_env(noise_scale=0.02), gamma=GAMMA, horizon=DEFAULT_HORIZON
+    )
+    by_id = {r.skill_id: r for r in records}
+
+    assert by_id["DiscountChain"].delta_r == pytest.approx(0.01, rel=1e-3)
+    for skill_id, record in by_id.items():
+        if skill_id != "DiscountChain":
+            assert record.delta_r == pytest.approx(0.0, abs=1e-9), skill_id
+
+
+def test_rollout_requires_a_task_reward():
+    """No silent fallback to summing the objectives (decision D7)."""
+
+    class NoTaskRewardEnv:
+        def step(self, action):
+            return None, np.zeros(2, dtype=np.float32), False, True, {}
+
+    with pytest.raises(KeyError):
+        run_option(NoTaskRewardEnv(), 0, horizon=1, gamma=GAMMA)
+
+
 def _candidates_after(steps: int):
     """Noiseless candidates evaluated after idling `steps` steps."""
     env = _fresh_env()
@@ -273,8 +284,10 @@ def test_candidate_deltas_track_the_state_they_are_evaluated_in():
 def test_baseline_is_re_evaluated_at_each_state():
     early_baseline, _ = _candidates_after(0)
     late_baseline, _ = _candidates_after(9)
-    assert early_baseline["baseline_payoff"] != pytest.approx(
-        late_baseline["baseline_payoff"]
+    # Idle earns no task reward, so the payoff is 0 in both states; the
+    # objective vector is what moves with threat.
+    assert not np.allclose(
+        early_baseline["baseline_motives"], late_baseline["baseline_motives"]
     )
 
 

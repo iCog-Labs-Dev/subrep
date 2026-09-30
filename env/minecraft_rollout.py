@@ -81,7 +81,9 @@ def run_option(
     `horizon=None` runs to the end of the episode. Stops early on termination
     or truncation and never steps past the end. Mutates `env`.
 
-    Returns the discounted (r_hat, n_hat).
+    Returns the discounted (r_hat, n_hat). r_hat accumulates the env's task
+    reward, `info["task_reward"]`; an env that does not report one raises
+    KeyError rather than silently falling back to summing the objectives.
     """
     if horizon is not None and horizon < 1:
         raise ValueError(f"horizon must be None or >= 1, got {horizon}")
@@ -92,11 +94,20 @@ def run_option(
     steps = 0
 
     while horizon is None or steps < horizon:
-        _, reward_vec, terminated, truncated, _ = env.step(action)
+        _, reward_vec, terminated, truncated, info = env.step(action)
         reward_vec = np.asarray(reward_vec, dtype=np.float32)
         if n_hat is None:
             n_hat = np.zeros_like(reward_vec)
-        r_hat += discount * float(np.sum(reward_vec))
+        # Bug 1 -- task reward was the sum of the objectives.
+        # This came from baseline/idle_policy.py:50, written for the 2-objective
+        # LunarLander env, where the objectives are built from the env's own
+        # reward components, so their sum IS the task reward. In the Minecraft
+        # stub the task reward (trade value) and the objectives (Safety,
+        # Reputation, ...) are different quantities: summing makes
+        # delta_r == sum(delta_n), which drowns out MetaMo's weights and makes
+        # the PDS gate pass almost everything.
+        # OLD: r_hat += discount * float(np.sum(reward_vec))
+        r_hat += discount * float(info["task_reward"])
         n_hat += discount * reward_vec
         steps += 1
         if terminated or truncated:

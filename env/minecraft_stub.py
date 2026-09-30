@@ -105,6 +105,49 @@ _THREAT_VULNERABILITY = np.array(
     [0.35, 0.20, 0.05, 0.30, 0.10, 0.60, 0.35], dtype=np.float32
 )
 
+# ---------------------------------------------------------------------------
+# TASK REWARD -- r(x, a), separate from the objective vector
+# ---------------------------------------------------------------------------
+# The reference specification scores options as B = delta_r + w . delta_n,
+# where delta_r is the TASK reward and delta_n the objective features -- two
+# different quantities. Its option table makes the task reward sparse trade
+# value: every defensive option has delta_r = 0, and DiscountChain has
+# delta_r = 0.01. Only trading earns it.
+#
+# The per-step value is chosen so that one option of the rollout horizon
+# earns the specified option-level delta_r over idling (whose task reward is
+# 0). The stub does not import the rollout module -- an environment should not
+# depend on its evaluator -- so the horizon and discount are restated here and
+# a test pins them to minecraft_rollout.DEFAULT_HORIZON and the demo's GAMMA.
+SPEC_TRADE_DELTA_R = 0.01
+_TASK_REWARD_HORIZON = 3
+_TASK_REWARD_GAMMA = 0.99
+_TRADE_REWARD_PER_STEP = SPEC_TRADE_DELTA_R / sum(
+    _TASK_REWARD_GAMMA ** k for k in range(_TASK_REWARD_HORIZON)
+)  # ~0.0034
+
+_TASK_REWARD = np.array(
+    [
+        0.0,                     # Idle
+        0.0,                     # TorchCorridor
+        0.0,                     # IronGolemSpawn
+        0.0,                     # ArcherKite
+        0.0,                     # SwingGateBarricade
+        _TRADE_REWARD_PER_STEP,  # DiscountChain -- the only trade
+        0.0,                     # RiskyForage -- foraging is not trade
+    ],
+    dtype=np.float64,
+)
+
+# Four per-action tables must stay aligned row for row. Fail at import if an
+# action is added to or removed from one but not the others.
+assert (
+    len(SKILL_NAMES)
+    == len(_BASE_REWARDS)
+    == len(_THREAT_VULNERABILITY)
+    == len(_TASK_REWARD)
+), "per-action tables are misaligned"
+
 _NUM_OBJECTIVES = len(OBJECTIVE_NAMES)
 _NUM_ACTIONS = len(SKILL_NAMES)
 _DEFAULT_EPISODE_LENGTH = 24
@@ -254,6 +297,8 @@ class MinecraftStubEnv:
             "step": self._t,
             "subrep_reward": reward.copy(),
             "motive_totals": self._totals.copy(),
+            # r(x, a): the task reward, NOT sum(reward). See TASK REWARD above.
+            "task_reward": float(_TASK_REWARD[action]),
         }
 
         if reward.shape != (_NUM_OBJECTIVES,):
