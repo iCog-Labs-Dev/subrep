@@ -216,6 +216,17 @@ class MinecraftStubEnv:
         """True once the episode has reached its declared length."""
         return self._t >= self.episode_length
 
+    def phi(self) -> np.ndarray:
+        """State features phi(x): the current level of each objective.
+
+        These are the running totals, in OBJECTIVE_NAMES order -- how safe,
+        reputable, well-stocked ... the agent currently IS. The reward vector
+        from `step()` is the per-step CHANGE in these levels. A method rather
+        than an `info` key, so a rollout started mid-episode (on a copy, with
+        no reset) can read phi(x_0) before its first step.
+        """
+        return self._totals.copy()
+
     def observation(self) -> np.ndarray:
         """The current observation, without stepping.
 

@@ -81,9 +81,17 @@ def run_option(
     `horizon=None` runs to the end of the episode. Stops early on termination
     or truncation and never steps past the end. Mutates `env`.
 
-    Returns the discounted (r_hat, n_hat). r_hat accumulates the env's task
-    reward, `info["task_reward"]`; an env that does not report one raises
-    KeyError rather than silently falling back to summing the objectives.
+    Returns the discounted (r_hat, n_hat), as the reference specification
+    defines them over an option of duration tau:
+
+        r_hat = sum_{t=0}^{tau-1} gamma^t * r(x_t, a_t)
+        n_hat = sum_{t=0}^{tau-1} gamma^t * phi(x_t)
+
+    r_hat accumulates the env's task reward, `info["task_reward"]`. n_hat
+    accumulates the env's state features, `env.phi()`, read BEFORE each step,
+    so the sum includes the starting state x_0 and excludes the final state
+    x_tau. An env missing either raises rather than silently falling back to
+    the old rules.
     """
     if horizon is not None and horizon < 1:
         raise ValueError(f"horizon must be None or >= 1, got {horizon}")
@@ -94,10 +102,21 @@ def run_option(
     steps = 0
 
     while horizon is None or steps < horizon:
-        _, reward_vec, terminated, truncated, info = env.step(action)
-        reward_vec = np.asarray(reward_vec, dtype=np.float32)
+        phi = np.asarray(env.phi(), dtype=np.float32)  # phi(x_t), pre-step
         if n_hat is None:
-            n_hat = np.zeros_like(reward_vec)
+            n_hat = np.zeros_like(phi)
+        # Bug 8 -- objectives summed per-step changes, not state levels.
+        # This came from baseline/idle_policy.py:51, written for the
+        # 2-objective LunarLander env, whose objectives are per-step reward
+        # streams (shaping reward, fuel cost), so summing each step's value is
+        # the correct return. In the Minecraft stub the objectives are state
+        # features phi(x) -- how safe the agent IS, not how much safety
+        # changed. The reference specification sums phi(x_t) over the option;
+        # summing changes scores a steadily safe option as zero Safety.
+        # OLD: n_hat += discount * reward_vec
+        n_hat += discount * phi
+
+        _, _, terminated, truncated, info = env.step(action)
         # Bug 1 -- task reward was the sum of the objectives.
         # This came from baseline/idle_policy.py:50, written for the 2-objective
         # LunarLander env, where the objectives are built from the env's own
@@ -108,7 +127,6 @@ def run_option(
         # the PDS gate pass almost everything.
         # OLD: r_hat += discount * float(np.sum(reward_vec))
         r_hat += discount * float(info["task_reward"])
-        n_hat += discount * reward_vec
         steps += 1
         if terminated or truncated:
             break

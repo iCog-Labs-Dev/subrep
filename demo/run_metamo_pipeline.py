@@ -136,7 +136,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     # 3. Certification pipeline (rebuilt at every episode start, see
-    #    start_new_episode).
+    #    start_new_episode). Seed before building the untrained MDN: the
+    #    controller seeds torch before each certification, but the model's
+    #    weights are drawn here, and the CVaR gate samples from them.
+    import torch
+
+    torch.manual_seed(args.seed)
     model = MotiveDecompositionNetwork(
         input_dim=int(env.observation().shape[0]),
         num_objectives=num_objectives,

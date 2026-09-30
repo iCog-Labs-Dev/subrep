@@ -106,7 +106,17 @@ def build_world(seed: int = SEED):
 
 
 def make_pipeline(obs_dim: int, *, use_cvar: bool, cvar_samples: int = 1000):
-    """A fresh pipeline. Fresh matters: permanence caches across calls."""
+    """A fresh pipeline. Fresh matters: permanence caches across calls.
+
+    Seeded, so every pipeline gets the same untrained MDN. The controller seeds
+    torch before each certification, but the model's weights are drawn here,
+    earlier, from whatever state the global RNG is in. Unseeded, two
+    "identical" runs certify with different models, and whenever the CVaR gate
+    decides admission (PDS admitting nothing, OR semantics) they diverge.
+    """
+    import torch
+
+    torch.manual_seed(SEED)
     model = MotiveDecompositionNetwork(
         input_dim=obs_dim, num_objectives=NUM_OBJECTIVES
     )

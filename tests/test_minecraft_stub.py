@@ -31,6 +31,26 @@ def test_accessors_report_the_current_state(env):
     assert env.threat == pytest.approx(info["threat"])
 
 
+def test_phi_is_the_running_objective_levels(env):
+    """phi(x) is the objective levels -- the running totals the observation
+    already carries (obs = [threat, progress, *totals])."""
+    obs, _ = env.reset(seed=7)
+    np.testing.assert_array_equal(env.phi(), obs[2:])
+    np.testing.assert_array_equal(env.phi(), np.zeros(NUM_OBJECTIVES))
+
+    for action in range(len(SKILL_NAMES)):
+        obs, reward, _, _, info = env.step(action)
+        np.testing.assert_array_equal(env.phi(), obs[2:])
+        np.testing.assert_array_equal(env.phi(), info["motive_totals"])
+
+
+def test_phi_returns_a_copy(env):
+    env.reset(seed=7)
+    snapshot = env.phi()
+    snapshot += 100.0
+    np.testing.assert_array_equal(env.phi(), np.zeros(NUM_OBJECTIVES))
+
+
 def test_episode_over_flips_at_the_declared_length():
     env = MinecraftStubEnv(seed=1, episode_length=3)
     env.reset(seed=1)

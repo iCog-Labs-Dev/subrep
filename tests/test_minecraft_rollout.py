@@ -251,11 +251,62 @@ def test_rollout_requires_a_task_reward():
     """No silent fallback to summing the objectives (decision D7)."""
 
     class NoTaskRewardEnv:
+        def phi(self):
+            return np.zeros(2, dtype=np.float32)
+
         def step(self, action):
             return None, np.zeros(2, dtype=np.float32), False, True, {}
 
     with pytest.raises(KeyError):
         run_option(NoTaskRewardEnv(), 0, horizon=1, gamma=GAMMA)
+
+
+def test_rollout_requires_state_features():
+    """No silent fallback to summing per-step changes."""
+
+    class NoPhiEnv:
+        def step(self, action):
+            return None, np.zeros(2, dtype=np.float32), False, True, {
+                "task_reward": 0.0
+            }
+
+    with pytest.raises(AttributeError):
+        run_option(NoPhiEnv(), 0, horizon=1, gamma=GAMMA)
+
+
+def test_n_hat_sums_state_levels_including_the_start_state():
+    """Bug 8: n_hat = sum_{t<H} gamma^t phi(x_t), with x_0 included and x_H
+    excluded -- computed by hand from the phi values the env passes through.
+
+    Started mid-episode so phi(x_0) is nonzero and the t = 0 term matters."""
+    env = _fresh_env()
+    for _ in range(4):
+        env.step(2)
+
+    replay = _clone_by_replay(noise_scale=0.0, prefix=[2] * 4)
+    expected = np.zeros(replay.num_objectives, dtype=np.float64)
+    for t in range(DEFAULT_HORIZON):
+        expected += GAMMA ** t * replay.phi()
+        replay.step(1)
+
+    _, n_hat = run_option(env, 1, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    np.testing.assert_allclose(n_hat, expected, rtol=1e-5)
+
+
+def test_a_steadily_safe_option_scores_its_safety_level():
+    """The case the old rule got wrong. Once Safety is high, holding it there
+    adds nothing to a sum of CHANGES, but a sum of LEVELS still credits it."""
+    env = _fresh_env()
+    for _ in range(6):
+        env.step(2)  # IronGolemSpawn: builds Safety up
+    safety_level = env.phi()[0]
+    assert safety_level > 0.0
+
+    _, n_hat = run_option(env, 0, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    # Even while idling, the agent spends the whole option in a safe state.
+    assert n_hat[0] > safety_level
 
 
 def _candidates_after(steps: int):
