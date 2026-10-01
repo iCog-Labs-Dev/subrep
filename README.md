@@ -109,6 +109,10 @@ python -m pytest tests/test_pilot_performance.py -v
 
 ## Optional SafeRL Benchmark Pilot
 
+For the held-out three-objective benchmark using the retrained PPO policies,
+actual SkillLibrary admission/querying, fixed-policy baselines, and paired
+confidence intervals, see [Safety reuse benchmark](docs/SAFETY_REUSE_BENCHMARK.md).
+
 Safety-Gymnasium uses older pinned Gymnasium/Pygame versions, so keep it in a
 separate Python 3.10 environment instead of the main SubRep `.venv`:
 
