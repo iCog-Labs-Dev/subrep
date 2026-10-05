@@ -1,22 +1,12 @@
 
-"""
-Compare SkillGenerator performance across default total dataset sizes of 1,000,
-3,000, and 7,000 episodes.
-
-Each requested dataset size is split independently into:
-75% training, 12.5% validation, 12.5% test
-Example:
-    python -m generator.compare_dataset_sizes --data-dir data/raw
-
-The purpose is to study how SkillGenerator performance changes
-as the TOTAL amount of available data increases.
-"""
+"""Compare user-selected training sizes on shared validation and test sets."""
 
 from __future__ import annotations
 
 import argparse
 import copy
 import json
+import math
 import os
 import random
 import shutil
@@ -26,6 +16,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
@@ -40,83 +31,135 @@ from generator.train_generator import (
     train_one_epoch,
 )
 
-def create_dataset_split(
+
+def create_holdout_split(
     full_dataset: SkillDataset,
-    size: int,
     seed: int,
+    source_size: int | None = None,
+    validation_fraction: float = 0.125,
+    test_fraction: float = 0.125,
 ):
     """
-    Select exactly `size` files from the full dataset and split them.
+    Split the source pool once into a training pool and fixed holdouts.
     """
-    if size > len(full_dataset.files):
-        raise ValueError(
-            f"Requested dataset size {size} exceeds available files "
-            f"({len(full_dataset.files)})."
-        )
+    if validation_fraction <= 0.0 or test_fraction <= 0.0:
+        raise ValueError("validation_fraction and test_fraction must be positive")
+    if validation_fraction + test_fraction >= 1.0:
+        raise ValueError("validation_fraction + test_fraction must be less than 1.0")
 
     all_files = sorted(full_dataset.files)
-    rng = random.Random(seed)
-
-    shuffled_files = all_files.copy()
-    rng.shuffle(shuffled_files)
-
-    selected_files = shuffled_files[:size]
-    train_size = int(size * 0.75)
-    val_size = int(size * 0.125)
-
-    train_files = selected_files[:train_size]
-    val_files = selected_files[train_size:train_size + val_size]
-    test_files = selected_files[train_size + val_size:]
+    if not all_files:
+        raise ValueError("Cannot split an empty dataset")
 
     file_to_record = dict(zip(full_dataset.files, full_dataset.data))
+    context_groups: dict[tuple[float, ...], list[tuple[str, object]]] = {}
+    for file_path in all_files:
+        record = file_to_record[file_path]
+        observation = record[0].detach().cpu().numpy().reshape(-1)
+        context_key = tuple(float(value) for value in np.round(observation, decimals=6))
+        context_groups.setdefault(context_key, []).append((file_path, record))
 
-    train_records = [file_to_record[fp] for fp in train_files]
-    val_records = [file_to_record[fp] for fp in val_files]
-    test_records = [file_to_record[fp] for fp in test_files]
+    rng = random.Random(seed)
+    shuffled_groups = list(context_groups.values())
+    rng.shuffle(shuffled_groups)
 
+    available_size = len(all_files)
+    requested_source_size = available_size if source_size is None else int(source_size)
+    if requested_source_size <= 0:
+        raise ValueError("source_size must be positive")
+    if requested_source_size > available_size:
+        raise ValueError(
+            f"Requested source size {requested_source_size} exceeds available records ({available_size})"
+        )
+
+    source_groups = []
+    selected_source_size = 0
+    for group in shuffled_groups:
+        if selected_source_size >= requested_source_size:
+            break
+        source_groups.append(group)
+        selected_source_size += len(group)
+    rng.shuffle(source_groups)
+    shuffled_groups = source_groups
+
+    selected_source_files = [entry[0] for group in shuffled_groups for entry in group]
+    total_size = len(selected_source_files)
+    total_contexts = len(shuffled_groups)
+    validation_contexts = int(round(total_contexts * validation_fraction))
+    test_contexts = int(round(total_contexts * test_fraction))
+    if validation_contexts == 0 or test_contexts == 0:
+        raise ValueError("Dataset is too small for non-empty validation and test sets")
+
+    test_groups = shuffled_groups[:test_contexts]
+    validation_groups = shuffled_groups[test_contexts:test_contexts + validation_contexts]
+    training_pool_groups = shuffled_groups[test_contexts + validation_contexts:]
+    if not training_pool_groups:
+        raise ValueError("The fixed holdout leaves no records for training")
+
+    def flatten_groups(groups):
+        entries = [entry for group in groups for entry in group]
+        return [entry[0] for entry in entries], [entry[1] for entry in entries]
+
+    test_files, test_records = flatten_groups(test_groups)
+    validation_files, validation_records = flatten_groups(validation_groups)
+    training_pool_files = [
+        entry[0] for group in training_pool_groups for entry in group
+    ]
     return {
-        "train_files": train_files,
-        "val_files": val_files,
-        "test_files": test_files,
-        "train_records": train_records,
-        "val_records": val_records,
-        "test_records": test_records,
+        "total_size": total_size, "available_size": available_size,
+        "total_contexts": total_contexts,
+        "training_pool_contexts": len(training_pool_groups),
+        "validation_contexts": len(validation_groups), "test_contexts": len(test_groups),
+        "training_pool_groups": training_pool_groups, "training_pool_files": training_pool_files,
+        "validation_files": validation_files, "test_files": test_files,
+        "validation_records": validation_records, "test_records": test_records,
+        "validation_fraction": len(validation_files) / total_size,
+        "test_fraction": len(test_files) / total_size,
     }
 
 
-# ============================================================
-# Save the dataset files so they can be inspected
-# ============================================================
-
-def save_dataset_files(
-    split: dict,
-    full_dataset: SkillDataset,
-    output_dir: Path,
+def create_dataset_split(
+    holdout: dict,
+    size: int,
 ):
-    """
-    Copy the files belonging to this dataset into:
-    size_N/
-         train/
-         val/
-         test/
-    """
+    """Select a nested training subset from a precomputed holdout."""
+    if size <= 0:
+        raise ValueError("Training subset size must be positive")
+    if size > len(holdout["training_pool_files"]):
+        raise ValueError(
+            f"Requested training size {size} exceeds the available training pool "
+            f"({len(holdout['training_pool_files'])})."
+        )
 
-    train_dir = output_dir / "train"
-    val_dir = output_dir / "val"
-    test_dir = output_dir / "test"
+    train_entries = []
+    train_count = 0
+    for group in holdout["training_pool_groups"]:
+        if train_count >= size:
+            break
+        train_entries.extend(group)
+        train_count += len(group)
 
-    train_dir.mkdir(parents=True, exist_ok=True)
-    val_dir.mkdir(parents=True, exist_ok=True)
-    test_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "train_files": [entry[0] for entry in train_entries],
+        "validation_files": holdout["validation_files"], "test_files": holdout["test_files"],
+        "train_records": [entry[1] for entry in train_entries],
+        "validation_records": holdout["validation_records"], "test_records": holdout["test_records"],
+    }
 
-    for fp in split["train_files"]:
-        shutil.copy2(fp, train_dir / os.path.basename(fp))
 
-    for fp in split["val_files"]:
-        shutil.copy2(fp, val_dir / os.path.basename(fp))
+def _copy_split_files(files: list[str], output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for file_path in files:
+        shutil.copy2(file_path, output_dir / os.path.basename(file_path))
 
-    for fp in split["test_files"]:
-        shutil.copy2(fp, test_dir / os.path.basename(fp))
+
+def save_dataset_files(splits: dict[int, dict], output_dir: Path) -> None:
+    """Save shared holdouts once and each requested training subset separately."""
+    first_split = next(iter(splits.values()))
+    _copy_split_files(first_split["test_files"], output_dir / "fixed_split" / "test")
+    _copy_split_files(first_split["validation_files"], output_dir / "fixed_split" / "validation")
+    for size, split in splits.items():
+        _copy_split_files(split["train_files"], output_dir / f"size_{size}" / "train")
 
 
 # ============================================================
@@ -192,16 +235,20 @@ def run_training_loop(
 
 def evaluate_on_test_set(
     model: SkillGenerator,
+    train_records: list,
     test_records: list,
+    device: torch.device | None = None,
 ):
     """
-    Evaluate the trained model on this dataset's OWN test set.
-
-    Returns:
-        payoff MSE
-        safety MSE
-        fuel MSE
+    Compare model and training-mean predictions on the same fixed test set.
     """
+
+    if device is None:
+        first_parameter = next(model.parameters(), None)
+        device = first_parameter.device if first_parameter is not None else torch.device("cpu")
+    else:
+        device = torch.device(device)
+    model.to(device)
 
     loader = DataLoader(
         InMemorySkillDataset(test_records),
@@ -215,8 +262,12 @@ def evaluate_on_test_set(
     preds_motives = []
     targets_motives = []
 
+    model.eval()
     with torch.no_grad():
         for obs, payoff, motives in loader:
+            obs = obs.to(device)
+            payoff = payoff.to(device)
+            motives = motives.to(device)
             predicted_payoff, predicted_motives = model(obs)
 
             preds_payoff.append(predicted_payoff)
@@ -229,19 +280,35 @@ def evaluate_on_test_set(
     predicted_motives = torch.cat(preds_motives)
     target_motives = torch.cat(targets_motives)
 
+    training_payoffs = torch.stack([record[1] for record in train_records]).to(device)
+    training_motives = torch.stack([record[2] for record in train_records]).to(device)
+    mean_payoff = training_payoffs.mean(dim=0).expand_as(target_payoff)
+    mean_motives = training_motives.mean(dim=0).expand_as(target_motives)
+
+    model_mse = {
+        "payoff_mse": F.mse_loss(predicted_payoff, target_payoff).item(),
+        "safety_mse": F.mse_loss(predicted_motives[:, 0], target_motives[:, 0]).item(),
+        "fuel_mse": F.mse_loss(predicted_motives[:, 1], target_motives[:, 1]).item(),
+    }
+    mean_mse = {
+        "payoff_mse": F.mse_loss(mean_payoff, target_payoff).item(),
+        "safety_mse": F.mse_loss(mean_motives[:, 0], target_motives[:, 0]).item(),
+        "fuel_mse": F.mse_loss(mean_motives[:, 1], target_motives[:, 1]).item(),
+    }
+    improvement = {key: mean_mse[key] - model_mse[key] for key in model_mse}
+    improvement_percent = {
+        key: 100.0 * improvement[key] / mean_mse[key] if mean_mse[key] > 0 else None
+        for key in model_mse
+    }
+
     return {
-        "payoff_mse": F.mse_loss(
-            predicted_payoff,
-            target_payoff,
-        ).item(),
-        "safety_mse": F.mse_loss(
-            predicted_motives[:, 0],
-            target_motives[:, 0],
-        ).item(),
-        "fuel_mse": F.mse_loss(
-            predicted_motives[:, 1],
-            target_motives[:, 1],
-        ).item(),
+        "model_mse": model_mse,
+        "training_mean_mse": mean_mse,
+        "improvement_mse": improvement,
+        "improvement_percent": improvement_percent,
+        "model_beats_training_mean": {
+            key: model_mse[key] < mean_mse[key] for key in model_mse
+        },
     }
 
 
@@ -313,46 +380,33 @@ def save_combined_curves_plot(
 
 def save_mse_vs_size_plot(
     results: list[dict],
-    num_epochs: int,
     path: Path,
 ):
     """
-    Plot test MSE against TOTAL dataset size.
+    Plot paired model and training-mean test MSE bars by training-set size.
     """
+    metric_labels = (("payoff_mse", "Payoff"), ("safety_mse", "Safety"), ("fuel_mse", "Fuel"))
+    sizes = [result["training_records"] for result in results]
+    positions = np.arange(len(sizes), dtype=np.float32)
+    width = 0.36
+    figure, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-    sizes = [
-        result["dataset_size"]
-        for result in results
-    ]
+    for axis, (metric, label) in zip(axes, metric_labels):
+        model_values = [result[metric]["model_mse"] for result in results]
+        baseline_values = [result[metric]["mean_baseline_mse"] for result in results]
+        axis.bar(positions - width / 2, model_values, width, label="Model")
+        axis.bar(positions + width / 2, baseline_values, width, label="Training mean")
+        axis.set_title(label)
+        axis.set_xlabel("Training records")
+        axis.set_ylabel("Fixed test-set MSE")
+        axis.set_xticks(positions, [f"{size:,}" for size in sizes])
+        axis.grid(axis="y", alpha=0.3)
 
-    plt.figure(figsize=(8, 5))
-
-    for key, label in [
-        ("payoff_mse", "Payoff"),
-        ("safety_mse", "Safety"),
-        ("fuel_mse", "Fuel"),
-    ]:
-        plt.plot(
-            sizes,
-            [
-                result["test_mse"][key]
-                for result in results
-            ],
-            marker="o",
-            label=f"{label} MSE",
-        )
-
-    plt.xlabel("Total dataset size (episodes)")
-    plt.ylabel("Test-set MSE")
-    plt.title(
-        "Test MSE vs. Total Dataset Size "
-        f"(epoch ceiling = {num_epochs})"
-    )
-
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(path)
-    plt.close()
+    axes[0].legend()
+    figure.suptitle("Model vs. Training-Mean Baseline on the Fixed Test Set")
+    figure.tight_layout()
+    figure.savefig(path)
+    plt.close(figure)
 
 
 # ============================================================
@@ -362,40 +416,66 @@ def save_mse_vs_size_plot(
 def analyze_trend(
     results: list[dict],
 ):
-    """
-    Report whether payoff MSE decreases as total dataset
-    size increases.
-    """
+    """Summarize training-size trends for the Markdown report."""
+    metric_labels = ("payoff", "safety", "fuel")
+    analysis = {}
+    for metric in metric_labels:
+        model_values = [result[metric]["model_mse"] for result in results]
+        winning_sizes = [
+            result["training_records"]
+            for result in results
+            if result[metric]["improvement_percent"] is not None
+            and result[metric]["improvement_percent"] > 0.0
+        ]
+        analysis[metric] = {
+            "best_training_records": results[int(np.argmin(model_values))]["training_records"],
+            "model_beats_training_mean_at_sizes": winning_sizes,
+            "model_beats_training_mean_for_all_sizes": len(winning_sizes) == len(results),
+            "model_mse_decreases_monotonically_with_training_size": all(
+                later <= earlier for earlier, later in zip(model_values, model_values[1:])
+            ),
+        }
+    return analysis
 
-    if len(results) < 2:
-        return (
-            "Need at least two dataset sizes "
-            "to compare a trend."
-        )
 
-    payoff_mses = [
-        result["test_mse"]["payoff_mse"]
-        for result in results
+def build_markdown_report(summary: dict) -> str:
+    """Render the JSON comparison summary as a concise human-readable report."""
+    split = summary["split"]
+    lines = [
+        "# Dataset-Size Comparison",
+        "",
+        f"Shared validation: {split['validation_records']:,} records / {split['validation_contexts']:,} contexts; "
+        f"test: {split['test_records']:,} records / {split['test_contexts']:,} contexts (seed {split['seed']}).",
+        "",
+        "| Training records | Payoff model / mean MSE (improvement) | Safety model / mean MSE (improvement) | Fuel model / mean MSE (improvement) |",
+        "|---:|---:|---:|---:|",
     ]
-
-    improved = all(
-        later <= earlier
-        for earlier, later in zip(
-            payoff_mses,
-            payoff_mses[1:],
+    for result in summary["results"]:
+        format_pair = lambda key: (
+            f"{result[key]['model_mse']:.3f} / {result[key]['mean_baseline_mse']:.3f}"
+            f" ({result[key]['improvement_percent']:+.1f}% improvement)"
+            if result[key]["improvement_percent"] is not None
+            else f"{result[key]['model_mse']:.3f} / {result[key]['mean_baseline_mse']:.3f} (n/a)"
         )
-    )
-
-    if improved:
-        return (
-            "Payoff MSE decreased monotonically "
-            "as total dataset size increased."
+        lines.append(
+            f"| {result['training_records']:,} | {format_pair('payoff')} "
+            f"| {format_pair('safety')} | {format_pair('fuel')} |"
         )
 
-    return (
-        "Payoff MSE did NOT consistently decrease "
-        "as total dataset size increased."
-    )
+    lines.extend(["", "Analysis:"])
+    for outcome, details in analyze_trend(summary["results"]).items():
+        sizes = ", ".join(f"{size:,}" for size in details["model_beats_training_mean_at_sizes"])
+        if not sizes:
+            sizes = "none"
+        trend = "decreased monotonically" if details[
+            "model_mse_decreases_monotonically_with_training_size"
+        ] else "did not decrease monotonically"
+        lines.append(
+            f"- {outcome}: best at {details['best_training_records']:,} training records; "
+            f"beats mean at {sizes}; MSE {trend}."
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 # ============================================================
@@ -403,58 +483,33 @@ def analyze_trend(
 # ============================================================
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Compare SkillGenerator performance across different total dataset sizes."
-    )
-
-    parser.add_argument(
-        "--data-dir",
-        type=str,
-        default="data/raw",
-        help="Directory containing the complete pool of rollout files.",
-    )
-
-    parser.add_argument(
-        "--sizes",
-        type=int,
-        nargs="+",
-        default=[1000, 3000, 7000],
-        help="TOTAL dataset sizes to compare. Default: 1000 3000 7000.",
-    )
-
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=150,
-        help="Maximum number of training epochs for every dataset size.",
-    )
-
-    parser.add_argument("--patience", type=int, default=10, help="Early stopping patience.")
+    parser = argparse.ArgumentParser(description="Compare SkillGenerator performance as training data grows.")
+    parser.add_argument("--data-dir", type=str, default="data/raw", help="Directory containing rollout files.")
+    parser.add_argument("--sizes", type=int, nargs="+", required=True, help="Training-subset sizes to compare.")
+    parser.add_argument("--epochs", type=int, default=150, help="Maximum training epochs per size.")
+    parser.add_argument("--patience", type=int, default=10, help="Early-stopping patience.")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Seed used to make dataset selection and splitting reproducible.",
-    )
-
-    parser.add_argument(
-        "--rollout-output-dir",
-        type=str,
-        default="data/dataset_size_comparison_rollouts",
-        help="Where each complete dataset will be saved.",
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="plots/dataset_size_comparison",
-        help="Where plots and results JSON are saved.",
-    )
+    parser.add_argument("--seed", type=int, default=42, help="Seed for the shared context-disjoint split.")
+    parser.add_argument("--validation-fraction", type=float, default=0.125)
+    parser.add_argument("--test-fraction", type=float, default=0.125)
+    parser.add_argument("--rollout-output-dir", type=str, default="data/dataset_size_comparison_rollouts")
+    parser.add_argument("--output-dir", type=str, default="plots/dataset_size_comparison")
+    parser.add_argument("--report-json", type=str, default="demo/artifacts/dataset_size_comparison_report.json")
+    parser.add_argument("--report-md", type=str, default="demo/artifacts/dataset_size_comparison_report.md")
 
     args = parser.parse_args()
+    if any(size <= 0 for size in args.sizes):
+        raise ValueError("--sizes must contain positive training sizes")
+    if args.validation_fraction <= 0.0 or args.test_fraction <= 0.0:
+        raise ValueError("validation and test fractions must be positive")
+    if args.validation_fraction + args.test_fraction >= 1.0:
+        raise ValueError("validation and test fractions must sum to less than 1.0")
+    if len(set(args.sizes)) != len(args.sizes):
+        print("Warning: duplicate training sizes were provided; duplicates will be removed.")
+    args.sizes = sorted(set(args.sizes))
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     rollout_output_dir = Path(args.rollout_output_dir)
@@ -463,31 +518,84 @@ def main():
     full_dataset = SkillDataset(args.data_dir)
     print(f"Available rollout files: {len(full_dataset.files)}")
 
+    available_records = len(full_dataset.files)
+    training_fraction = 1.0 - args.validation_fraction - args.test_fraction
+    required_source_size = int(math.ceil(max(args.sizes) / training_fraction))
+    if required_source_size > available_records:
+        additional_records = required_source_size - available_records
+        collection_command = (
+            "python -m data_collector.collect "
+            f"--episodes {additional_records} "
+            f'--save-dir "{args.data_dir}"'
+        )
+        print(
+            f"Insufficient data: requested training sizes {args.sizes} need at least "
+            f"{required_source_size:,} source records with the selected holdout fractions; "
+            f"only {available_records:,} are available. Collect at least "
+            f"{additional_records:,} more records, then rerun. The collector's default "
+            f"seed is 42. No models were trained.\n"
+            "Run this command to collect them:\n"
+            f"{collection_command}"
+        )
+        return
+    source_size = required_source_size
+    print(
+        f"Using the minimum estimated source pool of {source_size:,} records "
+        "for the requested sizes and holdout fractions."
+    )
+
+    try:
+        fixed_split = create_holdout_split(
+            full_dataset,
+            seed=args.seed,
+            source_size=source_size,
+            validation_fraction=args.validation_fraction,
+            test_fraction=args.test_fraction,
+        )
+    except ValueError as error:
+        print(
+            f"Warning: cannot create the requested fixed validation/test split: {error}. "
+            "Provide more records or reduce the holdout fractions."
+        )
+        return
+
+    available_training = len(fixed_split["training_pool_files"])
+    if available_training < max(args.sizes):
+        print(
+            f"Insufficient context groups: the estimated {source_size:,}-record pool "
+            f"leaves {available_training:,} training records, fewer than the requested "
+            f"maximum of {max(args.sizes):,}. Collect more data and rerun; no models were trained."
+        )
+        return
+    if fixed_split["total_size"] != source_size:
+        print(
+            f"Selected {fixed_split['total_size']:,} records rather than {source_size:,} "
+            "to keep all records from each matching starting context together."
+        )
+    splits = {
+        size: create_dataset_split(fixed_split, size)
+        for size in args.sizes
+    }
+
+    save_dataset_files(splits, rollout_output_dir)
+    print(f"Split files saved -> {rollout_output_dir}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     results = []
     histories = []
 
-    for size in args.sizes:
+    for size, split in splits.items():
         print(f"\n{'=' * 60}")
-        print(f"Dataset size: {size}")
+        print(f"Training subset target: {size}")
         print(f"{'=' * 60}")
 
-        try:
-            split = create_dataset_split(full_dataset, size, args.seed)
-        except ValueError as e:
-            print(f"Skipping dataset size {size}: {e}")
-            continue
-
-        print(f"  Total:      {size}")
         print(f"  Train:      {len(split['train_records'])}")
-        print(f"  Validation: {len(split['val_records'])}")
+        print(f"  Validation: {len(split['validation_records'])} (fixed)")
         print(f"  Test:       {len(split['test_records'])}")
-
-        dataset_output_dir = rollout_output_dir / f"size_{size}"
-        save_dataset_files(split, full_dataset, dataset_output_dir)
-        print(f"  Dataset saved -> {dataset_output_dir}")
+        training_files_dir = rollout_output_dir / f"size_{len(split['train_records'])}" / "train"
+        print(f"  Training files -> {training_files_dir}")
 
         torch.manual_seed(args.seed)
 
@@ -497,7 +605,7 @@ def main():
             shuffle=True,
         )
         val_loader = DataLoader(
-            InMemorySkillDataset(split["val_records"]),
+            InMemorySkillDataset(split["validation_records"]),
             batch_size=args.batch_size,
             shuffle=False,
         )
@@ -524,67 +632,76 @@ def main():
         )
 
         model.load_state_dict(best_state)
-        test_mse = evaluate_on_test_set(model, split["test_records"])
+        test_mse = evaluate_on_test_set(
+            model,
+            split["train_records"],
+            split["test_records"],
+            device=device,
+        )
 
         print(f"  Best epoch: {best_epoch}/{args.epochs}")
-        print(f"  Test payoff MSE: {test_mse['payoff_mse']:.4f}")
-        print(f"  Test safety MSE: {test_mse['safety_mse']:.4f}")
-        print(f"  Test fuel MSE: {test_mse['fuel_mse']:.4f}")
+        for metric, label in (("payoff_mse", "Payoff"), ("safety_mse", "Safety"), ("fuel_mse", "Fuel")):
+            model_error = test_mse["model_mse"][metric]
+            baseline_error = test_mse["training_mean_mse"][metric]
+            print(f"  Test {label} MSE: model={model_error:.4f}, training-mean={baseline_error:.4f}")
 
         histories.append({
-            "size": size,
+            "size": len(split["train_records"]),
             "train": hist_train,
             "val": hist_val,
             "best_epoch": best_epoch,
         })
 
         results.append({
-            "dataset_size": size,
-            "train_size": len(split["train_records"]),
-            "validation_size": len(split["val_records"]),
-            "test_size": len(split["test_records"]),
-            "train_fraction": len(split["train_records"]) / size,
-            "validation_fraction": len(split["val_records"]) / size,
-            "test_fraction": len(split["test_records"]) / size,
-            "epoch_ceiling": args.epochs,
-            "stopped_at_epoch": best_epoch,
-            "test_mse": test_mse,
+            "training_records": len(split["train_records"]),
+            "payoff": {
+                "model_mse": test_mse["model_mse"]["payoff_mse"],
+                "mean_baseline_mse": test_mse["training_mean_mse"]["payoff_mse"],
+                "improvement_percent": test_mse["improvement_percent"]["payoff_mse"],
+            },
+            "safety": {
+                "model_mse": test_mse["model_mse"]["safety_mse"],
+                "mean_baseline_mse": test_mse["training_mean_mse"]["safety_mse"],
+                "improvement_percent": test_mse["improvement_percent"]["safety_mse"],
+            },
+            "fuel": {
+                "model_mse": test_mse["model_mse"]["fuel_mse"],
+                "mean_baseline_mse": test_mse["training_mean_mse"]["fuel_mse"],
+                "improvement_percent": test_mse["improvement_percent"]["fuel_mse"],
+            },
         })
 
     if not results:
         print("\nNo dataset sizes could be run.")
         return
 
-    suffix = f"epochs{args.epochs}"
-    curves_path = output_dir / f"combined_training_curves_{suffix}.png"
+    curves_path = output_dir / "combined_training_curves.png"
     save_combined_curves_plot(histories, args.epochs, curves_path)
     print(f"\nTraining curves saved -> {curves_path}")
 
-    mse_plot_path = output_dir / f"test_mse_vs_dataset_size_{suffix}.png"
-    save_mse_vs_size_plot(results, args.epochs, mse_plot_path)
-    print(f"MSE plot saved -> {mse_plot_path}")
+    mse_plot_path = output_dir / "model_vs_training_mean_mse.png"
+    save_mse_vs_size_plot(results, mse_plot_path)
+    print(f"MSE comparison plot saved -> {mse_plot_path}")
 
-    trend_note = analyze_trend(results)
-    print(f"\nTrend: {trend_note}")
-
-    summary_path = output_dir / f"dataset_size_comparison_results_{suffix}.json"
-    with open(summary_path, "w") as f:
-        json.dump(
-            {
-                "seed": args.seed,
-                "train_fraction": 0.75,
-                "validation_fraction": 0.125,
-                "test_fraction": 0.125,
-                "epoch_ceiling": args.epochs,
-                "patience": args.patience,
-                "results": results,
-                "trend_analysis": trend_note,
-            },
-            f,
-            indent=2,
-        )
-
-    print(f"Summary saved -> {summary_path}")
+    report = {
+        "split": {
+            "seed": args.seed,
+            "validation_records": len(fixed_split["validation_files"]),
+            "validation_contexts": fixed_split["validation_contexts"],
+            "test_records": len(fixed_split["test_files"]),
+            "test_contexts": fixed_split["test_contexts"],
+        },
+        "results": results,
+    }
+    report_json_path = Path(args.report_json)
+    report_md_path = Path(args.report_md)
+    report_json_path.parent.mkdir(parents=True, exist_ok=True)
+    report_md_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(report_json_path, "w", encoding="utf-8") as report_file:
+        json.dump(report, report_file, indent=2)
+    report_md_path.write_text(build_markdown_report(report), encoding="utf-8")
+    print(f"JSON report saved -> {report_json_path}")
+    print(f"Markdown report saved -> {report_md_path}")
 
 
 # ============================================================

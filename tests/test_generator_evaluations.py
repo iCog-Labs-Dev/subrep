@@ -16,6 +16,16 @@ class ZeroPredictionModel(torch.nn.Module):
         return torch.zeros(batch_size, 1), torch.zeros(batch_size, 2)
 
 
+class DeviceCheckingModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.anchor = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, obs):
+        assert obs.device == self.anchor.device
+        return self.anchor.expand(obs.shape[0], 1), self.anchor.expand(obs.shape[0], 2)
+
+
 class ContextPredictionModel(torch.nn.Module):
     def forward(self, context):
         payoff = context[0].reshape(1)
@@ -32,40 +42,105 @@ def _write_rollout(path, payoff, motives):
     )
 
 
-def test_compare_dataset_split_is_reproducible_disjoint_and_exact():
-    files = [f"episode_{index}.npz" for index in range(40)]
-    records = [f"record_{index}" for index in range(40)]
+def _rollout_record(context_id, payoff=0.0, motives=(0.0, 0.0)):
+    observation = torch.zeros(8, dtype=torch.float32)
+    observation[0] = float(context_id)
+    return (
+        observation,
+        torch.tensor([payoff], dtype=torch.float32),
+        torch.tensor(motives, dtype=torch.float32),
+    )
+
+
+def test_split_reuses_holdouts_and_keeps_shared_contexts_together():
+    files = [f"episode_{context}_{policy}.npz" for context in range(20) for policy in range(2)]
+    records = [_rollout_record(context) for context in range(20) for _ in range(2)]
     dataset = SimpleNamespace(files=files, data=records)
 
-    first = compare_dataset_sizes.create_dataset_split(dataset, size=40, seed=7)
-    repeated = compare_dataset_sizes.create_dataset_split(dataset, size=40, seed=7)
+    fixed = compare_dataset_sizes.create_holdout_split(dataset, seed=7)
+    repeated_fixed = compare_dataset_sizes.create_holdout_split(dataset, seed=7)
+    small = compare_dataset_sizes.create_dataset_split(fixed, size=8)
+    large = compare_dataset_sizes.create_dataset_split(fixed, size=20)
 
-    assert first == repeated
-    assert (len(first["train_files"]), len(first["val_files"]), len(first["test_files"])) == (30, 5, 5)
-    assert not (set(first["train_files"]) & set(first["val_files"]))
-    assert not (set(first["train_files"]) & set(first["test_files"]))
-    assert not (set(first["val_files"]) & set(first["test_files"]))
-    assert set(first["train_files"] + first["val_files"] + first["test_files"]) == set(files)
+    assert fixed["test_files"] == repeated_fixed["test_files"]
+    assert fixed["validation_files"] == repeated_fixed["validation_files"]
+    assert len(fixed["training_pool_files"]) == 32
+    assert len(fixed["validation_files"]) == 4
+    assert len(fixed["test_files"]) == 4
+    assert set(small["train_files"]) <= set(large["train_files"])
+    assert small["validation_files"] == large["validation_files"]
+    assert small["test_files"] == large["test_files"]
 
-    with pytest.raises(ValueError, match="exceeds available files"):
-        compare_dataset_sizes.create_dataset_split(dataset, size=41, seed=7)
+    context_sets = [
+        {round(float(record[0][0]), 6) for record in records_in_split}
+        for records_in_split in (
+            large["train_records"],
+            large["validation_records"],
+            large["test_records"],
+        )
+    ]
+    assert not (context_sets[0] & context_sets[1])
+    assert not (context_sets[0] & context_sets[2])
+    assert not (context_sets[1] & context_sets[2])
+
+    with pytest.raises(ValueError, match="exceeds the available training pool"):
+        compare_dataset_sizes.create_dataset_split(fixed, size=33)
+
+
+def test_save_dataset_files_uses_shared_holdout_and_per_size_train_paths(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    train_file = source / "train.npz"
+    validation_file = source / "validation.npz"
+    test_file = source / "test.npz"
+    for path in (train_file, validation_file, test_file):
+        path.write_bytes(b"record")
+
+    split = {
+        "train_files": [str(train_file)],
+        "validation_files": [str(validation_file)],
+        "test_files": [str(test_file)],
+    }
+    output_dir = tmp_path / "rollouts"
+    compare_dataset_sizes.save_dataset_files({1000: split}, output_dir)
+
+    assert (output_dir / "fixed_split" / "test" / "test.npz").exists()
+    assert (output_dir / "fixed_split" / "validation" / "validation.npz").exists()
+    assert (output_dir / "size_1000" / "train" / "train.npz").exists()
+    assert not (output_dir / "split_manifest.json").exists()
+    assert not (output_dir / "training_pool").exists()
 
 
 def test_compare_main_uses_documented_default_sizes(monkeypatch, tmp_path):
     files = [f"episode_{index}.npz" for index in range(7000)]
-    dataset = SimpleNamespace(files=files, data=list(range(7000)))
+    dataset = SimpleNamespace(files=files, data=[_rollout_record(index) for index in range(7000)])
     monkeypatch.setattr(compare_dataset_sizes, "SkillDataset", lambda _: dataset)
     monkeypatch.setattr(compare_dataset_sizes, "save_dataset_files", lambda *args: None)
-    monkeypatch.setattr(
-        compare_dataset_sizes,
-        "run_training_loop",
-        lambda model, **kwargs: (model.state_dict(), [], [], 1),
-    )
-    monkeypatch.setattr(
-        compare_dataset_sizes,
-        "evaluate_on_test_set",
-        lambda model, records: {"payoff_mse": 1.0, "safety_mse": 2.0, "fuel_mse": 3.0},
-    )
+    observed_validation_contexts = []
+    observed_test_contexts = []
+
+    def fake_training_loop(model, **kwargs):
+        observed_validation_contexts.append(
+            tuple(float(record[0][0]) for record in kwargs["val_loader"].dataset.data)
+        )
+        return model.state_dict(), [], [], 1
+
+    def fake_evaluate(model, train_records, test_records, device=None):
+        observed_test_contexts.append(tuple(float(record[0][0]) for record in test_records))
+        return {
+            "model_mse": {"payoff_mse": 1.0, "safety_mse": 2.0, "fuel_mse": 3.0},
+            "training_mean_mse": {"payoff_mse": 2.0, "safety_mse": 3.0, "fuel_mse": 4.0},
+            "improvement_mse": {"payoff_mse": 1.0, "safety_mse": 1.0, "fuel_mse": 1.0},
+            "improvement_percent": {"payoff_mse": 50.0, "safety_mse": 33.333, "fuel_mse": 25.0},
+            "model_beats_training_mean": {
+                "payoff_mse": True,
+                "safety_mse": True,
+                "fuel_mse": True,
+            },
+        }
+
+    monkeypatch.setattr(compare_dataset_sizes, "run_training_loop", fake_training_loop)
+    monkeypatch.setattr(compare_dataset_sizes, "evaluate_on_test_set", fake_evaluate)
     monkeypatch.setattr(compare_dataset_sizes, "save_combined_curves_plot", lambda *args: None)
     monkeypatch.setattr(compare_dataset_sizes, "save_mse_vs_size_plot", lambda *args: None)
     monkeypatch.setattr(compare_dataset_sizes.torch.cuda, "is_available", lambda: False)
@@ -82,17 +157,75 @@ def test_compare_main_uses_documented_default_sizes(monkeypatch, tmp_path):
             str(output_dir),
             "--rollout-output-dir",
             str(rollout_dir),
+            "--sizes",
+            "1000",
+            "3000",
+            "5250",
+            "--report-json",
+            str(tmp_path / "artifacts" / "comparison.json"),
+            "--report-md",
+            str(tmp_path / "artifacts" / "comparison.md"),
         ],
     )
 
     compare_dataset_sizes.main()
 
-    summary = json.loads((output_dir / "dataset_size_comparison_results_epochs150.json").read_text())
-    assert [result["dataset_size"] for result in summary["results"]] == [1000, 3000, 7000]
-    assert [
-        (result["train_size"], result["validation_size"], result["test_size"])
+    summary = json.loads((tmp_path / "artifacts" / "comparison.json").read_text())
+    assert [result["training_records"] for result in summary["results"]] == [1000, 3000, 5250]
+    assert summary["split"] == {
+        "seed": 42,
+        "validation_records": 875,
+        "validation_contexts": 875,
+        "test_records": 875,
+        "test_contexts": 875,
+    }
+    assert all(
+        set(result) == {"training_records", "payoff", "safety", "fuel"}
         for result in summary["results"]
-    ] == [(750, 125, 125), (2250, 375, 375), (5250, 875, 875)]
+    )
+    assert all("beats_baseline" not in result["payoff"] for result in summary["results"])
+    assert summary["results"][0]["payoff"]["improvement_percent"] == 50.0
+    assert len(set(observed_validation_contexts)) == 1
+    assert len(set(observed_test_contexts)) == 1
+    assert (tmp_path / "artifacts" / "comparison.md").exists()
+
+
+def test_compare_main_warns_when_requested_sizes_exceed_available_data(
+    monkeypatch, tmp_path, capsys
+):
+    files = [f"episode_{index}.npz" for index in range(20)]
+    dataset = SimpleNamespace(files=files, data=[_rollout_record(index) for index in range(20)])
+    monkeypatch.setattr(compare_dataset_sizes, "SkillDataset", lambda _: dataset)
+    monkeypatch.setattr(
+        compare_dataset_sizes,
+        "run_training_loop",
+        lambda *args, **kwargs: pytest.fail("training must not start without enough source records"),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "compare_dataset_sizes",
+            "--data-dir",
+            "unused",
+            "--sizes",
+            "100",
+            "--report-json",
+            str(tmp_path / "artifacts" / "comparison.json"),
+            "--report-md",
+            str(tmp_path / "artifacts" / "comparison.md"),
+        ],
+    )
+
+    compare_dataset_sizes.main()
+
+    output = capsys.readouterr().out
+    assert "need at least 134 source records" in output
+    assert "Collect at least 114 more records" in output
+    assert "default seed is 42" in output
+    assert "No models were trained" in output
+    assert "python -m data_collector.collect --episodes 114" in output
+    assert '--save-dir "unused"' in output
+    assert "--seed" not in output
 
 
 def test_evaluate_dataset_uses_test_records_and_train_only_baseline(tmp_path):
@@ -124,6 +257,22 @@ def test_evaluate_dataset_uses_test_records_and_train_only_baseline(tmp_path):
 
     saved = json.loads((tmp_path / "report" / "generator_mse_report.json").read_text())
     assert saved == result
+
+
+def test_dataset_size_evaluation_moves_batches_to_model_device():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = DeviceCheckingModel().to(device)
+    train_records = [_rollout_record(0, 0.0, (0.0, 2.0)), _rollout_record(1, 2.0, (2.0, 4.0))]
+    test_records = [_rollout_record(2, 4.0, (4.0, 6.0))]
+
+    result = compare_dataset_sizes.evaluate_on_test_set(
+        model,
+        train_records,
+        test_records,
+        device=device,
+    )
+
+    assert result["training_mean_mse"]["payoff_mse"] == pytest.approx(9.0)
 
 
 def test_report_loader_reads_candidate_set_records(tmp_path):
