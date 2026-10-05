@@ -33,6 +33,7 @@ class SubRepOmegaRecommendationService:
         *,
         task_context: Mapping[str, Any],
         objective_weights: Mapping[str, float],
+        objective_order: Sequence[str],
         risk_budget: RiskBudget,
         skill_library: SkillLibrary,
         exclusions: Sequence[SkillExclusion] = (),
@@ -44,6 +45,7 @@ class SubRepOmegaRecommendationService:
         request = self.build_request_from_library(
             task_context=task_context,
             objective_weights=objective_weights,
+            objective_order=objective_order,
             risk_budget=risk_budget,
             skill_library=skill_library,
             exclusions=exclusions,
@@ -59,6 +61,7 @@ class SubRepOmegaRecommendationService:
         *,
         task_context: Mapping[str, Any],
         objective_weights: Mapping[str, float],
+        objective_order: Sequence[str],
         risk_budget: RiskBudget,
         skill_library: SkillLibrary,
         exclusions: Sequence[SkillExclusion] = (),
@@ -69,9 +72,19 @@ class SubRepOmegaRecommendationService:
     ) -> RecommendationRequest:
         """Build the exact validated snapshot used by every recommendation path."""
 
+        ordered_ids = tuple(objective_order)
+        if len(ordered_ids) < 2:
+            raise ValueError("objective_order must contain at least two objective IDs")
+        if any(not isinstance(name, str) or not name.strip() for name in ordered_ids):
+            raise ValueError("objective_order must contain non-empty string IDs")
+        if len(ordered_ids) != len(set(ordered_ids)):
+            raise ValueError("objective_order must contain unique objective IDs")
+        if set(ordered_ids) != set(objective_weights):
+            raise ValueError("objective_order must contain exactly the objective_weights keys")
+
         objectives = tuple(
-            ObjectiveWeight(objective_id=name, weight=weight)
-            for name, weight in objective_weights.items()
+            ObjectiveWeight(objective_id=name, weight=objective_weights[name])
+            for name in ordered_ids
         )
         weights_array = np.asarray([item.weight for item in objectives], dtype=np.float64)
         runtime_admissible = skill_library.query_admissible(

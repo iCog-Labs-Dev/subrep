@@ -17,6 +17,7 @@ class SyntheticScenario:
     description: str
     task_context: dict
     objective_weights: dict[str, float]
+    objective_order: tuple[str, ...]
     risk_budget: RiskBudget
     skill_library: SkillLibrary
     exclusions: tuple[SkillExclusion, ...] = ()
@@ -31,6 +32,7 @@ def predefined_scenarios() -> tuple[SyntheticScenario, ...]:
             description="Safety is dominant, so the safety-focused skill has a clear lead.",
             task_context={"scenario": "clear preferred skill", "evidence": "SYNTHETIC"},
             objective_weights={"safety": 0.8, "efficiency": 0.2},
+            objective_order=("safety", "efficiency"),
             risk_budget=RiskBudget(max_certificate_epsilon=0.0, minimum_admission_margin=0.0),
             skill_library=_balanced_library(),
         ),
@@ -39,6 +41,7 @@ def predefined_scenarios() -> tuple[SyntheticScenario, ...]:
             description="Efficiency becomes dominant and changes the preferred skill.",
             task_context={"scenario": "changed task priorities", "evidence": "SYNTHETIC"},
             objective_weights={"safety": 0.2, "efficiency": 0.8},
+            objective_order=("safety", "efficiency"),
             risk_budget=RiskBudget(max_certificate_epsilon=0.0, minimum_admission_margin=0.0),
             skill_library=_balanced_library(),
         ),
@@ -47,6 +50,7 @@ def predefined_scenarios() -> tuple[SyntheticScenario, ...]:
             description="The otherwise preferred efficiency skill is explicitly excluded.",
             task_context={"scenario": "excluded skill", "evidence": "SYNTHETIC"},
             objective_weights={"safety": 0.1, "efficiency": 0.9},
+            objective_order=("safety", "efficiency"),
             risk_budget=RiskBudget(max_certificate_epsilon=0.0, minimum_admission_margin=0.0),
             skill_library=_balanced_library(),
             exclusions=(
@@ -63,6 +67,7 @@ def predefined_scenarios() -> tuple[SyntheticScenario, ...]:
             description="No skill is admitted, so the backend must abstain.",
             task_context={"scenario": "no admissible options", "evidence": "SYNTHETIC"},
             objective_weights={"safety": 0.5, "efficiency": 0.5},
+            objective_order=("safety", "efficiency"),
             risk_budget=RiskBudget(max_certificate_epsilon=0.0, minimum_admission_margin=0.0),
             skill_library=SkillLibrary(),
             exclusions=(

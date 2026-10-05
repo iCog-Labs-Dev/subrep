@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from math import isclose, isfinite
@@ -10,9 +11,9 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 
-REQUEST_SCHEMA_VERSION = "subrep.omegaclaw.explanation.request.v1"
+REQUEST_SCHEMA_VERSION = "subrep.omegaclaw.explanation.request.v2"
 RESPONSE_SCHEMA_VERSION = "subrep.omegaclaw.explanation.response.v1"
-AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.explanation.audit.v1"
+AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.explanation.audit.v2"
 SELECTION_RULE = "MAX_FINAL_SELECTION_SCORE"
 TIE_BREAKER = "LEXICOGRAPHIC_SKILL_ID"
 INTEGRATION_MODE = "EXPLANATION_ONLY"
@@ -409,6 +410,7 @@ class RecommendationRequest:
             "mode": INTEGRATION_MODE,
             "subrep_decision": asdict(self.subrep_decision),
             "task_context": _thaw_json(self.task_context),
+            "objective_order": [item.objective_id for item in self.objective_weights],
             "admitted_skills": {
                 skill.skill_id: {
                     "skill_id": skill.skill_id,
@@ -464,6 +466,7 @@ class RecommendationRequest:
         for root in (
             "subrep_decision",
             "task_context",
+            "objective_order",
             "risk_budget",
             "admitted_skills",
             "exclusions",
@@ -537,6 +540,8 @@ class OmegaRecommendationResponse:
         concerns_payload = payload["advisory_concerns"]
         if not isinstance(concerns_payload, (list, tuple)):
             raise ValueError("advisory_concerns must be an array")
+        if not all(isinstance(item, (Mapping, AdvisoryConcern)) for item in concerns_payload):
+            raise ValueError("advisory_concerns items must be objects")
         concerns = tuple(
             item if isinstance(item, AdvisoryConcern) else AdvisoryConcern(**item)
             for item in concerns_payload
@@ -630,6 +635,21 @@ def validate_response_for_request(
             raise ValueError("abstention explanation must describe the lack of a recommendation")
     elif decision.selected_skill_id.lower() not in explanation_lower:
         raise ValueError("explanation must mention the selected skill ID")
+
+    for exclusion in request.exclusions:
+        excluded_id = re.escape(exclusion.skill_id.lower())
+        runner_term = r"(?:runner[- ]up|second[- ]best)"
+        labels_excluded_as_runner = re.search(
+            rf"(?:\b{excluded_id}\b\s+(?:was|is|remains|ranked as|served as)\s+"
+            rf"(?:the\s+)?{runner_term}|{runner_term}\s+(?:was|is)\s+"
+            rf"\b{excluded_id}\b|\b{excluded_id}\b\s*,\s*(?:the\s+)?{runner_term})",
+            explanation_lower,
+        )
+        if labels_excluded_as_runner:
+            raise ValueError(
+                f"explanation must not describe excluded skill {exclusion.skill_id!r} "
+                "as an admitted runner-up"
+            )
 
     for concern in response.advisory_concerns:
         unknown_concern_refs = set(concern.evidence_refs).difference(valid_refs)
