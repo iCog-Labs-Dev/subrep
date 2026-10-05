@@ -22,6 +22,7 @@ def test_predefined_scenarios_cover_acceptance_cases(tmp_path):
         outcomes[scenario.name] = service.recommend_from_library(
             task_context=scenario.task_context,
             objective_weights=scenario.objective_weights,
+            objective_order=scenario.objective_order,
             risk_budget=scenario.risk_budget,
             skill_library=scenario.skill_library,
             exclusions=scenario.exclusions,

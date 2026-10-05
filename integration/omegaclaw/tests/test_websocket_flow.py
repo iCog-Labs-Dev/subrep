@@ -44,6 +44,7 @@ def test_complete_subrep_websocket_validated_response_flow(tmp_path):
         outcome = service.recommend_from_library(
             task_context=scenario.task_context,
             objective_weights=scenario.objective_weights,
+            objective_order=scenario.objective_order,
             risk_budget=scenario.risk_budget,
             skill_library=scenario.skill_library,
             evidence_label="SYNTHETIC",
@@ -70,6 +71,7 @@ def test_connection_timeout_is_recorded_as_backend_error(tmp_path):
         outcome = service.recommend_from_library(
             task_context=scenario.task_context,
             objective_weights=scenario.objective_weights,
+            objective_order=scenario.objective_order,
             risk_budget=scenario.risk_budget,
             skill_library=scenario.skill_library,
             evidence_label="SYNTHETIC",
@@ -106,6 +108,7 @@ def test_progress_only_response_timeout_is_recorded_as_backend_error(tmp_path):
         outcome = service.recommend_from_library(
             task_context=scenario.task_context,
             objective_weights=scenario.objective_weights,
+            objective_order=scenario.objective_order,
             risk_budget=scenario.risk_budget,
             skill_library=scenario.skill_library,
             evidence_label="SYNTHETIC",

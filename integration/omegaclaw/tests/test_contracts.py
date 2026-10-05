@@ -90,6 +90,7 @@ def test_serialized_request_separates_selection_from_audit_evidence():
     payload = _request().to_dict()
 
     assert payload["mode"] == "EXPLANATION_ONLY"
+    assert payload["objective_order"] == ["safety", "fuel"]
     assert payload["subrep_decision"]["selected_skill_id"] == "safe_skill"
     assert payload["subrep_decision"]["selected_score"] == 1.5
     assert payload["admitted_skills"]["safe_skill"] == {

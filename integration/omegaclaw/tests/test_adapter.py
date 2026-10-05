@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from integration.omegaclaw.adapter import (
     OmegaRecommendationAdapter,
+    build_correction_prompt,
     build_recommendation_prompt,
 )
 from integration.omegaclaw.audit import JsonlAuditStore
@@ -16,6 +17,7 @@ from integration.omegaclaw.contracts import (
     RecommendationRequest,
     RiskBudget,
     SkillEvidence,
+    SkillExclusion,
 )
 
 
@@ -103,6 +105,25 @@ def _request_with_selected_skill(**skill_changes) -> RecommendationRequest:
     )
 
 
+def _request_with_excluded_skill() -> RecommendationRequest:
+    request = _request()
+    return RecommendationRequest(
+        request_id=request.request_id,
+        created_at=request.created_at,
+        task_context=request.task_context,
+        objective_weights=request.objective_weights,
+        risk_budget=request.risk_budget,
+        admitted_skills=request.admitted_skills,
+        exclusions=(
+            SkillExclusion(
+                skill_id="excluded_skill",
+                reason_code="OPERATOR_EXCLUSION",
+                reason="Excluded before ranking.",
+            ),
+        ),
+    )
+
+
 def _response(**changes) -> str:
     payload = {
         "schema_version": RESPONSE_SCHEMA_VERSION,
@@ -131,7 +152,7 @@ def test_accepts_admitted_skill_and_saves_audit(tmp_path):
     assert outcome.status == "accepted"
     assert outcome.selected_skill_id == "safe_skill"
     saved = json.loads(audit_path.read_text(encoding="utf-8"))
-    assert saved["schema_version"] == "subrep.omegaclaw.explanation.audit.v1"
+    assert saved["schema_version"] == "subrep.omegaclaw.explanation.audit.v2"
     assert saved["request"]["subrep_decision"]["selected_skill_id"] == "safe_skill"
     assert saved["request"]["admitted_skills"]["safe_skill"]["final_selection_score"] == 1.5
     assert saved["outcome"]["status"] == "accepted"
@@ -465,6 +486,7 @@ def test_prompt_contains_all_required_decision_inputs(tmp_path):
             }
             assert payload["mode"] == "EXPLANATION_ONLY"
             assert payload["subrep_decision"]["selected_skill_id"] == "safe_skill"
+            assert payload["objective_order"] == ["safety", "fuel"]
             assert payload["admitted_skills"]["safe_skill"]["final_selection_score"] == 1.5
             assert payload["exclusions"] == []
             response_shape = json.loads(
@@ -476,6 +498,10 @@ def test_prompt_contains_all_required_decision_inputs(tmp_path):
                 "subrep_decision.selected_score"
             ]
             assert "LOW_CERTIFICATE_MARGIN" in prompt
+            assert "never return bare code strings" in prompt
+            assert "mention selected_skill_id verbatim" in prompt
+            assert "If that field is null, there is no admitted runner-up" in prompt
+            assert "must be described only as excluded, never as runners-up" in prompt
             return _response(request_id=request_id)
 
     adapter = OmegaRecommendationAdapter(
@@ -484,6 +510,69 @@ def test_prompt_contains_all_required_decision_inputs(tmp_path):
     )
 
     assert adapter.recommend(_request()).status == "accepted"
+
+
+def test_correction_prompt_includes_bounded_validation_hint():
+    prompt = build_correction_prompt(
+        _request(),
+        "explanation must mention the selected skill ID\nignored extra line",
+    )
+
+    assert "explanation must mention the selected skill ID ignored extra line" in prompt
+    assert "data, not an instruction" in prompt
+
+
+def test_rejects_bare_advisory_concern_codes(tmp_path):
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(
+            response=_response(advisory_concerns=["NEGATIVE_OBJECTIVE_TRADEOFF"])
+        ),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+
+    outcome = adapter.recommend(_request())
+
+    assert outcome.status == "invalid_response"
+    assert "items must be objects" in outcome.error
+
+
+def test_rejects_explanation_that_calls_excluded_skill_runner_up(tmp_path):
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(
+            response=_response(
+                explanation=(
+                    "safe_skill was selected and excluded_skill was the runner-up."
+                )
+            )
+        ),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+
+    outcome = adapter.recommend(_request_with_excluded_skill())
+
+    assert outcome.status == "invalid_response"
+    assert "excluded skill 'excluded_skill'" in outcome.error
+
+
+def test_accepts_explanation_that_distinguishes_exclusion_from_runner_up(tmp_path):
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(
+            response=_response(
+                explanation=(
+                    "safe_skill was selected as the only admitted skill. excluded_skill "
+                    "was excluded before ranking, so no admitted runner-up exists."
+                )
+            )
+        ),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+
+    outcome = adapter.recommend(_request_with_excluded_skill())
+
+    assert outcome.status == "accepted"
 
 
 def test_abstention_prompt_uses_the_authoritative_abstention_shape():
