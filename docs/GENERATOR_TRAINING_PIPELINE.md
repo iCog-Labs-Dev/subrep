@@ -19,8 +19,9 @@ python -m data_collector.collect --episodes 2000 --save-dir data/raw --seed 42
 
 ## 2. Collect held-out evaluation data (non-overlapping seeds)
 
-Each `--seed` value below is spaced 1000 apart, which is larger than
-`--contexts`, so the three runs' `context_seed` ranges cannot overlap:
+The collector uses `context_seed = --seed + context_index` with indices 1-1000.
+These runs therefore produce context-seed ranges 1001-2000, 2001-3000, and
+3001-4000, without overlap:
 ```bash
 python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 1000 --prefix seed1000
 python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 2000 --prefix seed2000
@@ -59,7 +60,9 @@ demonstrably learned a useful, state-dependent pattern.
 python -m generator.evaluate_generator_report --model-path models/generator.pt --eval-dir data/mdn_candidate_sets_eval
 ```
 
-For every held-out context (Step 2), certifies every real candidate
+The evaluator reads every `.npz` file in `--eval-dir`; the three runs above are
+therefore evaluated together (3,000 contexts total). Keep only the intended
+held-out files in that directory. For every context, it certifies every real candidate
 outcome under the unmodified `CDSGate` and `PDSGate`, reporting each
 separately: `cds_admission_rate` (unconditionally beneficial, zero
 tolerance) and `pds_admission_rate` (usable under permitted trade-off --
@@ -74,13 +77,29 @@ the five non-neural candidate policies.
 
 ## 6. Does more training data help?
 
-Requires at least 7,000 episodes already collected into `data/raw` if the default `--sizes` is used .
+For example, compare 1,000, 3,000, and 5,250 training records from a 7,000-record
+source pool. The command derives the minimum pool from the largest size and the
+12.5% validation/test holdouts, reuses those holdouts for every model, and
+compares each model with a mean predictor computed from its own training subset.
+If the input lacks the required data, it reports the minimum and a collection
+command, then exits without training.
+
 ```bash
-python -m data_collector.collect --episodes 7000 --save-dir data/raw --seed 42
-python -m generator.compare_dataset_sizes --data-dir data/raw --sizes 1000 3000 7000 --epochs 150 --patience 10
+python -m generator.compare_dataset_sizes --data-dir data/raw --sizes 1000 3000 5250 --epochs 150 --patience 10
 ```
 
-Trains one model per size, all sharing the same seed/epoch-ceiling/patience. these models are trained independently on the given dataset according to the ration 0.75 for training, 0.125 for validation and test each. See `generator/README.md` for the full output list.
+Set `--validation-fraction` and `--test-fraction` to change the holdout
+proportions. The input-pool size is calculated automatically from the largest
+requested training size and those fractions. Contexts with matching starting
+observations remain together in one split.
+
+The shared holdouts are saved once under
+`data/dataset_size_comparison_rollouts/fixed_split/{test,validation}/`.
+Each requested training subset is saved under
+`data/dataset_size_comparison_rollouts/size_N/train/`; no training-pool copy or
+split manifest is written. The JSON results and Markdown analysis report are
+written to `demo/artifacts/`; plots are written to
+`plots/dataset_size_comparison/`. These generated outputs are ignored by git.
 
 ## Rerunning end to end
 
