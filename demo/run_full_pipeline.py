@@ -43,7 +43,7 @@ from data_collector.collect_candidate_sets import CandidatePolicy, build_default
 NUM_EPISODES        = 10
 BASELINE_EPISODES   = 20
 GAMMA               = 0.99
-MAX_STEPS           = 200
+MAX_STEPS: int | None = None
 SEED                = 42
 PDS_EPSILON         = 5.0
 CERT_FILE           = "data/certificates.metta"
@@ -294,7 +294,7 @@ def run_pipeline() -> dict:
             max_steps=MAX_STEPS,
         )
         payoff, motives, terminated = executor.run_episode(initial_obs=obs)
-        episode_length = executor.last_run_info.get("steps", MAX_STEPS)
+        episode_length = int(executor.last_run_info.get("steps", 0))
 
         # CERTIFY — compute improvements and run CDS/PDS gates
         delta_r, delta_n = calculator.compute_improvements(payoff, motives)

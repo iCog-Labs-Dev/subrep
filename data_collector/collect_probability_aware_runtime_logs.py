@@ -46,7 +46,7 @@ class ProbabilityAwareRuntimeLogCollector:
         *,
         seed: int = 42,
         save_dir: str = "data/mdn_probability_aware_logs",
-        max_steps: int | None = 200,
+        max_steps: int | None = None,
         gamma: float = 0.99,
         baseline_episodes: int = 20,
         pilot_checkpoint: str = "models/pilot_ppo.pt",
@@ -316,7 +316,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prefix", type=str, default="runtime_log")
     parser.add_argument("--max-attempts", type=int, default=None)
     parser.add_argument("--resume", action="store_true", help="Continue an interrupted collection without overwriting files")
-    parser.add_argument("--max-steps", type=int, default=200)
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Optional rollout cap; omit to run until the environment ends",
+    )
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--baseline-episodes", type=int, default=20)
     parser.add_argument("--pilot-checkpoint", type=str, default="models/pilot_ppo.pt")
