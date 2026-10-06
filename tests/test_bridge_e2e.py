@@ -73,16 +73,6 @@ SEED = 42
 NUM_OBJECTIVES = 6
 SAFETY = 0  # index into phi(x)
 
-# Temporary. The stub's per-step rewards were tuned for delta_r = sum(delta_n);
-# with the task reward separated, every candidate's PDS margin lands below
-# -0.1, so PDS rejects everything at every reachable epsilon. Recalibrating the
-# stub (the last commit of this change) restores margins inside the epsilon
-# band and removes these markers.
-STUB_UNCALIBRATED = (
-    "stub rewards not yet recalibrated for the separate task reward: every "
-    "PDS margin is below -0.1, so nothing is admitted"
-)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -153,7 +143,7 @@ def make_governor(candidates: List[CandidateSkillRecord]):
 def threatening_outcome() -> SkillOutcome:
     """A rejected option whose Safety motive collapses.
 
-    Deliberately synthetic rather than a realized rollout: Task 11 asks for a
+    Deliberately synthetic rather than a realized rollout: these tests need a
     *threatening-outcome* scenario, so the appraisal input must reliably push
     the modulators toward caution rather than depending on what the stub
     happened to return.
@@ -219,30 +209,29 @@ def run_loop(steps: int = 10, *, seed: int = SEED, use_cvar: bool = True):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=False, reason=STUB_UNCALIBRATED)
 def test_s1_epsilon_change_flips_a_borderline_admission():
     """A change in epsilon must change what the PDS gate admits.
 
-    RiskyForage exists precisely so this is observable: its margin sits inside
-    the (-0.1, 0) band that MetaMo's epsilon range can straddle. Every other
-    candidate's margin is orders of magnitude outside it, which is why epsilon
-    could not flip anything before that action was added.
+    Epsilon can only decide an option whose margin lies in the (-0.1, 0) band
+    MetaMo's epsilon range spans. The calibrated stub puts every option there
+    (pinned by tests/test_minecraft_stub.py), so this picks, at runtime, the
+    natural candidate nearest mid-band -- no hand-built action, and nothing to
+    re-derive if the stub is recalibrated.
 
-    Self-calibrating: epsilon values are derived from the measured margin, so
-    this keeps working if the stub's reward table is retuned.
+    Self-calibrating: epsilon values are derived from the measured margin.
 
     `use_cvar=False` is required -- under OR semantics an untrained MDN's CVaR
     gate admits nearly everything and would mask the PDS verdict entirely.
     """
     _, baseline, candidates, obs = build_world()
 
-    borderline = next(c for c in candidates if c.skill_id == "RiskyForage")
-    margin = margin_of(borderline)
-
-    assert -0.1 < margin < 0.0, (
-        f"RiskyForage margin {margin:.6f} is outside the band epsilon can "
-        "reach; epsilon cannot flip it and this test proves nothing"
+    in_band = [c for c in candidates if -0.1 < margin_of(c) < 0.0]
+    assert in_band, (
+        "no candidate margin lies in (-0.1, 0); epsilon cannot flip anything "
+        "and this test proves nothing"
     )
+    borderline = min(in_band, key=lambda c: abs(margin_of(c) + 0.05))
+    margin = margin_of(borderline)
 
     eps_reject = abs(margin) * 0.5
     eps_admit = abs(margin) * 1.5
@@ -263,8 +252,8 @@ def test_s1_epsilon_change_flips_a_borderline_admission():
         )
         return admitted_ids(records)
 
-    assert "RiskyForage" not in certify_at(eps_reject)
-    assert "RiskyForage" in certify_at(eps_admit)
+    assert borderline.skill_id not in certify_at(eps_reject)
+    assert borderline.skill_id in certify_at(eps_admit)
 
 
 class _StubGovernor:
@@ -283,7 +272,6 @@ class _StubGovernor:
         return self.signal()
 
 
-@pytest.mark.xfail(strict=False, reason=STUB_UNCALIBRATED)
 def test_s1b_governor_epsilon_change_alters_admissions():
     """MetaMo's OWN budget change must alter what gets certified.
 
@@ -294,11 +282,11 @@ def test_s1b_governor_epsilon_change_alters_admissions():
 
     Why the endpoints are guaranteed rather than tuned:
       * At step 0 the modulators are neutral, so epsilon == epsilon_0 == 0.1
-        exactly (pinned by test_bridge_budget.py). RiskyForage's margin of
-        ~-0.05 satisfies -0.05 >= -0.1, so it is admitted.
+        exactly (pinned by test_bridge_budget.py). Every calibrated margin lies
+        in (-0.1, 0) (pinned by test_minecraft_stub.py), so all are admitted.
       * Under sustained threat epsilon floors at 0.0 within a few steps (S2
-        already asserts it ends no higher than it started). -0.05 >= -0.0 is
-        false, so RiskyForage is rejected.
+        already asserts it ends no higher than it started). A negative margin
+        cannot satisfy margin >= -0.0, so those options are rejected.
     No intermediate epsilon value is hardcoded, so the assertion survives
     coefficient retuning as long as epsilon still spans the margin.
 
@@ -476,7 +464,6 @@ def test_s5_identical_seeds_reproduce_identical_runs():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=False, reason=STUB_UNCALIBRATED)
 def test_s6_different_weights_select_different_skills():
     """S1 proves budgets reach certification; this proves weights reach selection.
 

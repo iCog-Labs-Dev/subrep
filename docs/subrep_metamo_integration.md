@@ -364,6 +364,12 @@ certification decisions are not reproducible by default. `MetaMoController`
 seeds torch before each certification pass and records the seed on every
 `StepRecord`, so a run can be replayed exactly.
 
+The untrained MDN's **initial weights** are drawn from the same global RNG, but
+when the model is built — before any certification. The demo and the e2e tests
+therefore seed torch before constructing it; otherwise two same-seed runs would
+certify with two different models, and diverge whenever the CVaR gate decides
+an admission.
+
 ---
 
 ## 10. The stub environment
@@ -373,39 +379,58 @@ a threat level that rises and falls across an episode. **It is not Minecraft**
 and makes no claim to simulate it — it exists so the m=6 loop can be exercised
 end to end while a real environment does not exist in this repository.
 
-### The borderline candidate
+It exposes what the rollout needs: `info["task_reward"]` (the task reward, sparse
+trade value — only `DiscountChain` earns it), `phi()` (the current objective
+levels), and read-only `observation()`, `threat` and `episode_over`.
 
-The PDS gate admits when `Δr + min(Δn) ≥ −ε`, and MetaMo drives ε over roughly
-`[0, 0.1]`. So ε can only change an admission for a skill whose margin lands
-inside `(−0.1, 0)`. The original five actions have margins from −2.0 to +11.4 —
-all far outside that band, meaning ε **provably could not flip any decision**.
+### How Δr and Δn are estimated
 
-`RiskyForage` was added with a **noiseless** margin of ≈ −0.05 so that ε has
-something to act on: above ~0.05 it is admitted, below it is rejected. Its
-reward row is derived analytically rather than hand-tuned; the derivation is in
-the `BORDERLINE CANDIDATE` comment in `env/minecraft_stub.py`, and the margin is
-pinned by `test_minecraft_stub.py`.
+All estimation on the MetaMo path lives in `env/minecraft_rollout.py`, following
+the reference specification's definitions for an option of duration τ from
+state x:
 
-If the episode length, γ, or the idle reward row change, that pin fails and the
-row must be **re-derived from the comment**, not nudged until it passes.
+```
+r̂(x, o) = Σ_{t<τ} γ^t · r(x_t, a_t)     task reward, info["task_reward"]
+n̂(x, o) = Σ_{t<τ} γ^t · φ(x_t)          state levels, env.phi(), x₀ included
+Δ(x, o) = (r̂, n̂)(x, o) − (r̂, n̂)(x, idle)
+```
 
-### The margin only holds with noise off
+- **One horizon**, `DEFAULT_HORIZON = 3`, for candidate evaluation, execution
+  and the feedback MetaMo appraises. An episode is 8 decisions.
+- **Re-evaluated at every decision**, from the current state, on
+  `copy.deepcopy(env)` so the live episode is never touched.
+- **A fresh certification pipeline per episode.** The pipeline caches
+  certificates by rounded context and, on a hit, returns the *stored* Δ and ε.
+  Every episode starts from the same observation, so reusing one pipeline would
+  open each new episode on the previous episode's certificates.
 
-The margin is ≈ −0.05. The stub's default `noise_scale=0.02`, accumulated over
-a discounted 24-step episode across six objectives, perturbs it by a comparable
-or larger amount — enough to push it outside the `(−0.1, 0)` band entirely.
+It deliberately does **not** use `baseline/idle_policy.py`, which sums the reward
+vector as the task reward and accumulates per-step changes. That is correct for
+the 2-objective LunarLander environment it was written for — its objectives are
+the environment's own reward components — and it is left untouched. The
+replaced lines are kept as `# OLD:` comments in `run_option`.
 
-Consequences:
+### Calibration
 
-- Any test that depends on ε flipping this candidate **must** construct the env
-  with `noise_scale=0.0`. `test_bridge_e2e.py` does.
-- `demo/run_metamo_pipeline.py` runs with the default noise, so `RiskyForage`
-  typically sits just outside the band there (around −0.10) and PDS rejects it
-  at every ε. The demo's PDS-only column therefore stays flat, and **the demo
-  does not illustrate the ε coupling** — that is what S1 exists for.
+The PDS gate admits when `Δr + min(Δn) ≥ −ε`, and MetaMo drives ε over
+`[0, 0.1]`, so ε can only decide options whose margin lies in `(−0.1, 0)`.
+Under the estimation above, the stub's original reward tables put every margin
+between −0.3 and −1.0, so PDS rejected everything at every ε.
 
-The demo still shows the other two couplings clearly: ε and α tightening
-together as threat rises (§7), and the Safety weight climbing (§5).
+`_REWARD_SCALE = 0.08` (one uniform factor on the whole objective vector, noise
+included) was **measured** across a full threat cycle to put every option in the
+band, spread from ≈ −0.015 to ≈ −0.083. Each ε admits a different subset;
+IronGolemSpawn's worst change (−0.083) matches the specification's O5 (−0.08);
+and DiscountChain's margin falls as threat peaks, so a tightening ε stops the
+agent trading under attack. `test_minecraft_stub.py` pins all of it — if one of
+those tests fails, re-measure rather than nudge.
+
+This replaces the earlier hand-built `RiskyForage` action, which existed only
+because no natural option could reach the band.
+
+The appraisal scales are floored at the specified trade value (0.01): the task
+reward is sparse, so the mean |Δr| is ~0.002, and unfloored a single trade would
+read as five units of payoff in MetaMo's appraisal.
 
 ---
 
@@ -417,10 +442,13 @@ together as threat rises (§7), and the Safety weight climbing (§5).
 | `test_bridge_weights.py` | — | — | `w_meta` invariants, direction, ordering |
 | `test_bridge_controller.py` | fake | fake | orchestration, forwarding, stimulus scaling |
 | `test_bridge_governor.py` | **real** | — | the MetaMo adapter, `step()` purity |
-| `test_minecraft_stub.py` | — | — | env contract, determinism, the borderline margin |
+| `test_minecraft_stub.py` | — | — | env contract, determinism, task reward, φ, calibration |
+| `test_minecraft_rollout.py` | — | — | Δ estimation: horizon, φ levels, task reward, per-state rollouts on copies |
+| `test_spec_score_anchor.py` | — | — | the specification's scores (0.1310, 0.0620, 0.126) via SubRep's own scoring |
+| `test_run_metamo_pipeline.py` | real (smoke) | real (smoke) | the demo: per-episode pipeline, a run across an episode reset |
 | `test_bridge_e2e.py` | **real** | **real** | the full loop |
 
-The first five each substitute a fake for at least one half of the system, so
+The bridge-level files above each substitute a fake for at least one half of the system, so
 coupling bugs between the halves are invisible to them. `test_bridge_e2e.py`
 exists for exactly that gap: it asserts only what requires the real stack
 assembled together — budgets reaching certification, weights reaching
@@ -444,53 +472,54 @@ result of "13 skipped" means the submodule is not resolving — check §3.
 
 Recorded from a full run of the suite and the demo, seed 42.
 
-**Suite:** `pytest tests/ -q` → **633 passed, 2 xfailed, 0 failed.**
+**Suite:** `pytest tests/ -q` → **727 passed, 2 xfailed, 0 failed.**
 `test_bridge_e2e.py` alone: 10 passed.
 
-**Budgets tighten together, never diverge.** Over a threatening run the governor's
-modulators saturate within four steps, and both budgets fall with them:
+**Budgets tighten together, never diverge.** Over a threatening run (the e2e
+`run_loop`: synthetic threatening outcomes, CVaR off) the governor's modulators
+saturate within two steps, and both budgets fall with them:
 
-| step | securing | ε | α |
-|---:|---:|---:|---:|
-| 0 | 0.500 | 0.1000 | 0.1000 |
-| 1 | 0.672 | 0.0489 | 0.0500 |
-| 2 | 0.843 | 0.0000 | 0.0500 |
-| 3+ | ≥ 0.987 | 0.0000 | 0.0500 |
+| step | securing | ε | α | Safety w | admitted |
+|---:|---:|---:|---:|---:|---:|
+| 0 | 0.500 | 0.1000 | 0.1000 | 0.323 | 5/5 |
+| 1 | 0.850 | 0.0000 | 0.0500 | 0.678 | 0/5 |
+| 2+ | 1.000 | 0.0000 | 0.0500 | 0.800 → 0.833 | 0/5 |
 
 ε reaches its floor of 0.0; α reaches its sampling floor of 0.05 (`min_tail_samples
 / n_samples` at 1000 samples). At no step do they move in opposite directions. Under
 the reference formula as published, α would have *risen* here while ε fell.
 
-**Safety priority adapts.** The Safety weight climbs from 0.323 at step 0 to a peak
-of 0.570 at step 3, then settles near 0.50 as the goal vector drifts under
-MetaMo's decision monad. Reputation, the initially competing objective, falls
-from 0.26 to 0.12 over the same run.
+**Safety priority adapts.** The Safety weight climbs from 0.323 to 0.833 over ten
+steps; Reputation, the initially competing objective, falls from 0.133 to 0.010.
 
 **Budgets reach certification.** With CVaR disabled so the PDS verdict is
-observable, the borderline candidate is admitted at ε = 0.10 and rejected once
-ε falls below its margin of ≈ −0.05 — first with hand-picked ε values (S1), then
+observable, every calibrated option is admitted at ε = 0.10 and rejected at
+ε = 0 — first with ε values derived from a natural candidate's margin (S1), then
 using the ε MetaMo itself emits across the run (S1b), where the admitted count
-drops as the budget tightens and never rises while it is falling.
+drops from 5/5 to 0/5 as the budget tightens and never rises while it is falling.
 
 **Priorities reach selection.** Weights at step 9 differ from step 0 for every
 candidate's score, and the score gap between the safest and least-safe candidate
 widens as Safety weight rises (S6b). With sufficiently separated weights the
-selected skill changes outright (S6). With this candidate set the argmax does not
-flip under MetaMo's own drift — `SwingGateBarricade` has both the highest Δr and
-strong Safety, so it wins throughout.
+selected skill changes outright (S6).
+
+**Selection follows threat.** In the demo the selected option changes over a run.
+With ε held at its 0.1 baseline, selection under the specification's w̄0 weights
+tracks threat: DiscountChain when calm, SwingGateBarricade as threat peaks,
+DiscountChain again as it falls.
 
 **Abstention.** Given only inadmissible candidates the controller selects nothing,
 and the governor's modulators still change on the fed-back outcome — abstaining
 does not stall the loop.
 
 **Determinism.** Two runs at the same seed produce identical ε, α, weights, and
-selections at every step.
+selections at every step, and two demo runs produce byte-identical output.
 
-**What the demo does not show.** Run with its default noise, the demo's PDS-only
-column stays at 4 and the combined admitted count at 6/6 throughout. The former is
-because reward noise pushes the borderline margin to ≈ −0.104, outside the band ε
-spans; the latter because the untrained MDN's CVaR gate admits everything under OR
-semantics. Neither is a defect in the coupling — see §10 and §12.
+**What the demo shows that needs fixing next.** Securing rails to 1.0 within two
+decisions and pins ε at 0. With every margin negative, PDS then admits nothing,
+and the agent abstains until threat eases and the CVaR gate admits
+DiscountChain. The coupling is doing what it is told; MetaMo's state simply moves
+too far per step. Bounding that step is separate, planned work.
 
 > Results from the stub environment are **controlled test evidence** that the
 > coupling behaves as designed. They are not real-environment validation — no
@@ -517,9 +546,14 @@ semantics. Neither is a defect in the coupling — see §10 and §12.
 5. **Appraisal scaling must match the environment.** `stimulus.py` squashes
    through `tanh`; leaving `payoff_scale`/`motive_scale` at 1.0 while the
    environment reports deltas of order 10 saturates risk on the first step and
-   flattens the coupling into a constant. The demo derives both from the
-   candidate spread.
-6. **The stub is not Minecraft** (§10).
+   flattens the coupling into a constant. `appraisal_scales` derives both from
+   the candidate spread and floors them at the specified trade value (§10).
+6. **The stub is not Minecraft** (§10). Rollouts on a deep copy also carry its
+   RNG, so candidate Δ values are *exact forecasts* of what execution will
+   produce; a real environment would give noisy estimates.
+7. **MetaMo's state rails within two decisions under threat**, pinning ε at 0
+   and α at its floor (§11, Observed behavior). Bounding its step size is
+   separate, planned work.
 
 ---
 

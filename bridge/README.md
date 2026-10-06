@@ -223,7 +223,15 @@ environment, not as reproductions of published values.
 at 1.0 while the environment reports deltas of order 10 saturates risk on the
 first step and pins the modulators at their bounds, flattening the coupling
 into a constant. Set them from the environment's actual magnitudes —
-`demo/run_metamo_pipeline.py` derives them from the candidate spread.
+`env/minecraft_rollout.py::appraisal_scales` derives them from the candidate
+spread.
+
+Too **small** a scale saturates just the same. The task reward is sparse (only
+trading earns it), so the mean |Δr| is ~0.002 and one trade would read as five
+units of payoff. `appraisal_scales` therefore floors both scales at
+`APPRAISAL_SCALE_FLOOR`, the specified trade value (0.01): one specified trade
+reads as one unit. The governor takes its scales once, at construction, so they
+come from the start-state candidates.
 
 ---
 
@@ -244,37 +252,57 @@ Every assertion in `test_bridge_e2e.py` that concerns ε or abstention runs with
 
 ---
 
-## The borderline candidate
+## How Δr and Δn are estimated
 
-`env/minecraft_stub.py` defines a `RiskyForage` action that exists purely so ε
-has something to act on.
+All estimation on the MetaMo path lives in `env/minecraft_rollout.py`, used by
+the demo, the end-to-end tests and (later) the ablation harness. It follows the
+reference specification's definitions for an option of duration τ from state x:
 
-The PDS gate admits when `Δr + min(Δn) ≥ −ε`, and MetaMo drives ε over roughly
-`[0, 0.1]`. So ε can only change an admission for a skill whose margin lands
-inside `(−0.1, 0)`. The original five actions have margins from −2.0 to +11.4 —
-all far outside that band, which means **ε provably could not flip any decision**
-and no test could demonstrate the budget coupling at all.
+```
+r̂(x, o) = Σ_{t<τ} γ^t · r(x_t, a_t)     task reward: info["task_reward"]
+n̂(x, o) = Σ_{t<τ} γ^t · φ(x_t)          state features: env.phi()
+Δ(x, o) = (r̂, n̂)(x, o) − (r̂, n̂)(x, idle)
+```
 
-`RiskyForage` is constructed with a **noiseless** margin of ≈ −0.05: ε above
-~0.05 admits it, ε below rejects it. Its reward row is derived analytically
-rather than tuned by hand — the full derivation is in the
-`BORDERLINE CANDIDATE` comment block in `env/minecraft_stub.py`, and the
-margin is pinned by
-`test_minecraft_stub.py::test_riskyforage_margin_sits_inside_the_epsilon_band`.
+| Rule | Why |
+|---|---|
+| Task reward separate from the objectives | The specification's r and φ are different functions. `Δr = ΣΔn` made the score `Σ(1 + wᵢ)Δnᵢ`, where w barely moves the result |
+| φ summed as **levels**, including x₀ | "How safe the agent was", not "how much safety changed" |
+| One horizon, `DEFAULT_HORIZON = 3`, for evaluation, execution and feedback | Measuring an option over 24 steps and running it for 1 made the estimates meaningless |
+| Re-evaluated at every decision, from the current state | Threat changes during an episode; a Δ frozen at step 0 cannot follow it |
+| Rollouts on `copy.deepcopy(env)` | Exact for the numpy stub; never touches the live episode. `evaluate_option` is the one place to change for a real environment |
 
-### It only works with noise off
+It does **not** use `baseline/idle_policy.py`. That code sums the reward vector
+as the task reward and accumulates per-step changes — correct for the
+2-objective LunarLander environment it was written for, where the objectives
+*are* reward components, and left untouched. The replaced lines are kept as
+`# OLD:` comments in `run_option` with that explanation.
 
-The margin is ≈ −0.05, while the stub's default `noise_scale=0.02`, accumulated
-over a discounted episode across six objectives, perturbs it by a comparable or
-larger amount. With noise on, the margin wanders well outside the band — in the
-demo it lands near −0.104, so PDS rejects `RiskyForage` at *every* ε in
-`[0, 0.1]`.
+### Stub calibration
 
-So any test that depends on ε flipping this candidate must build the env with
-`noise_scale=0.0`; `test_bridge_e2e.py` does. `demo/run_metamo_pipeline.py`
-uses the default noise, so its PDS-only column stays flat and the demo does
-**not** illustrate the ε coupling — S1 is where that behaviour is demonstrated.
+The PDS gate admits when `Δr + min(Δn) ≥ −ε`, and MetaMo drives ε over
+`[0, 0.1]`, so ε can only decide options whose margin lies in `(−0.1, 0)`.
+Under the rules above the stub's original reward tables put every margin
+between −0.3 and −1.0: PDS rejected everything at every ε.
 
-If the episode length, γ, or the idle reward row ever change, that test fails
-and the row must be **re-derived from the comment**, not nudged until the test
-passes.
+`_REWARD_SCALE = 0.08` in `env/minecraft_stub.py` (one uniform factor on the
+whole objective vector, noise included) was **measured** across a full threat
+cycle to put every option inside the band, spread from ≈ −0.015 to ≈ −0.083.
+Each ε therefore admits a different subset; IronGolemSpawn's worst change
+(−0.083) matches the specification's O5 (−0.08); and DiscountChain's margin
+falls as threat peaks, so a tightening ε stops the agent trading under attack.
+`test_minecraft_stub.py` pins all of this. If a test there fails, re-measure —
+don't nudge.
+
+This replaces the earlier hand-built `RiskyForage` action, which existed only
+because nothing else could reach the band.
+
+### What the demo shows — and what it can't yet
+
+With the estimation fixed, the demo's selection changes over a run. It also
+shows why the next step is needed: under threat, Securing still rails to 1.0
+within two decisions, pinning ε at 0 — and with every margin negative, PDS then
+admits nothing, so the agent abstains until threat eases. Bounding MetaMo's
+step size is separate, planned work. With ε held at its 0.1 baseline instead,
+selection tracks threat: trade when calm, defend as threat peaks, trade again
+as it falls.

@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from baseline.improvement_calculator import ImprovementCalculator
-from env.minecraft_stub import SKILL_NAMES
+from env.minecraft_stub import SKILL_NAMES, SPEC_TRADE_DELTA_R
 from utils.mdn_contracts import CandidateSkillRecord
 
 # A survival-oriented starting goal vector, in MetaMo's goal order
@@ -46,18 +46,27 @@ MINECRAFT_INITIAL_GOALS = np.array(
 # is what made the old estimates meaningless.
 DEFAULT_HORIZON = 3
 
+# Lower bound on both appraisal scales. The task reward is sparse -- only
+# trading earns it -- so the mean |delta_r| across candidates is tiny (~0.002),
+# and the stimulus builder divides delta_r by it (bridge/stimulus.py:102). One
+# trade would then read as five units of payoff and swamp everything else in
+# MetaMo's appraisal. Flooring at the specified option-level trade value makes
+# one specified trade read as one unit.
+APPRAISAL_SCALE_FLOOR = SPEC_TRADE_DELTA_R
+
 
 def appraisal_scales(
     candidates: Sequence[Any],
     *,
-    floor: Optional[float] = None,
+    floor: Optional[float] = APPRAISAL_SCALE_FLOOR,
 ) -> Tuple[float, float]:
     """Characteristic |delta_r| and |delta_n| magnitudes for the governor.
 
     The stimulus builder squashes through tanh, so leaving the governor's
     scales at 1.0 while deltas run to |10| saturates risk on the first step
     and pins the modulators at their bounds, flattening the coupling into a
-    constant. Returns (payoff_scale, motive_scale).
+    constant. Too small a scale saturates it just the same, hence `floor`.
+    Returns (payoff_scale, motive_scale).
     """
     payoff_scale = float(np.mean([abs(c.delta_r) for c in candidates])) or 1.0
     motive_scale = float(
