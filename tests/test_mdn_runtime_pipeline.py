@@ -374,3 +374,201 @@ def test_certify_candidate_skills_returns_certified_record_from_permanence_cache
     assert len(updated) == 1
     assert updated[0].is_certified is True
     assert updated[0].delta_r != stale_candidate.delta_r
+
+
+# ---------------------------------------------------------------------------
+# A cached certificate stays as history, but eligibility follows the CURRENT
+# risk budgets. Without the recheck, a skill certified at epsilon 0.10 kept
+# being admitted (and selected) after epsilon fell to 0.00, although a fresh
+# check rejects it.
+# ---------------------------------------------------------------------------
+
+BORDERLINE_DELTA_R = 0.0
+BORDERLINE_DELTA_N = (0.2, -0.05)  # PDS margin over the full simplex: -0.05
+UNIFORM = np.array([0.5, 0.5], dtype=np.float32)
+
+
+def _pds_pipeline(*, use_cvar: bool = False) -> RuntimeCertificationPipeline:
+    return RuntimeCertificationPipeline(
+        model=MotiveDecompositionNetwork(input_dim=8, num_objectives=2),
+        weight_store=WeightSetStore(num_objectives=2),
+        config=RuntimePipelineConfig(
+            gate_type="PDS",
+            use_cvar=use_cvar,
+            train_support_after_certify=False,
+        ),
+    )
+
+
+def _borderline(epsilon: float) -> CandidateSkillRecord:
+    return CandidateSkillRecord(
+        skill_id="borderline",
+        delta_r=BORDERLINE_DELTA_R,
+        delta_n=BORDERLINE_DELTA_N,
+        is_certified=False,
+        gate_type="PDS",
+        epsilon=epsilon,
+    )
+
+
+def _certify_batch(pipeline, context, epsilon, **kwargs):
+    (record,) = pipeline.certify_candidate_skills(
+        context=context,
+        candidate_skills=[_borderline(epsilon)],
+        baseline_stats=_baseline_stats(),
+        weights_used=UNIFORM,
+        **kwargs,
+    )
+    return record
+
+
+def test_cached_certificate_is_rechecked_when_epsilon_tightens():
+    """Same pipeline, same context, same skill: epsilon 0.10 -> 0.00.
+
+    Margin -0.05 passes at epsilon 0.10 and fails at 0.00. The stored
+    certificate must survive unchanged; the record returned for this call must
+    carry the current verdict and budget.
+
+    Certifying also records the uniform weight into this context's W_x. Over
+    {uniform} alone the margin would be +0.075, so the recheck must use the
+    region the certificate was issued under (the full simplex), not the W_x
+    that certification itself grew -- as a fresh check would.
+    """
+    pipeline = _pds_pipeline()
+    context = np.array([0.1] * 8, dtype=np.float32)
+
+    loose = _certify_batch(pipeline, context, 0.10)
+    assert loose.is_certified is True
+    assert loose.epsilon == pytest.approx(0.10)
+
+    tight = _certify_batch(pipeline, context, 0.0)
+    assert tight.is_certified is False
+    assert tight.epsilon == pytest.approx(0.0)
+    assert tight.admission_margin < 0.0
+
+    historical = pipeline.get_certification_result(context=context, skill_id="borderline")
+    assert historical.is_certified is True
+    assert historical.epsilon == pytest.approx(0.10)
+
+
+def test_recheck_matches_a_fresh_pipeline():
+    """The cached path and a fresh check must agree under the new budget."""
+    context = np.array([0.1] * 8, dtype=np.float32)
+
+    reused = _pds_pipeline()
+    _certify_batch(reused, context, 0.10)
+    cached_verdict = _certify_batch(reused, context, 0.0).is_certified
+
+    fresh_verdict = _certify_batch(_pds_pipeline(), context, 0.0).is_certified
+
+    assert cached_verdict == fresh_verdict is False
+
+
+def test_skill_is_admitted_again_when_the_budget_loosens():
+    pipeline = _pds_pipeline()
+    context = np.array([0.1] * 8, dtype=np.float32)
+
+    assert _certify_batch(pipeline, context, 0.10).is_certified is True
+    assert _certify_batch(pipeline, context, 0.0).is_certified is False
+    assert _certify_batch(pipeline, context, 0.10).is_certified is True
+
+
+def test_rejected_recheck_does_not_record_the_weight():
+    """W_x records weights only for skills eligible under the current budget."""
+    pipeline = _pds_pipeline()
+    context = np.array([0.1] * 8, dtype=np.float32)
+
+    _certify_batch(pipeline, context, 0.10)
+    vertices_before = len(pipeline.weight_store.get_weight_set(context).vertices)
+
+    _certify_batch(pipeline, context, 0.0)
+
+    assert len(pipeline.weight_store.get_weight_set(context).vertices) == vertices_before
+
+
+def test_single_skill_path_rechecks_a_cached_rejection():
+    """certify_skill caches rejections too; a looser budget re-admits, and the
+    stored rejection stays as it was."""
+    pipeline = _pds_pipeline()
+    context = np.array([0.1] * 8, dtype=np.float32)
+    kwargs = dict(
+        context=context,
+        skill_id="borderline",
+        # Baseline is payoff 1.0, motives (0.5, 0.2): delta (0.0, (0.2, -0.05)).
+        skill_payoff=1.0,
+        skill_motives=np.array([0.7, 0.15], dtype=np.float32),
+        baseline_stats=_baseline_stats(),
+    )
+
+    rejected = pipeline.certify_skill(**kwargs, epsilon=0.0)
+    assert rejected.is_certified is False
+
+    admitted = pipeline.certify_skill(**kwargs, epsilon=0.10)
+    assert admitted.is_certified is True
+    assert admitted.epsilon == pytest.approx(0.10)
+
+    stored = pipeline.get_certification_result(context=context, skill_id="borderline")
+    assert stored.is_certified is False
+    assert stored.epsilon == pytest.approx(0.0)
+
+
+def test_unchanged_budgets_reuse_the_stored_result():
+    """No budget change, no recheck: today's permanence behaviour holds."""
+    pipeline = _pds_pipeline()
+    context = np.array([0.1] * 8, dtype=np.float32)
+    kwargs = dict(
+        context=context,
+        skill_id="borderline",
+        skill_payoff=1.0,
+        skill_motives=np.array([0.7, 0.15], dtype=np.float32),
+        baseline_stats=_baseline_stats(),
+        epsilon=0.10,
+    )
+
+    first = pipeline.certify_skill(**kwargs)
+    second = pipeline.certify_skill(**kwargs)
+
+    assert second is first
+
+
+def test_cvar_tail_level_change_triggers_a_recheck(monkeypatch):
+    """The CVaR tail level is a risk budget too, when a CVaR gate is in use."""
+    pipeline = _pds_pipeline(use_cvar=True)
+    context = np.array([0.1] * 8, dtype=np.float32)
+
+    calls = []
+    original = pipeline._recheck_eligibility
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs["cvar_confidence"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_recheck_eligibility", spy)
+
+    # PDS admits at epsilon 0.10 (margin -0.05), so under OR semantics the
+    # first call certifies and caches regardless of the untrained MDN.
+    first = _certify_batch(pipeline, context, 0.10, cvar_confidence=0.10)
+    assert first.is_certified is True
+
+    _certify_batch(pipeline, context, 0.10, cvar_confidence=0.10)
+    assert calls == [], "same budgets must reuse the cached verdict"
+
+    _certify_batch(pipeline, context, 0.10, cvar_confidence=0.05)
+    assert calls == [pytest.approx(0.05)]
+
+
+def test_cvar_tail_level_is_ignored_without_a_cvar_gate(monkeypatch):
+    pipeline = _pds_pipeline(use_cvar=False)
+    context = np.array([0.1] * 8, dtype=np.float32)
+
+    calls = []
+    monkeypatch.setattr(
+        pipeline,
+        "_recheck_eligibility",
+        lambda *a, **k: calls.append(k) or (True, 0.0),
+    )
+
+    _certify_batch(pipeline, context, 0.10, cvar_confidence=0.10)
+    _certify_batch(pipeline, context, 0.10, cvar_confidence=0.05)
+
+    assert calls == []

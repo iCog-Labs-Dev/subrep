@@ -48,6 +48,30 @@ gate, which keeps using the static config value. The failure is invisible:
 every other signal still moves, so nothing looks wrong. `test_bridge_e2e.py`'s
 S1 is the regression guard.
 
+### Cached certificates follow the current budgets
+
+The pipeline caches certificates per `(context, skill)`. Once budgets vary per
+step, a cached approval can go stale: a skill certified at ε = 0.10 would stay
+admitted, and be selected, after ε fell to 0.00, although a fresh check
+rejects it.
+
+So on a cache hit the pipeline compares the stored certificate's budgets (its
+`epsilon`, and its `cvar_confidence` when a CVaR gate is in use) with the
+current ones. If they match, the stored verdict is reused, exactly as before.
+If they differ, the stored delta is **rechecked under the current budgets**, and
+the returned record carries the current verdict, margin and ε. The stored
+certificate is never modified; it stays as the historical record
+(`get_certification_result`).
+
+The recheck uses the W_x region the certificate was issued under, not the
+current one. Certifying a skill records the selection weight into W_x, so the
+current region was partly shaped by that very certification. Only the risk
+budget should differ from the original check.
+
+Regression guards: `test_bridge_e2e.py::test_s1c_cached_approval_is_not_selected_after_epsilon_tightens`
+(through the controller, down to selection) and the budget-recheck tests in
+`test_mdn_runtime_pipeline.py`.
+
 ## Layout
 
 | File | Imports MetaMo? | Purpose |

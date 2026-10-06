@@ -27,11 +27,11 @@ environment and no live agent are involved.
 ------------------------------------------------------------------------------
 THREE TRAPS THIS FILE HAS TO AVOID
 ------------------------------------------------------------------------------
-1. Certification is cached by `(context_key, skill_id)`
-   (utils/mdn_runtime_pipeline.py:219-227). With a CONSTANT context, a second
-   certification returns the cached verdict and budget changes have literally
-   no effect. Tests either vary the context every step or build a fresh
-   pipeline per certification.
+1. Certification is cached by `(context_key, skill_id)`. The cached certificate
+   is kept, but when the risk budgets change its eligibility is rechecked under
+   the current ones, so budget changes DO reach a repeated context (S1c pins
+   this). The cache still returns the STORED delta, so tests that need fresh
+   deltas for a repeated context build a fresh pipeline.
 2. OR gate semantics (`use_cvar=True, require_cds_or_cvar=True`) let CVaR
    admit what PDS rejects, and an untrained MDN admits nearly everything. Any
    assertion about epsilon or abstention runs with `use_cvar=False`.
@@ -304,6 +304,52 @@ class _StubGovernor:
 
     def step(self, outcome: SkillOutcome) -> GovernorSignal:
         return self.signal()
+
+
+def test_s1c_cached_approval_is_not_selected_after_epsilon_tightens():
+    """Same pipeline, same context, same skill, epsilon 0.10 -> 0.00.
+
+    The pipeline caches certificates per (context, skill). Previously a skill
+    approved at epsilon 0.10 stayed approved -- and was selected -- after
+    epsilon fell to 0.00, although a fresh check rejects it. The stored
+    certificate is kept as history, but eligibility must follow the current
+    budget all the way through to selection.
+
+    `use_cvar=False`: under OR semantics the untrained MDN's CVaR gate could
+    admit the skill on its own and hide the PDS verdict.
+    """
+    from bridge.controller import MetaMoController
+
+    _, baseline, candidates, obs = build_world()
+    borderline = next(c for c in candidates if c.skill_id == "RiskyForage")
+    margin = margin_of(borderline)
+    assert -0.1 < margin < 0.0, f"margin {margin:.4f} cannot be flipped by epsilon"
+
+    pipeline = make_pipeline(int(obs.shape[0]), use_cvar=False)
+    controller = MetaMoController(_StubGovernor(), pipeline, seed=SEED)
+
+    def certify_and_select(epsilon: float):
+        signal = uniform_signal(epsilon)
+        records = controller.certify(
+            context=obs,
+            candidate_skills=[borderline],
+            baseline_stats=baseline,
+            signal=signal,
+        )
+        selected, _ = controller.select(records, signal)
+        return records[0], selected
+
+    loose, selected_loose = certify_and_select(0.10)
+    assert loose.is_certified and selected_loose == "RiskyForage"
+
+    tight, selected_tight = certify_and_select(0.0)
+    assert not tight.is_certified, "cached approval survived the tighter budget"
+    assert selected_tight is None, "a skill the current budget rejects was selected"
+    assert tight.epsilon == pytest.approx(0.0)
+
+    historical = pipeline.get_certification_result(context=obs, skill_id="RiskyForage")
+    assert historical.is_certified, "the historical certificate must be kept"
+    assert historical.epsilon == pytest.approx(0.10)
 
 
 def test_s1b_governor_epsilon_change_alters_admissions():

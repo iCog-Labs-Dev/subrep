@@ -246,10 +246,16 @@ holds the `MotivationalState` and replaces it with the value `step()` returns �
 never mutating the previous one, which is what `step()`'s purity permits.
 
 **Certification is cached.** `RuntimeCertificationPipeline` keys results by
-`(context_key, skill_id)` (`utils/mdn_runtime_pipeline.py:219-227`). With a
-constant context, a second certification returns the cached verdict and budget
-changes have no effect. Callers must vary the context each step — the demo
-passes the live environment observation.
+`(context_key, skill_id)`. The cached certificate is kept as the historical
+record, but eligibility follows the **current** risk budgets: if ε (or the CVaR
+tail level, when a CVaR gate is in use) differs from the values the certificate
+was issued under, the stored delta is rechecked under the current budgets. A
+skill certified at ε = 0.10 is therefore no longer admitted, or selected, at
+ε = 0.00 in the same context. See §8.
+
+The cache still returns the **stored** delta for a repeated context. Callers that
+need fresh deltas pass a context that changes each step — the demo passes the
+live environment observation.
 
 ---
 
@@ -353,6 +359,23 @@ non-dataclass stand-ins pass through untouched.
 `StepRecord`, and printed by the demo — while the gate keeps using the static
 config value. Nothing looks broken: the number moves, the logs look right, and
 only the gate's behaviour is wrong.
+
+**Cached certificates are rechecked when a budget changes.** Delivering the
+budget is only half of it: the pipeline caches certificates per
+`(context, skill)`, and a cached approval would otherwise outlive the budget it
+was issued under. On a cache hit, the pipeline compares the stored certificate's
+ε and CVaR tail level with the current ones (the tail level only when a CVaR
+gate is in use). If they differ, it re-runs the gates on the stored delta under
+the current budgets and returns the current verdict, margin and ε, leaving the
+stored certificate untouched as the historical record. The recheck uses the W_x
+region the certificate was originally gated against, because certifying a skill
+records its selection weight into W_x, so only the budget differs from the
+original check.
+
+Regression guard: `test_s1c_cached_approval_is_not_selected_after_epsilon_tightens`
+runs one pipeline, one context and one skill through the controller at
+ε = 0.10 and then 0.00. The skill is selected at the first and not at the second,
+and the historical certificate survives.
 
 ---
 
