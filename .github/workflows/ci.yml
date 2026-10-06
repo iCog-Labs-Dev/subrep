@@ -19,4 +19,4 @@ jobs:
           pip install -r requirements.txt
       - name: Run Tests
         run: |
-          pytest tests/ -v
+          pytest tests/ integration/omegaclaw/tests -v

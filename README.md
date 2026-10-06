@@ -385,6 +385,7 @@ Outputs:
 | `utils/` | Shared MDN, geometry, data, checkpoint, and report helpers |
 | `data_collector/` | Raw rollout and candidate-set data collectors |
 | `demo/` | End-to-end pipeline and generated admission reports |
+| `integration/` | Recommendation-only adapters for external systems, including Omega |
 | `tests/` | Unit, integration, runtime, and end-to-end tests |
 
 ## Technical Specifications
