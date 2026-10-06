@@ -250,7 +250,7 @@ Implemented:
 Outside the current implementation scope:
 
 - Minecraft environment integration,
-- AIRIS rule-sequence integration,
+- AIRIS
 - PLN reasoning integration,
 - MetaMo motivational dynamics,
 - higher-dimensional `W_x` polytope solver,

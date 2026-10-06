@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -36,6 +36,10 @@ class CertificationResult:
     mdn_alpha: tuple[float, ...] | None = None
     wx_support_directions: tuple[tuple[float, ...], ...] | None = None
     wx_support_values: tuple[float, ...] | None = None
+    # CVaR tail level the result was issued under. Together with `epsilon` it
+    # records the risk budgets in force, so a cached result can be rechecked
+    # when either budget changes.
+    cvar_confidence: float | None = None
 
 
 def certification_result_to_certificate_kwargs(
@@ -107,7 +111,10 @@ class RuntimeCertificationPipeline:
     """Full runtime certification pipeline with W_x tracking and certificate permanence.
 
     This pipeline:
-    1. Checks if a skill is already certified (permanence)
+    1. Checks if a skill is already certified (permanence). The stored
+       certificate is kept as the historical record; if the risk budgets (PDS
+       epsilon, CVaR tail level) differ from the ones it was issued under,
+       eligibility is rechecked under the current budgets.
     2. Runs gate tests against actual W_x (not simplex fallback)
     3. Records certified weights into W_x store
     4. Trains the support head after certification
@@ -126,6 +133,14 @@ class RuntimeCertificationPipeline:
         self.support_trainer = support_trainer
         self.config = config or RuntimePipelineConfig()
         self._certified_skills: dict[tuple[tuple[float, ...], str], CertificationResult] = {}
+        # The W_x region each stored result was gated against, snapshotted at
+        # certification time. A budget recheck must judge the same claim over
+        # the same region: W_x grows from the weights of certified skills, so
+        # rechecking against the CURRENT W_x would judge a skill partly by the
+        # weights recorded when it was certified.
+        self._certified_regions: dict[
+            tuple[tuple[float, ...], str], Optional[WeightSet]
+        ] = {}
 
         if self.config.store_path is not None:
             self._load_store()
@@ -140,17 +155,48 @@ class RuntimeCertificationPipeline:
         baseline_stats: dict[str, Any],
         weights_used: Optional[np.ndarray] = None,
         epsilon: Optional[float] = None,
+        cvar_confidence: Optional[float] = None,
     ) -> CertificationResult:
         """Run the full certification pipeline for a single skill.
 
         Returns a CertificationResult with is_certified=True if the skill passes
         gate tests (or was already certified).
+
+        `epsilon` and `cvar_confidence` allow a caller (e.g. a motivational
+        governor) to supply per-step risk budgets. Both default to None, which
+        falls back to the values on `self.config`.
+
+        A result already stored for this context and skill is returned as-is
+        while the budgets are unchanged. If they differ from the ones it was
+        issued under, the stored delta is rechecked under the current budgets
+        and a copy carrying the current verdict is returned; the stored result
+        itself is never modified.
         """
         context_key = self.weight_store._context_key(context)
         permanence_key = (context_key, skill_id)
 
         if permanence_key in self._certified_skills:
-            return self._certified_skills[permanence_key]
+            stored = self._certified_skills[permanence_key]
+            current_epsilon = self._effective_epsilon(epsilon)
+            current_confidence = self._effective_cvar_confidence(cvar_confidence)
+            if not self._budgets_changed(
+                stored, epsilon=current_epsilon, cvar_confidence=current_confidence
+            ):
+                return stored
+            is_eligible, margin = self._recheck_eligibility(
+                stored,
+                context=context,
+                weight_set=self._certified_regions.get(permanence_key),
+                epsilon=current_epsilon,
+                cvar_confidence=current_confidence,
+            )
+            return replace(
+                stored,
+                is_certified=is_eligible,
+                admission_margin=margin,
+                epsilon=current_epsilon,
+                cvar_confidence=current_confidence,
+            )
 
         calculator = ImprovementCalculator(baseline_stats)
         delta_r, delta_n = calculator.compute_improvements(
@@ -166,7 +212,10 @@ class RuntimeCertificationPipeline:
             context,
             weight_set,
             epsilon=effective_epsilon,
+            cvar_confidence=cvar_confidence,
         )
+        # Before observe_certified_weight below can grow this context's W_x.
+        region = _snapshot_region(weight_set)
         audit_fields = self._build_audit_fields(context, weight_set)
 
         if is_certified and weights_used is not None:
@@ -185,14 +234,17 @@ class RuntimeCertificationPipeline:
                 context,
                 weight_set,
                 epsilon=effective_epsilon,
+                cvar_confidence=cvar_confidence,
             ),
             delta_r=float(delta_r),
             delta_n=tuple(float(v) for v in delta_n),
             epsilon=effective_epsilon,
+            cvar_confidence=self._effective_cvar_confidence(cvar_confidence),
             **audit_fields,
         )
 
         self._certified_skills[permanence_key] = result
+        self._certified_regions[permanence_key] = region
         return result
 
     def certify_candidate_skills(
@@ -202,14 +254,24 @@ class RuntimeCertificationPipeline:
         candidate_skills: list[CandidateSkillRecord],
         baseline_stats: dict[str, Any],
         weights_used: Optional[np.ndarray] = None,
+        cvar_confidence: Optional[float] = None,
     ) -> list[CandidateSkillRecord]:
         """Certify a batch of candidate skills and return updated records.
 
         For each candidate, checks permanence, runs gate tests against W_x,
         and records certified weights.
+
+        A certificate already stored for this context and skill stays as the
+        historical record. While the candidate's PDS epsilon and this call's
+        CVaR tail level match the ones it was issued under, its verdict is
+        reused. If either differs, the stored delta is rechecked under the
+        current budgets, and the returned record carries the CURRENT verdict,
+        margin and epsilon -- so a skill certified under a looser budget is
+        not admitted once the budget tightens past its margin.
         """
         context_key = self.weight_store._context_key(context)
         weight_set = self.weight_store.get_weight_set(context)
+        current_confidence = self._effective_cvar_confidence(cvar_confidence)
         updated_records = []
 
         for candidate in candidate_skills:
@@ -217,18 +279,34 @@ class RuntimeCertificationPipeline:
 
             if permanence_key in self._certified_skills:
                 stored = self._certified_skills[permanence_key]
-                if stored.is_certified and weights_used is not None:
+                current_epsilon = self._candidate_epsilon(candidate)
+                if self._budgets_changed(
+                    stored, epsilon=current_epsilon, cvar_confidence=current_confidence
+                ):
+                    is_eligible, margin = self._recheck_eligibility(
+                        stored,
+                        context=context,
+                        weight_set=self._certified_regions.get(permanence_key),
+                        epsilon=current_epsilon,
+                        cvar_confidence=current_confidence,
+                    )
+                    epsilon_now = current_epsilon
+                else:
+                    is_eligible = stored.is_certified
+                    margin = stored.admission_margin
+                    epsilon_now = stored.epsilon
+                if is_eligible and weights_used is not None:
                     self._observe_certified_weight(context, weights_used)
                 updated_records.append(
                     CandidateSkillRecord(
                         skill_id=candidate.skill_id,
                         delta_r=stored.delta_r,
                         delta_n=stored.delta_n,
-                        is_certified=stored.is_certified,
+                        is_certified=is_eligible,
                         gate_type=stored.gate_type,
                         metadata=dict(candidate.metadata),
-                        admission_margin=stored.admission_margin,
-                        epsilon=stored.epsilon,
+                        admission_margin=margin,
+                        epsilon=epsilon_now,
                         baseline_id=candidate.baseline_id,
                     )
                 )
@@ -242,7 +320,10 @@ class RuntimeCertificationPipeline:
                 context,
                 weight_set,
                 epsilon=effective_epsilon,
+                cvar_confidence=cvar_confidence,
             )
+            # Before _observe_certified_weight below can grow this context's W_x.
+            region = _snapshot_region(weight_set)
             audit_fields = self._build_audit_fields(
                 context,
                 weight_set,
@@ -262,13 +343,16 @@ class RuntimeCertificationPipeline:
                         context,
                         weight_set,
                         epsilon=effective_epsilon,
+                        cvar_confidence=cvar_confidence,
                     ),
                     delta_r=candidate.delta_r,
                     delta_n=candidate.delta_n,
                     epsilon=effective_epsilon,
+                    cvar_confidence=current_confidence,
                     **audit_fields,
                 )
                 self._certified_skills[permanence_key] = result
+                self._certified_regions[permanence_key] = region
                 updated_records.append(
                     CandidateSkillRecord(
                         skill_id=candidate.skill_id,
@@ -307,6 +391,77 @@ class RuntimeCertificationPipeline:
         if self.config.gate_type.upper() == "PDS":
             return self.config.pds_epsilon if epsilon is None else float(epsilon)
         return 0.0
+
+    def _effective_cvar_confidence(self, cvar_confidence: float | None) -> float:
+        """Resolve the CVaR tail level for this call.
+
+        Mirrors `_effective_epsilon`: a per-call value wins, otherwise the
+        configured default applies. This is the scalar tail-mass argument to
+        `CVaRGate(confidence=...)`, NOT the MDN's Dirichlet concentration
+        vector `mdn_alpha`, which is a separate positive array of length m.
+        """
+        if cvar_confidence is None:
+            return self.config.cvar_confidence
+        return float(cvar_confidence)
+
+    def _uses_cvar(self) -> bool:
+        """Whether the CVaR tail level can affect this pipeline's verdicts."""
+        return self.config.gate_type.upper() == "CVAR" or bool(self.config.use_cvar)
+
+    def _budgets_changed(
+        self,
+        stored: CertificationResult,
+        *,
+        epsilon: float,
+        cvar_confidence: float,
+    ) -> bool:
+        """Whether the current risk budgets differ from a stored result's.
+
+        `epsilon` and `cvar_confidence` are effective (already resolved)
+        values. The CVaR tail level only counts when a CVaR gate is in use.
+        """
+        if stored.epsilon != epsilon:
+            return True
+        return (
+            self._uses_cvar()
+            and stored.cvar_confidence is not None
+            and stored.cvar_confidence != cvar_confidence
+        )
+
+    def _recheck_eligibility(
+        self,
+        stored: CertificationResult,
+        *,
+        context: np.ndarray,
+        weight_set: Optional[WeightSet],
+        epsilon: float,
+        cvar_confidence: float,
+    ) -> tuple[bool, float]:
+        """Re-run the gates on a stored result's delta under current budgets.
+
+        `weight_set` is the region the result was originally gated against
+        (see `_certified_regions`), so only the risk budgets differ from the
+        original check. Returns (is_eligible, admission_margin). Read-only:
+        the stored result stays as the historical certificate.
+        """
+        delta_n = np.array(stored.delta_n)
+        is_eligible = self._run_gate_tests(
+            stored.delta_r,
+            delta_n,
+            context,
+            weight_set,
+            epsilon=epsilon,
+            cvar_confidence=cvar_confidence,
+        )
+        margin = self._compute_admission_margin(
+            stored.delta_r,
+            delta_n,
+            context,
+            weight_set,
+            epsilon=epsilon,
+            cvar_confidence=cvar_confidence,
+        )
+        return bool(is_eligible), float(margin)
 
     def _observe_certified_weight(self, context: np.ndarray, weights_used: np.ndarray) -> None:
         self.weight_store.observe_certified_weight(context, weights_used)
@@ -371,9 +526,11 @@ class RuntimeCertificationPipeline:
         weight_set: Optional[WeightSet],
         *,
         epsilon: float | None = None,
+        cvar_confidence: float | None = None,
     ) -> bool:
         """Run configured gate tests against W_x."""
         gate_type = self.config.gate_type.upper()
+        effective_confidence = self._effective_cvar_confidence(cvar_confidence)
 
         if gate_type == "CDS":
             gate = CDSGate()
@@ -386,7 +543,7 @@ class RuntimeCertificationPipeline:
                 context_tensor = __import__("torch").tensor(context, dtype=__import__("torch").float32, device=self.model.device if hasattr(self.model, "device") else "cpu")
                 alpha, _ = self.model.forward_inference(context_tensor)
             alpha_np = alpha.detach().cpu().numpy()
-            gate = CVaRGate(confidence=self.config.cvar_confidence, n_samples=self.config.cvar_samples)
+            gate = CVaRGate(confidence=effective_confidence, n_samples=self.config.cvar_samples)
             result = gate.admit(delta_r, delta_n, mdn_alpha=alpha_np)
         else:
             raise ValueError(f"Unknown gate_type: {gate_type}")
@@ -396,7 +553,7 @@ class RuntimeCertificationPipeline:
                 context_tensor = __import__("torch").tensor(context, dtype=__import__("torch").float32, device=self.model.device if hasattr(self.model, "device") else "cpu")
                 alpha, _ = self.model.forward_inference(context_tensor)
             alpha_np = alpha.detach().cpu().numpy()
-            cvar_gate = CVaRGate(confidence=self.config.cvar_confidence, n_samples=self.config.cvar_samples)
+            cvar_gate = CVaRGate(confidence=effective_confidence, n_samples=self.config.cvar_samples)
             cvar_result = cvar_gate.admit(delta_r, delta_n, mdn_alpha=alpha_np)
 
             if self.config.require_cds_or_cvar:
@@ -458,6 +615,7 @@ class RuntimeCertificationPipeline:
         weight_set: Optional[WeightSet],
         *,
         epsilon: float | None = None,
+        cvar_confidence: float | None = None,
     ) -> float:
         gate_type = self.config.gate_type.upper()
 
@@ -481,11 +639,18 @@ class RuntimeCertificationPipeline:
                 alpha, _ = self.model.forward_inference(context_tensor)
             alpha_np = alpha.detach().cpu().numpy()
             return CVaRGate(
-                confidence=self.config.cvar_confidence,
+                confidence=self._effective_cvar_confidence(cvar_confidence),
                 n_samples=self.config.cvar_samples,
             ).get_cvar(delta_r, delta_n, mdn_alpha=alpha_np)
 
         raise ValueError(f"Unknown gate_type: {gate_type}")
+
+
+def _snapshot_region(weight_set: Optional[WeightSet]) -> Optional[WeightSet]:
+    """Copy a W_x region so later observations cannot change it."""
+    if weight_set is None or weight_set.is_empty():
+        return None
+    return WeightSet(vertices=[np.array(v, copy=True) for v in weight_set.vertices])
 
 
 def _wx_support_evidence(
