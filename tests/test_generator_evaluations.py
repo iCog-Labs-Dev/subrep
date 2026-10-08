@@ -142,7 +142,6 @@ def test_compare_main_uses_documented_default_sizes(monkeypatch, tmp_path):
     monkeypatch.setattr(compare_dataset_sizes, "run_training_loop", fake_training_loop)
     monkeypatch.setattr(compare_dataset_sizes, "evaluate_on_test_set", fake_evaluate)
     monkeypatch.setattr(compare_dataset_sizes, "save_combined_curves_plot", lambda *args: None)
-    monkeypatch.setattr(compare_dataset_sizes, "save_mse_vs_size_plot", lambda *args: None)
     monkeypatch.setattr(compare_dataset_sizes.torch.cuda, "is_available", lambda: False)
 
     output_dir = tmp_path / "plots"
@@ -157,10 +156,6 @@ def test_compare_main_uses_documented_default_sizes(monkeypatch, tmp_path):
             str(output_dir),
             "--rollout-output-dir",
             str(rollout_dir),
-            "--sizes",
-            "1000",
-            "3000",
-            "5250",
             "--report-json",
             str(tmp_path / "artifacts" / "comparison.json"),
             "--report-md",
@@ -188,6 +183,9 @@ def test_compare_main_uses_documented_default_sizes(monkeypatch, tmp_path):
     assert len(set(observed_validation_contexts)) == 1
     assert len(set(observed_test_contexts)) == 1
     assert (tmp_path / "artifacts" / "comparison.md").exists()
+    mse_plot = output_dir / "model_vs_training_mean_mse.png"
+    assert mse_plot.is_file()
+    assert mse_plot.stat().st_size > 0
 
 
 def test_compare_main_warns_when_requested_sizes_exceed_available_data(
@@ -221,11 +219,10 @@ def test_compare_main_warns_when_requested_sizes_exceed_available_data(
     output = capsys.readouterr().out
     assert "need at least 134 source records" in output
     assert "Collect at least 114 more records" in output
-    assert "default seed is 42" in output
     assert "No models were trained" in output
     assert "python -m data_collector.collect --episodes 114" in output
-    assert '--save-dir "unused"' in output
-    assert "--seed" not in output
+    assert '--save-dir "unused" --seed 42' in output
+    assert "data/dataset_size_comparison_source" in output
 
 
 def test_evaluate_dataset_uses_test_records_and_train_only_baseline(tmp_path):

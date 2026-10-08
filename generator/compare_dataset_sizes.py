@@ -354,6 +354,7 @@ def save_combined_curves_plot(
         ax.axvline(
             history["best_epoch"],
             linestyle="--",
+            label="Best epoch",
         )
 
         ax.set_title(f"Dataset size = {history['size']}")
@@ -385,7 +386,7 @@ def save_mse_vs_size_plot(
     """
     Plot paired model and training-mean test MSE bars by training-set size.
     """
-    metric_labels = (("payoff_mse", "Payoff"), ("safety_mse", "Safety"), ("fuel_mse", "Fuel"))
+    metric_labels = (("payoff", "Payoff"), ("safety", "Safety"), ("fuel", "Fuel"))
     sizes = [result["training_records"] for result in results]
     positions = np.arange(len(sizes), dtype=np.float32)
     width = 0.36
@@ -485,7 +486,13 @@ def build_markdown_report(summary: dict) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Compare SkillGenerator performance as training data grows.")
     parser.add_argument("--data-dir", type=str, default="data/raw", help="Directory containing rollout files.")
-    parser.add_argument("--sizes", type=int, nargs="+", required=True, help="Training-subset sizes to compare.")
+    parser.add_argument(
+        "--sizes",
+        type=int,
+        nargs="+",
+        default=[1000, 3000, 5250],
+        help="Training-subset sizes to compare (default: 1000 3000 5250).",
+    )
     parser.add_argument("--epochs", type=int, default=150, help="Maximum training epochs per size.")
     parser.add_argument("--patience", type=int, default=10, help="Early-stopping patience.")
     parser.add_argument("--batch-size", type=int, default=32)
@@ -526,16 +533,26 @@ def main():
         collection_command = (
             "python -m data_collector.collect "
             f"--episodes {additional_records} "
-            f'--save-dir "{args.data_dir}"'
+            f'--save-dir "{args.data_dir}" '
+            f"--seed {args.seed}"
+        )
+        separate_collection_command = (
+            "python -m data_collector.collect "
+            f"--episodes {required_source_size} "
+            '--save-dir "data/dataset_size_comparison_source" '
+            f"--seed {args.seed}"
         )
         print(
             f"Insufficient data: requested training sizes {args.sizes} need at least "
             f"{required_source_size:,} source records with the selected holdout fractions; "
             f"only {available_records:,} are available. Collect at least "
-            f"{additional_records:,} more records, then rerun. The collector's default "
-            f"seed is 42. No models were trained.\n"
-            "Run this command to collect them:\n"
-            f"{collection_command}"
+            f"{additional_records:,} more records, then rerun. This is an estimate; "
+            "context-grouped splitting may require additional records. No models were trained.\n"
+            "Recommended: append the missing records to the current dataset:\n"
+            f"{collection_command}\n"
+            "For an isolated dataset, collect the full minimum into a separate directory, "
+            "then rerun with --data-dir set to that directory:\n"
+            f"{separate_collection_command}"
         )
         return
     source_size = required_source_size
