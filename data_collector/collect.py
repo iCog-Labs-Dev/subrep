@@ -4,6 +4,7 @@ Data Collection Entrypoint for SubRep.
 Usage:
     python -m data_collector.collect
     python -m data_collector.collect --episodes 200 --save-dir data/raw --seed 42
+    python -m data_collector.collect --episodes 200 --save-dir data/experiment_x
 
 Collects random rollouts from MO-LunarLander and saves them as .npz files
 into data/raw/. These files are required to train the SkillGenerator:
@@ -30,13 +31,20 @@ def parse_args() -> argparse.Namespace:
         "--save-dir",
         type=str,
         default="data/raw",
-        help="Directory to save .npz files (default: data/raw)",
+        help=(
+            "Directory for .npz episode files (default: data/raw). New files continue "
+            "after the highest existing episode number for the selected prefix. "
+            "Use another directory for an isolated dataset."
+        ),
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Random seed for reproducibility (default: 42)",
+        help=(
+            "Starting context seed for an empty directory(default: 42); appending continues after "
+            "the highest saved context seed "
+        ),
     )
     parser.add_argument(
         "--prefix",
@@ -54,7 +62,7 @@ def main() -> None:
     print("  SubRep Data Collection")
     print("=" * 60)
     print(f"  Episodes  : {args.episodes}")
-    print(f"  Save dir  : {args.save_dir}")
+    print(f"  Save dir  : {args.save_dir} (appending without overwriting)")
     print(f"  Seed      : {args.seed}")
     print(f"  Prefix    : {args.prefix}")
     print("-" * 60)

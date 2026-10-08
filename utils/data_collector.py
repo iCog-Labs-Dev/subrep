@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import numpy as np
 import torch
 from env.skill_executor import SkillExecutor
@@ -33,11 +34,15 @@ class DataCollector:
         torch.backends.cudnn.benchmark = False
         os.environ['PYTHONHASHSEED'] = str(seed)
         
-    def collect_episode(self, skill_id: str = None) -> dict:
+    def collect_episode(self, skill_id: str = None, episode_seed: int = None) -> dict:
         """
         Run one episode via executor and return a data record.
         """
-        payoff, motives, terminated = self.executor.run_episode()
+        if episode_seed is None:
+            payoff, motives, terminated = self.executor.run_episode()
+        else:
+            initial_obs, _ = self.executor.env.reset(seed=episode_seed)
+            payoff, motives, terminated = self.executor.run_episode(initial_obs=initial_obs)
         
         # Ensure we get initial_obs from the latest run
         initial_obs = self.executor.last_run_info.get("initial_obs")
@@ -51,6 +56,8 @@ class DataCollector:
             'skill_id': skill_id if skill_id is not None else "unknown",
             'terminated': bool(terminated)
         }
+        if episode_seed is not None:
+            record['context_seed'] = int(episode_seed)
         behavior_probability = self.executor.last_run_info.get("behavior_probability")
         if behavior_probability is not None:
             record['behavior_probability'] = float(behavior_probability)
@@ -62,16 +69,38 @@ class DataCollector:
         """
         filename = f"{prefix}_ep{episode_idx:03d}.npz"
         filepath = os.path.join(self.save_dir, filename)
-        np.savez(
-            filepath,
-            obs=record['obs'],
-            payoff=record['payoff'],
-            motives=record['motives'],
-            skill_id=record['skill_id'],
-            terminated=record['terminated'],
-            **({"behavior_probability": record["behavior_probability"]} if "behavior_probability" in record else {})
-        )
+        with open(filepath, "xb") as output_file:
+            np.savez(
+                output_file,
+                obs=record['obs'],
+                payoff=record['payoff'],
+                motives=record['motives'],
+                skill_id=record['skill_id'],
+                terminated=record['terminated'],
+                **({"context_seed": record["context_seed"]} if "context_seed" in record else {}),
+                **({"behavior_probability": record["behavior_probability"]} if "behavior_probability" in record else {})
+            )
         return filepath
+
+    def _next_episode_index(self, prefix: str) -> int:
+        pattern = re.compile(rf"{re.escape(prefix)}_ep(\d+)\.npz$")
+        existing_indices = [
+            int(match.group(1))
+            for filename in os.listdir(self.save_dir)
+            if (match := pattern.fullmatch(filename))
+        ]
+        return max(existing_indices, default=0) + 1
+
+    def _next_context_seed(self) -> int:
+        next_seed = int(self.seed)
+        for filename in os.listdir(self.save_dir):
+            if not filename.endswith(".npz"):
+                continue
+            filepath = os.path.join(self.save_dir, filename)
+            with np.load(filepath, allow_pickle=True) as saved_record:
+                if "context_seed" in saved_record.files:
+                    next_seed = max(next_seed, int(saved_record["context_seed"]) + 1)
+        return next_seed
 
     def collect_n_episodes(
         self,
@@ -83,10 +112,15 @@ class DataCollector:
         Run N episodes, save each to disk with prefix, optionally print summary.
         """
         records = []
-        for i in range(1, n + 1):
-            skill_id = f"{skill_prefix}_{i}"
-            record = self.collect_episode(skill_id=skill_id)
-            self.save_episode(record, i, prefix=skill_prefix)
+        first_episode_idx = self._next_episode_index(skill_prefix)
+        first_context_seed = self._next_context_seed()
+        if n > 0 and (first_context_seed < 0 or first_context_seed + n > 2**32):
+            raise ValueError("Context seed range must fit in the unsigned 32-bit range")
+        for episode_idx in range(first_episode_idx, first_episode_idx + n):
+            skill_id = f"{skill_prefix}_{episode_idx}"
+            episode_seed = first_context_seed + episode_idx - first_episode_idx
+            record = self.collect_episode(skill_id=skill_id, episode_seed=episode_seed)
+            self.save_episode(record, episode_idx, prefix=skill_prefix)
             records.append(record)
             
         if print_summary:
