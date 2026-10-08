@@ -68,7 +68,7 @@ def test_specified_first_choice_is_defence_not_trade():
 
 
 def test_summing_the_objectives_flips_that_choice():
-    """Documents what bug 1 did: with delta_r = sum(delta_n), the agent trades
+    """Documents what summing the objectives did: with delta_r = sum(delta_n), the agent trades
     at dusk with a patrol incoming instead of defending."""
     golem = score_skill_entry(
         _record("IronGolemSpawn", IRON_GOLEM_SPAWN, bugged=True), W0

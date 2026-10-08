@@ -1,8 +1,8 @@
 """Option rollouts on the Minecraft stub, for the MetaMo integration.
 
 The single place where the MetaMo path estimates delta_r / delta_n: the demo
-(demo/run_metamo_pipeline.py), the end-to-end tests and the ablation harness
-all use it, so each estimation rule lives here once.
+(demo/run_metamo_pipeline.py) and the end-to-end tests use it, so each
+estimation rule lives here once.
 
 It deliberately does NOT use `IdlePolicy` (baseline/idle_policy.py). That code
 was written for the 2-objective LunarLander environment and is correct there;
@@ -33,17 +33,16 @@ from utils.mdn_contracts import CandidateSkillRecord
 # (Help=0.8, Ethical=0.9) and makes Reputation dominate from the first step,
 # which is the wrong prior for an agent that has to survive the night.
 #
-# Defined once here so the demo, the tests and the ablation harness cannot
-# drift apart.
+# Defined once here so the demo and the tests cannot drift apart.
 MINECRAFT_INITIAL_GOALS = np.array(
     [0.70, 0.40, 0.30, 0.50, 0.40, 0.60, 0.50, 0.30], dtype=np.float64
 )
 
 # Option duration, in environment steps. The reference specification draws a
-# per-option duration tau; a fixed H simplifies that and keeps variance low for
-# the ablation. Candidate evaluation, execution and feedback all use the SAME
-# horizon -- measuring an option over one duration and running it for another
-# is what made the old estimates meaningless.
+# per-option duration tau; a fixed H simplifies that and keeps variance low
+# when runs are compared. Candidate evaluation, execution and feedback all use
+# the SAME horizon -- measuring an option over one duration and running it for
+# another is what made the old estimates meaningless.
 DEFAULT_HORIZON = 3
 
 # Lower bound on both appraisal scales. The task reward is sparse -- only
@@ -114,7 +113,7 @@ def run_option(
         phi = np.asarray(env.phi(), dtype=np.float32)  # phi(x_t), pre-step
         if n_hat is None:
             n_hat = np.zeros_like(phi)
-        # Bug 8 -- objectives summed per-step changes, not state levels.
+        # Objectives used to sum per-step changes, not state levels.
         # This came from baseline/idle_policy.py:51, written for the
         # 2-objective LunarLander env, whose objectives are per-step reward
         # streams (shaping reward, fuel cost), so summing each step's value is
@@ -126,7 +125,7 @@ def run_option(
         n_hat += discount * phi
 
         _, _, terminated, truncated, info = env.step(action)
-        # Bug 1 -- task reward was the sum of the objectives.
+        # The task reward used to be the sum of the objectives.
         # This came from baseline/idle_policy.py:50, written for the 2-objective
         # LunarLander env, where the objectives are built from the env's own
         # reward components, so their sum IS the task reward. In the Minecraft

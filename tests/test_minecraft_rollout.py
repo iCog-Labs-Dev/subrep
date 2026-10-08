@@ -224,7 +224,7 @@ def test_evaluate_candidates_leaves_the_live_env_untouched():
 
 
 def test_task_reward_is_not_the_sum_of_the_objectives():
-    """Bug 1: delta_r used to be identical to sum(delta_n)."""
+    """delta_r used to be identical to sum(delta_n); it must not be."""
     _, records = evaluate_candidates(
         _fresh_env(noise_scale=0.02), gamma=GAMMA, horizon=DEFAULT_HORIZON
     )
@@ -248,7 +248,7 @@ def test_only_trade_earns_task_reward():
 
 
 def test_rollout_requires_a_task_reward():
-    """No silent fallback to summing the objectives (decision D7)."""
+    """No silent fallback to summing the objectives."""
 
     class NoTaskRewardEnv:
         def phi(self):
@@ -275,7 +275,7 @@ def test_rollout_requires_state_features():
 
 
 def test_n_hat_sums_state_levels_including_the_start_state():
-    """Bug 8: n_hat = sum_{t<H} gamma^t phi(x_t), with x_0 included and x_H
+    """n_hat = sum_{t<H} gamma^t phi(x_t), with x_0 included and x_H
     excluded -- computed by hand from the phi values the env passes through.
 
     Started mid-episode so phi(x_0) is nonzero and the t = 0 term matters."""

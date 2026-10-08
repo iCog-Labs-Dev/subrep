@@ -45,8 +45,9 @@ untouched.
 **Why this matters.** Without the stamp, the governor's ε is computed every
 step, stored on `StepRecord`, printed by the demo — and silently ignored by the
 gate, which keeps using the static config value. The failure is invisible:
-every other signal still moves, so nothing looks wrong. `test_bridge_e2e.py`'s
-S1 is the regression guard.
+every other signal still moves, so nothing looks wrong.
+`test_bridge_e2e.py::test_s1_epsilon_change_flips_a_borderline_admission` is
+the regression guard.
 
 ### Cached certificates follow the current budgets
 
@@ -279,7 +280,7 @@ Every assertion in `test_bridge_e2e.py` that concerns ε or abstention runs with
 ## How Δr and Δn are estimated
 
 All estimation on the MetaMo path lives in `env/minecraft_rollout.py`, used by
-the demo, the end-to-end tests and (later) the ablation harness. It follows the
+the demo and the end-to-end tests. It follows the
 reference specification's definitions for an option of duration τ from state x:
 
 ```
@@ -324,9 +325,9 @@ because nothing else could reach the band.
 ### What the demo shows — and what it can't yet
 
 With the estimation fixed, the demo's selection changes over a run. It also
-shows why the next step is needed: under threat, Securing still rails to 1.0
+shows a current limitation: under threat, Securing still rails to 1.0
 within two decisions, pinning ε at 0 — and with every margin negative, PDS then
 admits nothing, so the agent abstains until threat eases. Bounding MetaMo's
-step size is separate, planned work. With ε held at its 0.1 baseline instead,
+step size is not addressed here. With ε held at its 0.1 baseline instead,
 selection tracks threat: trade when calm, defend as threat peaks, trade again
 as it falls.
