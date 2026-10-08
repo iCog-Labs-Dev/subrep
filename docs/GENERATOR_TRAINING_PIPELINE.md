@@ -81,8 +81,11 @@ For example, compare 1,000, 3,000, and 5,250 training records from a 7,000-recor
 source pool. The command derives the minimum pool from the largest size and the
 12.5% validation/test holdouts, reuses those holdouts for every model, and
 compares each model with a mean predictor computed from its own training subset.
-If the input lacks the required data, it reports the minimum and a collection
-command, then exits without training.
+If the input lacks the required data, it reports the estimated minimum and
+prints a safe append command for the current data directory. The collector
+continues episode numbering for the selected prefix and uses reproducible
+episode-specific seeds. The message also provides an isolated-dataset option;
+context-grouped splitting can require more records than the estimate.
 
 ```bash
 python -m generator.compare_dataset_sizes --data-dir data/raw --sizes 1000 3000 5250 --epochs 150 --patience 10
