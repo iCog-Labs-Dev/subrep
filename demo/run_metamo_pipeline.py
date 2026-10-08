@@ -84,11 +84,11 @@ def start_new_episode(
 ) -> np.ndarray:
     """Reset the env and give the controller a fresh pipeline.
 
-    The pipeline caches certificates by (rounded context, skill_id) and, on a
-    hit, returns the STORED delta and epsilon rather than the current ones
-    (utils/mdn_runtime_pipeline.py:224-243). Every episode starts from the same
+    The pipeline caches certificates by (rounded context, skill_id). On a hit
+    it rechecks eligibility under the current risk budgets, but it returns the
+    STORED delta, not the one measured now. Every episode starts from the same
     observation, so without a fresh pipeline each new episode would open on the
-    previous episode's certificates. Within an episode contexts never repeat
+    previous episode's deltas. Within an episode contexts never repeat
     (progress t/T changes), so one pipeline per episode is enough.
 
     The governor is kept: MetaMo's motivational state carries across episodes.

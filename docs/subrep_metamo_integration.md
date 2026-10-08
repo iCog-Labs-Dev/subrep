@@ -423,9 +423,10 @@ n̂(x, o) = Σ_{t<τ} γ^t · φ(x_t)          state levels, env.phi(), x₀ inc
 - **Re-evaluated at every decision**, from the current state, on
   `copy.deepcopy(env)` so the live episode is never touched.
 - **A fresh certification pipeline per episode.** The pipeline caches
-  certificates by rounded context and, on a hit, returns the *stored* Δ and ε.
-  Every episode starts from the same observation, so reusing one pipeline would
-  open each new episode on the previous episode's certificates.
+  certificates by rounded context. On a hit it rechecks eligibility under the
+  current risk budgets (§8), but returns the *stored* Δ. Every episode starts
+  from the same observation, so reusing one pipeline would open each new episode
+  on the previous episode's Δ.
 
 It deliberately does **not** use `baseline/idle_policy.py`, which sums the reward
 vector as the task reward and accumulates per-step changes. That is correct for
@@ -517,14 +518,17 @@ steps; Reputation, the initially competing objective, falls from 0.133 to 0.010.
 
 **Budgets reach certification.** With CVaR disabled so the PDS verdict is
 observable, every calibrated option is admitted at ε = 0.10 and rejected at
-ε = 0 — first with ε values derived from a natural candidate's margin (S1), then
-using the ε MetaMo itself emits across the run (S1b), where the admitted count
-drops from 5/5 to 0/5 as the budget tightens and never rises while it is falling.
+ε = 0 — first with ε values derived from a natural candidate's margin
+(`test_s1_epsilon_change_flips_a_borderline_admission`), then using the ε MetaMo
+itself emits across the run (`test_s1b_governor_epsilon_change_alters_admissions`),
+where the admitted count drops from 5/5 to 0/5 as the budget tightens and never
+rises while it is falling.
 
 **Priorities reach selection.** Weights at step 9 differ from step 0 for every
 candidate's score, and the score gap between the safest and least-safe candidate
-widens as Safety weight rises (S6b). With sufficiently separated weights the
-selected skill changes outright (S6).
+widens as Safety weight rises (`test_s6b_governor_weights_change_skill_scores`).
+With sufficiently separated weights the selected skill changes outright
+(`test_s6_different_weights_select_different_skills`).
 
 **Selection follows threat.** In the demo the selected option changes over a run.
 With ε held at its 0.1 baseline, selection under the specification's w̄0 weights
@@ -542,7 +546,7 @@ selections at every step, and two demo runs produce byte-identical output.
 decisions and pins ε at 0. With every margin negative, PDS then admits nothing,
 and the agent abstains until threat eases and the CVaR gate admits
 DiscountChain. The coupling is doing what it is told; MetaMo's state simply moves
-too far per step. Bounding that step is separate, planned work.
+too far per step. Bounding that step is not addressed here.
 
 > Results from the stub environment are **controlled test evidence** that the
 > coupling behaves as designed. They are not real-environment validation — no
@@ -576,7 +580,7 @@ too far per step. Bounding that step is separate, planned work.
    produce; a real environment would give noisy estimates.
 7. **MetaMo's state rails within two decisions under threat**, pinning ε at 0
    and α at its floor (§11, Observed behavior). Bounding its step size is
-   separate, planned work.
+   not addressed here.
 
 ---
 

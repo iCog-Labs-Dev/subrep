@@ -29,7 +29,8 @@ THREE TRAPS THIS FILE HAS TO AVOID
 ------------------------------------------------------------------------------
 1. Certification is cached by `(context_key, skill_id)`. The cached certificate
    is kept, but when the risk budgets change its eligibility is rechecked under
-   the current ones, so budget changes DO reach a repeated context (S1c pins
+   the current ones, so budget changes DO reach a repeated context
+   (`test_s1c_cached_approval_is_not_selected_after_epsilon_tightens` pins
    this). The cache still returns the STORED delta, so tests that need fresh
    deltas for a repeated context build a fresh pipeline.
 2. OR gate semantics (`use_cvar=True, require_cds_or_cvar=True`) let CVaR
@@ -205,7 +206,7 @@ def run_loop(steps: int = 10, *, seed: int = SEED, use_cvar: bool = True):
 
 
 # ---------------------------------------------------------------------------
-# S1 -- budgets reach certification (Scope 4b)
+# S1 -- budgets reach certification
 # ---------------------------------------------------------------------------
 
 
@@ -281,15 +282,19 @@ def test_s1c_cached_approval_is_not_selected_after_epsilon_tightens():
     certificate is kept as history, but eligibility must follow the current
     budget all the way through to selection.
 
+    The skill is the natural candidate nearest mid-band, chosen at runtime as
+    in `test_s1_epsilon_change_flips_a_borderline_admission`, so the test does
+    not depend on any one option's exact numbers.
+
     `use_cvar=False`: under OR semantics the untrained MDN's CVaR gate could
     admit the skill on its own and hide the PDS verdict.
     """
     from bridge.controller import MetaMoController
 
     _, baseline, candidates, obs = build_world()
-    borderline = next(c for c in candidates if c.skill_id == "RiskyForage")
-    margin = margin_of(borderline)
-    assert -0.1 < margin < 0.0, f"margin {margin:.4f} cannot be flipped by epsilon"
+    in_band = [c for c in candidates if -0.1 < margin_of(c) < 0.0]
+    assert in_band, "no candidate margin lies in (-0.1, 0); epsilon cannot flip anything"
+    borderline = min(in_band, key=lambda c: abs(margin_of(c) + 0.05))
 
     pipeline = make_pipeline(int(obs.shape[0]), use_cvar=False)
     controller = MetaMoController(_StubGovernor(), pipeline, seed=SEED)
@@ -306,14 +311,16 @@ def test_s1c_cached_approval_is_not_selected_after_epsilon_tightens():
         return records[0], selected
 
     loose, selected_loose = certify_and_select(0.10)
-    assert loose.is_certified and selected_loose == "RiskyForage"
+    assert loose.is_certified and selected_loose == borderline.skill_id
 
     tight, selected_tight = certify_and_select(0.0)
     assert not tight.is_certified, "cached approval survived the tighter budget"
     assert selected_tight is None, "a skill the current budget rejects was selected"
     assert tight.epsilon == pytest.approx(0.0)
 
-    historical = pipeline.get_certification_result(context=obs, skill_id="RiskyForage")
+    historical = pipeline.get_certification_result(
+        context=obs, skill_id=borderline.skill_id
+    )
     assert historical.is_certified, "the historical certificate must be kept"
     assert historical.epsilon == pytest.approx(0.10)
 
@@ -367,7 +374,7 @@ def test_s1b_governor_epsilon_change_alters_admissions():
 
 
 # ---------------------------------------------------------------------------
-# S2 -- epsilon/alpha coherence (Issue 2, the headline)
+# S2 -- epsilon/alpha coherence
 # ---------------------------------------------------------------------------
 
 
@@ -419,7 +426,7 @@ def test_s2_budgets_stay_inside_their_declared_contracts():
 
 
 # ---------------------------------------------------------------------------
-# S3 -- safety priority adapts (Scope 4a)
+# S3 -- safety priority adapts
 # ---------------------------------------------------------------------------
 
 
@@ -438,7 +445,7 @@ def test_s3_safety_weight_rises_under_sustained_threat():
 
 
 # ---------------------------------------------------------------------------
-# S4 -- abstention (AC3b)
+# S4 -- abstention
 # ---------------------------------------------------------------------------
 
 
@@ -484,7 +491,7 @@ def test_s4_abstains_when_nothing_qualifies_and_still_feeds_back():
 
 
 # ---------------------------------------------------------------------------
-# S5 -- seed determinism (Scope 5)
+# S5 -- seed determinism
 # ---------------------------------------------------------------------------
 
 
@@ -506,7 +513,7 @@ def test_s5_identical_seeds_reproduce_identical_runs():
 
 
 # ---------------------------------------------------------------------------
-# S6 -- priorities reach selection (Scope 4b, the other half)
+# S6 -- priorities reach selection
 # ---------------------------------------------------------------------------
 
 
@@ -622,7 +629,7 @@ def test_s6b_governor_weights_change_skill_scores():
 
 
 # ---------------------------------------------------------------------------
-# S7 -- selected skills stay admissible (AC3a)
+# S7 -- selected skills stay admissible
 # ---------------------------------------------------------------------------
 
 
