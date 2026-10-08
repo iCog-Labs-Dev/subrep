@@ -34,7 +34,12 @@ Per-file schema:
 | `behavior_probability` | scalar/float, optional | Behavior-policy probability when available |
 
 These records train `models/generator.pt` through supervised payoff/motive
-regression.
+regression. `generator/train_generator.py` splits them into train (75%),
+validation (12.5%), and test (12.5%) sets by filename, persisting the
+assignment to `data/generator_split_manifest.json` so evaluation scripts
+read back the same split rather than recomputing it. See
+`docs/GENERATOR_TRAINING_PIPELINE.md` for the full training/evaluation
+sequence.
 
 ## Candidate-Set Records
 
@@ -51,18 +56,23 @@ multiple candidate outcomes from the same starting context.
 Collect training candidate sets:
 
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 42 --prefix seed42
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 43 --prefix seed43
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 44 --prefix seed44
+
+```bash
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10000 --prefix seed10000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 11000 --prefix seed11000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 12000 --prefix seed12000
+```
 ```
 
 Collect held-out candidate sets:
 
-```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 100 --prefix seed100
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 101 --prefix seed101
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 102 --prefix seed102
 ```
+```bash
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 1000 --prefix seed1000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 2000 --prefix seed2000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 3000 --prefix seed3000
+```
+
 
 Per-file schema:
 

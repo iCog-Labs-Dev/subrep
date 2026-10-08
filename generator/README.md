@@ -21,26 +21,34 @@ The skill generator is a supervised rollout-outcome model.
 | `losses.py` | Weighted MSE loss for payoff and motives |
 | `train_generator.py` | Trains from `--data-dir` (default `data/raw`) and writes `models/generator.pt` |
 
-### Quickstart (mixed candidate training)
+### SkillGenerator workflow
 
-**Note:** The Generator is trained on a "mixed candidate set" (PPO variants, fixed engines, and random policies) to match the actual candidates encountered by the SubRep admission pipeline. The generator remains purely a **prediction pre-filter**. Final skill admission always requires a measured real-world execution.
+Train on `data/raw`, which contains rollouts from the deterministic PPO pilot.
+The generator is a supervised prediction pre-filter; final admission still
+requires a measured policy execution. The MSE evaluator accepts one data
+directory, so `data/raw_mixed` is not supported by this workflow.
 
-To reproduce or update the trained model (`models/generator.pt`):
+```bash
+python -m data_collector.collect --episodes 7000 --save-dir data/raw --seed 42
+python -m generator.train_generator --data-dir data/raw --output models/generator.pt
+python -m generator.evaluate_generator_mse --model-path models/generator.pt --data-dir data/raw
+python -m generator.compare_dataset_sizes --data-dir data/raw --sizes 1000 3000 5250 --epochs 80 --patience 10
+```
 
-1. **Collect Mixed Data:**
+The dataset-size comparison reuses one validation and test set for every model,
+compares each model with the mean predictor from its own training subset, and
+writes the JSON/Markdown reports to `demo/artifacts/` and plots to
+`plots/dataset_size_comparison/`. See
+`docs/GENERATOR_TRAINING_PIPELINE.md` for split and output details.
+
+The separate candidate-set evaluator uses multi-policy held-out outcomes; it is
+not the `SkillGenerator` MSE evaluator. It reads every `.npz` in the evaluation
+directory, so the three runs in *Candidate-Set Data Collection → Recommended
+held-out collection* are evaluated together:
+
 ```bash
-   python -m data_collector.collect_mixed_generator_data --episodes 1000 --save-dir data/raw_mixed --seed 42
+python -m generator.evaluate_generator_report --model-path models/generator.pt --eval-dir data/mdn_candidate_sets_eval
 ```
-2. **Train Generator:**
-```bash
-   python -m generator.train_generator --data-dir data/raw_mixed --output models/generator.pt
-```
-3. **Evaluate Predictions:**
-```bash
-   python -m generator.evaluate_generator_mse --model-path models/generator.pt --data-dirs data/raw data/raw_mixed
-```
-The generator predicts collected rollout totals. It is not a bootstrapped TD
-learner in the current implementation.
 
 ## MDN Model Contract
 
@@ -144,9 +152,9 @@ shared context and multiple candidate policy outcomes from that same reset seed.
 Recommended training collection:
 
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 42 --prefix seed42
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10042 --prefix seed10042
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 20042 --prefix seed20042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10000 --prefix seed10000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 11000 --prefix seed11000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 12000 --prefix seed12000
 ```
 
 This gives 3,000 contexts and 21,000 candidate outcomes with the default seven
@@ -155,14 +163,15 @@ candidate policies.
 Recommended held-out collection:
 
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 30042 --prefix seed30042
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 40042 --prefix seed40042
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 50042 --prefix seed50042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 1000 --prefix seed1000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 2000 --prefix seed2000
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 3000 --prefix seed3000
 ```
 
-These ranges are intentionally separated. Do not use consecutive base seeds for
-multi-context collections: each run uses `base_seed + context_index`, so
-consecutive bases create almost entirely overlapping context seeds.
+These runs produce context-seed ranges 1001-2000, 2001-3000, and 3001-4000.
+They do not overlap because each context seed is `base_seed + context_index`
+for indices 1-1000. Keep only the intended evaluation files in the eval directory;
+the report evaluates all `.npz` files it finds there.
 
 ## Train the MDN
 

@@ -70,15 +70,14 @@ def test_summary_statistics_are_correct(temp_data_dir, capsys):
 
 def test_seed_produces_consistent_results(temp_data_dir):
     """
-    Run collect_n_episodes(5, seed=42) twice.
-    Assert that saved payoff values are identical across both runs.
+    Identical seeds and fresh output directories produce identical episodes.
     """
     # Run 1
     env1 = SubRepEnv(seed=123)
     env1.env.action_space.seed(123)
     policy1 = lambda obs: env1.env.action_space.sample()
     executor1 = SkillExecutor(env=env1, policy_fn=policy1, gamma=0.99, max_steps=15)
-    collector1 = DataCollector(executor=executor1, seed=123, save_dir=temp_data_dir)
+    collector1 = DataCollector(executor=executor1, seed=123, save_dir=os.path.join(temp_data_dir, "first"))
     records1 = collector1.collect_n_episodes(2, print_summary=False)
     payoffs1 = [r['payoff'] for r in records1]
     
@@ -87,11 +86,63 @@ def test_seed_produces_consistent_results(temp_data_dir):
     env2.env.action_space.seed(123)
     policy2 = lambda obs: env2.env.action_space.sample()
     executor2 = SkillExecutor(env=env2, policy_fn=policy2, gamma=0.99, max_steps=15)
-    collector2 = DataCollector(executor=executor2, seed=123, save_dir=temp_data_dir)
+    collector2 = DataCollector(executor=executor2, seed=123, save_dir=os.path.join(temp_data_dir, "second"))
     records2 = collector2.collect_n_episodes(2, print_summary=False)
     payoffs2 = [r['payoff'] for r in records2]
     
     assert np.allclose(payoffs1, payoffs2)
+
+
+def test_collection_appends_without_overwriting_existing_files(temp_data_dir):
+    env = SubRepEnv(seed=42)
+    env.env.action_space.seed(42)
+    policy = lambda obs: env.env.action_space.sample()
+    executor = SkillExecutor(env=env, policy_fn=policy, gamma=0.99, max_steps=10)
+    collector = DataCollector(executor=executor, seed=42, save_dir=temp_data_dir)
+
+    first_records = collector.collect_n_episodes(2, print_summary=False)
+    first_file = os.path.join(temp_data_dir, "random_ep001.npz")
+    original_payoff = float(np.load(first_file)["payoff"])
+    second_records = collector.collect_n_episodes(2, print_summary=False)
+
+    assert os.path.exists(os.path.join(temp_data_dir, "random_ep003.npz"))
+    assert os.path.exists(os.path.join(temp_data_dir, "random_ep004.npz"))
+    assert np.isclose(float(np.load(first_file)["payoff"]), original_payoff)
+    assert first_records[0]["skill_id"] == "random_1"
+    assert second_records[0]["skill_id"] == "random_3"
+
+
+def test_context_seeds_continue_across_run_seeds_and_prefixes(temp_data_dir):
+    env = SubRepEnv(seed=500)
+    executor = SkillExecutor(
+        env=env,
+        policy_fn=lambda obs: env.env.action_space.sample(),
+        gamma=0.99,
+        max_steps=10,
+    )
+    first_collector = DataCollector(executor=executor, seed=500, save_dir=temp_data_dir)
+    first_collector.collect_n_episodes(2, print_summary=False, skill_prefix="first")
+
+    second_collector = DataCollector(executor=executor, seed=1, save_dir=temp_data_dir)
+    second_collector.collect_n_episodes(2, print_summary=False, skill_prefix="second")
+
+    third_collector = DataCollector(executor=executor, seed=600, save_dir=temp_data_dir)
+    third_collector.collect_n_episodes(2, print_summary=False, skill_prefix="third")
+
+    saved_seeds = []
+    for prefix, episode_idx in (
+        ("first", 1),
+        ("first", 2),
+        ("second", 1),
+        ("second", 2),
+        ("third", 1),
+        ("third", 2),
+    ):
+        filepath = os.path.join(temp_data_dir, f"{prefix}_ep{episode_idx:03d}.npz")
+        with np.load(filepath) as saved_record:
+            saved_seeds.append(int(saved_record["context_seed"]))
+
+    assert saved_seeds == [500, 501, 502, 503, 600, 601]
 
 def test_custom_prefix_prevents_overwriting(temp_data_dir):
     """
