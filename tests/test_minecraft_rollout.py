@@ -1,0 +1,374 @@
+"""Tests for env/minecraft_rollout.py -- the MetaMo path's delta estimation."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from env.minecraft_rollout import (
+    DEFAULT_HORIZON,
+    MINECRAFT_INITIAL_GOALS,
+    appraisal_scales,
+    evaluate_candidates,
+    evaluate_option,
+    execute_option,
+    run_option,
+)
+from env.minecraft_stub import SKILL_NAMES, MinecraftStubEnv
+
+GAMMA = 0.99
+SEED = 42
+
+
+def _fresh_env(noise_scale: float = 0.0, seed: int = SEED) -> MinecraftStubEnv:
+    env = MinecraftStubEnv(seed=seed, noise_scale=noise_scale)
+    env.reset(seed=seed)
+    return env
+
+
+def _snapshot(env: MinecraftStubEnv):
+    return (
+        env._t,
+        env._threat,
+        env._totals.copy(),
+        env._rng.bit_generator.state,
+    )
+
+
+# ---------------------------------------------------------------------------
+# run_option / evaluate_option
+# ---------------------------------------------------------------------------
+
+
+def test_run_option_without_horizon_runs_to_episode_end():
+    env = _fresh_env()
+    run_option(env, 1, horizon=None, gamma=GAMMA)
+    assert env._t == env.episode_length
+
+
+def test_run_option_takes_exactly_horizon_steps():
+    env = _fresh_env()
+    run_option(env, 1, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+    assert env._t == DEFAULT_HORIZON
+
+
+def test_run_option_stops_at_episode_end_mid_option():
+    env = _fresh_env()
+    for _ in range(env.episode_length - 1):
+        env.step(0)
+
+    run_option(env, 1, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    assert env._t == env.episode_length  # one step, not three
+    assert env.episode_over
+
+
+def test_run_option_rejects_non_positive_horizon():
+    env = _fresh_env()
+    with pytest.raises(ValueError):
+        run_option(env, 1, horizon=0, gamma=GAMMA)
+
+
+def test_evaluate_option_leaves_the_live_env_untouched():
+    env = _fresh_env(noise_scale=0.02)
+    for _ in range(5):  # mid-episode, non-trivial state
+        env.step(2)
+    before = _snapshot(env)
+
+    evaluate_option(env, 3, horizon=None, gamma=GAMMA)
+
+    after = _snapshot(env)
+    assert before[0] == after[0]
+    assert before[1] == after[1]
+    np.testing.assert_array_equal(before[2], after[2])
+    assert before[3] == after[3]
+
+
+def test_evaluate_option_matches_run_option_from_the_same_state():
+    env = _fresh_env(noise_scale=0.02)
+    for _ in range(3):
+        env.step(1)
+
+    expected = run_option(
+        _clone_by_replay(noise_scale=0.02, prefix=[1, 1, 1]),
+        4,
+        horizon=None,
+        gamma=GAMMA,
+    )
+    actual = evaluate_option(env, 4, horizon=None, gamma=GAMMA)
+
+    assert actual[0] == pytest.approx(expected[0])
+    np.testing.assert_allclose(actual[1], expected[1])
+
+
+def _clone_by_replay(*, noise_scale: float, prefix):
+    """An independent env brought to the same state by replaying `prefix`."""
+    env = _fresh_env(noise_scale=noise_scale)
+    for action in prefix:
+        env.step(action)
+    return env
+
+
+# ---------------------------------------------------------------------------
+# execute_option
+# ---------------------------------------------------------------------------
+
+
+def test_execute_option_advances_the_live_env_by_the_horizon():
+    env = _fresh_env()
+    execute_option(env, 2, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+    assert env._t == DEFAULT_HORIZON
+
+
+def test_execute_option_measures_against_idle_from_the_same_state():
+    env = _fresh_env(noise_scale=0.02)
+    for _ in range(6):
+        env.step(1)
+    prefix = [1] * 6
+
+    delta_r, delta_n = execute_option(env, 4, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    option = run_option(
+        _clone_by_replay(noise_scale=0.02, prefix=prefix),
+        4,
+        horizon=DEFAULT_HORIZON,
+        gamma=GAMMA,
+    )
+    idle = run_option(
+        _clone_by_replay(noise_scale=0.02, prefix=prefix),
+        0,
+        horizon=DEFAULT_HORIZON,
+        gamma=GAMMA,
+    )
+    assert delta_r == pytest.approx(option[0] - idle[0], abs=1e-5)
+    np.testing.assert_allclose(delta_n, option[1] - idle[1], atol=1e-5)
+
+
+def test_executing_the_baseline_action_is_a_zero_improvement():
+    env = _fresh_env(noise_scale=0.02)
+    delta_r, delta_n = execute_option(env, 0, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+    assert delta_r == pytest.approx(0.0, abs=1e-6)
+    np.testing.assert_allclose(delta_n, 0.0, atol=1e-6)
+
+
+def test_evaluation_and_execution_use_the_same_horizon():
+    """A candidate's evaluated delta is exactly what executing it realizes."""
+    env = _fresh_env(noise_scale=0.02)
+    for _ in range(5):
+        env.step(3)
+
+    _, records = evaluate_candidates(env, gamma=GAMMA, horizon=DEFAULT_HORIZON)
+    record = next(r for r in records if r.metadata["action"] == 2)
+
+    delta_r, delta_n = execute_option(env, 2, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    assert delta_r == pytest.approx(record.delta_r, abs=1e-5)
+    np.testing.assert_allclose(delta_n, record.delta_n, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# evaluate_candidates
+# ---------------------------------------------------------------------------
+
+
+def test_one_candidate_per_non_baseline_action():
+    env = _fresh_env()
+    _, records = evaluate_candidates(env, gamma=GAMMA, horizon=None)
+
+    assert [r.skill_id for r in records] == list(SKILL_NAMES[1:])
+    assert [r.metadata["action"] for r in records] == list(range(1, len(SKILL_NAMES)))
+    assert all(r.gate_type == "PDS" and not r.is_certified for r in records)
+
+
+def test_baseline_action_is_configurable():
+    env = _fresh_env()
+    _, records = evaluate_candidates(
+        env, gamma=GAMMA, horizon=None, baseline_action=2
+    )
+    assert SKILL_NAMES[2] not in [r.skill_id for r in records]
+    assert SKILL_NAMES[0] in [r.skill_id for r in records]
+
+
+def test_candidate_deltas_are_rollout_minus_baseline():
+    env = _fresh_env()
+    baseline, records = evaluate_candidates(env, gamma=GAMMA, horizon=None)
+
+    for record in records:
+        payoff, motives = run_option(
+            _fresh_env(), record.metadata["action"], horizon=None, gamma=GAMMA
+        )
+        assert record.delta_r == pytest.approx(
+            payoff - baseline["baseline_payoff"], abs=1e-5
+        )
+        np.testing.assert_allclose(
+            record.delta_n,
+            motives - baseline["baseline_motives"],
+            atol=1e-5,
+        )
+
+
+def test_evaluate_candidates_leaves_the_live_env_untouched():
+    env = _fresh_env(noise_scale=0.02)
+    for _ in range(4):
+        env.step(5)
+    before = _snapshot(env)
+
+    evaluate_candidates(env, gamma=GAMMA, horizon=None)
+
+    after = _snapshot(env)
+    assert before[0] == after[0]
+    np.testing.assert_array_equal(before[2], after[2])
+    assert before[3] == after[3]
+
+
+def test_task_reward_is_not_the_sum_of_the_objectives():
+    """delta_r used to be identical to sum(delta_n); it must not be."""
+    _, records = evaluate_candidates(
+        _fresh_env(noise_scale=0.02), gamma=GAMMA, horizon=DEFAULT_HORIZON
+    )
+    for record in records:
+        assert record.delta_r != pytest.approx(sum(record.delta_n), abs=1e-3), (
+            record.skill_id
+        )
+
+
+def test_only_trade_earns_task_reward():
+    """Specified: defensive options have delta_r = 0, DiscountChain 0.01."""
+    _, records = evaluate_candidates(
+        _fresh_env(noise_scale=0.02), gamma=GAMMA, horizon=DEFAULT_HORIZON
+    )
+    by_id = {r.skill_id: r for r in records}
+
+    assert by_id["DiscountChain"].delta_r == pytest.approx(0.01, rel=1e-3)
+    for skill_id, record in by_id.items():
+        if skill_id != "DiscountChain":
+            assert record.delta_r == pytest.approx(0.0, abs=1e-9), skill_id
+
+
+def test_rollout_requires_a_task_reward():
+    """No silent fallback to summing the objectives."""
+
+    class NoTaskRewardEnv:
+        def phi(self):
+            return np.zeros(2, dtype=np.float32)
+
+        def step(self, action):
+            return None, np.zeros(2, dtype=np.float32), False, True, {}
+
+    with pytest.raises(KeyError):
+        run_option(NoTaskRewardEnv(), 0, horizon=1, gamma=GAMMA)
+
+
+def test_rollout_requires_state_features():
+    """No silent fallback to summing per-step changes."""
+
+    class NoPhiEnv:
+        def step(self, action):
+            return None, np.zeros(2, dtype=np.float32), False, True, {
+                "task_reward": 0.0
+            }
+
+    with pytest.raises(AttributeError):
+        run_option(NoPhiEnv(), 0, horizon=1, gamma=GAMMA)
+
+
+def test_n_hat_sums_state_levels_including_the_start_state():
+    """n_hat = sum_{t<H} gamma^t phi(x_t), with x_0 included and x_H
+    excluded -- computed by hand from the phi values the env passes through.
+
+    Started mid-episode so phi(x_0) is nonzero and the t = 0 term matters."""
+    env = _fresh_env()
+    for _ in range(4):
+        env.step(2)
+
+    replay = _clone_by_replay(noise_scale=0.0, prefix=[2] * 4)
+    expected = np.zeros(replay.num_objectives, dtype=np.float64)
+    for t in range(DEFAULT_HORIZON):
+        expected += GAMMA ** t * replay.phi()
+        replay.step(1)
+
+    _, n_hat = run_option(env, 1, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    np.testing.assert_allclose(n_hat, expected, rtol=1e-5)
+
+
+def test_a_steadily_safe_option_scores_its_safety_level():
+    """The case the old rule got wrong. Once Safety is high, holding it there
+    adds nothing to a sum of CHANGES, but a sum of LEVELS still credits it."""
+    env = _fresh_env()
+    for _ in range(6):
+        env.step(2)  # IronGolemSpawn: builds Safety up
+    safety_level = env.phi()[0]
+    assert safety_level > 0.0
+
+    _, n_hat = run_option(env, 0, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    # Even while idling, the agent spends the whole option in a safe state.
+    assert n_hat[0] > safety_level
+
+
+def _candidates_after(steps: int):
+    """Noiseless candidates evaluated after idling `steps` steps."""
+    env = _fresh_env()
+    for _ in range(steps):
+        env.step(0)
+    return evaluate_candidates(env, gamma=GAMMA, horizon=DEFAULT_HORIZON)
+
+
+def test_candidate_deltas_track_the_state_they_are_evaluated_in():
+    """Threat rises between step 0 and step 9. An option's improvement over
+    idling depends on how exposed it is, so its delta must change too -- a
+    delta computed once and reused would miss this entirely."""
+    _, early = _candidates_after(0)
+    _, late = _candidates_after(9)
+
+    early_golem = next(r for r in early if r.skill_id == "IronGolemSpawn")
+    late_golem = next(r for r in late if r.skill_id == "IronGolemSpawn")
+
+    # IronGolemSpawn is far less threat-exposed than idling (0.05 vs 0.35),
+    # so its Safety advantage grows as threat rises.
+    assert late_golem.delta_n[0] > early_golem.delta_n[0]
+
+
+def test_baseline_is_re_evaluated_at_each_state():
+    early_baseline, _ = _candidates_after(0)
+    late_baseline, _ = _candidates_after(9)
+    # Idle earns no task reward, so the payoff is 0 in both states; the
+    # objective vector is what moves with threat.
+    assert not np.allclose(
+        early_baseline["baseline_motives"], late_baseline["baseline_motives"]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared settings
+# ---------------------------------------------------------------------------
+
+
+def test_appraisal_scales_are_mean_absolute_deltas():
+    candidates = [
+        SimpleNamespace(delta_r=2.0, delta_n=(1.0, -3.0)),
+        SimpleNamespace(delta_r=-4.0, delta_n=(0.0, 2.0)),
+    ]
+    payoff_scale, motive_scale = appraisal_scales(candidates)
+    assert payoff_scale == pytest.approx(3.0)
+    assert motive_scale == pytest.approx(1.5)
+
+
+def test_appraisal_scales_fall_back_to_one_when_all_deltas_are_zero():
+    candidates = [SimpleNamespace(delta_r=0.0, delta_n=(0.0, 0.0))]
+    assert appraisal_scales(candidates) == (1.0, 1.0)
+
+
+def test_appraisal_scales_floor_raises_small_scales_only():
+    candidates = [SimpleNamespace(delta_r=0.01, delta_n=(2.0, 2.0))]
+    payoff_scale, motive_scale = appraisal_scales(candidates, floor=0.5)
+    assert payoff_scale == pytest.approx(0.5)
+    assert motive_scale == pytest.approx(2.0)
+
+
+def test_initial_goals_cover_metamos_eight_goals():
+    assert MINECRAFT_INITIAL_GOALS.shape == (8,)
+    assert np.all((MINECRAFT_INITIAL_GOALS >= 0.0) & (MINECRAFT_INITIAL_GOALS <= 1.0))
