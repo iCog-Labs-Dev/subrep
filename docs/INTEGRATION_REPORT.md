@@ -49,35 +49,88 @@ Candidate policy pool:
 | Metric | Value |
 |---|---:|
 | Total Candidate Attempts | 10 |
-| Admitted | 7 |
-| Rejected | 3 |
-| CDS Admissions | 6 |
+| Admitted | 3 |
+| Rejected | 7 |
+| CDS Admissions | 2 |
 | PDS Admissions | 1 |
-| Library Size | 7 |
+| Library Size | 3 |
 | Baseline Episodes | 20 |
-| Baseline Mean Payoff | -21.25 |
+| Baseline Mean Payoff | -21.2539 |
 
-Representative rows:
+Full run (`PDS_EPSILON = 5.0`, `GAMMA = 0.99`, `MAX_STEPS = 200`, `SEED = 42`):
 
 | Ep | Candidate | Payoff | delta_r | min(delta_n) | CDS | PDS | Result | Lib |
 |---:|---|---:|---:|---:|---|---|---|---:|
-| 1 | ppo_deterministic | 139.664 | 160.918 | 41.536 | Y | Y | Admitted | 1 |
-| 2 | ppo_then_side_tradeoff | -14.316 | 6.938 | -10.309 | N | Y | Admitted | 2 |
-| 5 | noop | -4.288 | 16.966 | 0.000 | Y | Y | Admitted | 5 |
-| 6 | left_engine | -284.527 | -263.273 | -318.068 | N | N | Rejected | 5 |
-| 7 | main_engine | -159.870 | -138.616 | -204.155 | N | N | Rejected | 5 |
+| 1 | ppo_deterministic | 56.591 | 77.845 | -41.536 | Y | Y | Admitted | 1 |
+| 2 | ppo_then_side_tradeoff | 16.384 | 37.638 | -40.371 | N | Y | Admitted | 2 |
+| 3 | ppo_stochastic | 11.559 | 32.813 | -49.802 | N | N | Rejected | 2 |
+| 4 | ppo_noisy_actions | -13.354 | 7.900 | -36.813 | N | N | Rejected | 2 |
+| 5 | noop | -4.288 | 16.966 | 0.000 | Y | Y | Admitted | 3 |
+| 6 | left_engine | -394.118 | -372.864 | -318.068 | N | N | Rejected | 3 |
+| 7 | main_engine | -290.948 | -269.694 | -204.155 | N | N | Rejected | 3 |
+| 8 | right_engine | -306.067 | -284.813 | -222.160 | N | N | Rejected | 3 |
+| 9 | random | -86.569 | -65.315 | -51.327 | N | N | Rejected | 3 |
+| 10 | ppo_deterministic | -20.333 | 0.921 | -49.430 | N | N | Rejected | 3 |
 
 Interpretation:
 
-- PPO-style candidates generally produce positive margins and are admitted.
-- The perturbed PPO candidate demonstrates the PDS-only path: CDS fails because
-  the worst-case score is below zero, while PDS admits because the deficit is
-  inside the demo epsilon budget (`5.0` on the discounted rollout-return scale).
+- The deterministic PPO pilot (ep 1) and the idle-equivalent `noop` (ep 5) clear
+  CDS outright. Ep 10 re-runs `ppo_deterministic` from a different start state
+  and is rejected, which shows admission is a property of the rollout, not of
+  the policy.
+- Ep 2 is the PDS-only path: worst case `37.638 - 40.371 = -2.733`, so CDS
+  rejects while PDS admits inside the `5.0` budget.
+- `min(delta_n)` is the fuel coordinate for every engine-using candidate, since
+  the idle baseline burns no fuel and therefore has a fuel motive of exactly
+  `0.000`. Any candidate that fires an engine starts that coordinate negative.
 - Fixed-action candidates expose natural unsafe cases and are rejected.
 - CDS fails when `delta_r + min(delta_n) < 0`; PDS also fails when the deficit
   exceeds the epsilon budget.
 - `CertificateStore` and `SkillLibrary` stay synchronized; rejected candidates
   do not enter runtime reuse.
+
+### 2.1 PDS Coverage Note
+
+*PDS Admissions* counts only candidates that failed CDS but passed PDS
+(`active_gate = "CDS" if admitted_cds else "PDS"`). Rows 1 and 5 show `PDS = Y`
+because PDS admits everything CDS admits; they count as CDS admissions.
+
+- `ppo_then_side_tradeoff` is the pool's only PDS-only admission, by construction.
+- Its `switch_step` moved from `45` to `180` alongside the fuel-sign fix. At `45`
+  the corrected worst case is `-44.80`, far outside the budget; the old value only
+  sat near the boundary because the inverted mapping credited the fuel burn.
+- At `180` the worst case is `-2.733`: fails CDS, inside `epsilon = 5.0`, and clear
+  of both boundaries.
+- `PDS_EPSILON` was not changed.
+
+Covered by `test_mixed_candidate_pool_produces_pds_tradeoff_admission`, plus
+`tests/test_certification_gates.py` for the gate logic itself.
+
+### 2.2 Provenance of These Numbers
+
+Regenerated on `fix/lunar-lander-fuel-reward-sign`. The previous split — 7
+admitted, 3 rejected, 6 CDS, 1 PDS — was produced while `_map_rewards` negated
+the engine-cost sum, inverting the fuel objective so burning fuel scored higher
+than conserving it. Because the default payoff is `sum(reward_vector)`, the error
+entered both `delta_r` and `min_i(delta_n_i)`.
+
+- `ppo_deterministic` reported `delta_r = 160.918`, `min(delta_n) = +41.536`;
+  corrected to `77.845` and `-41.536`.
+- The sign fix alone flipped 5 of 10 verdicts (7 admitted to 2), including the
+  random policy, which had been clearing CDS.
+- The fixture recalibration (§2.1) restored the bounded-trade-off case, giving 3.
+
+Unaffected:
+
+- `models/pilot_ppo.pt` — `RLPilot.shaped_reward` reads `info["raw_rewards"]`
+  directly, so training never consumed the mapped vector.
+- The SafeRL pilot — `SafeRLGymnasiumEnv` negates a positive-is-worse `cost`,
+  which is correct for that source.
+- CDS, PDS, SASP, the greedy `W_x` solver, and MeTTa storage — all correct, fed
+  inverted input.
+
+Stale: `models/mdn_auxiliary_best.pth` and `data/mdn_candidate_sets`, collected
+through the inverted mapping. Recollect before retraining the MDN.
 
 This validates both sides of the admission path and confirms that unsafe skills
 are not stored.
