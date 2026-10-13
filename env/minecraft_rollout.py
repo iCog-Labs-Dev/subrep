@@ -87,7 +87,9 @@ def run_option(
     """Step `env` ITSELF with `action` for up to `horizon` steps.
 
     `horizon=None` runs to the end of the episode. Stops early on termination
-    or truncation and never steps past the end. Mutates `env`.
+    or truncation and never steps past the end. If the episode has already
+    ended (`env.episode_over`), no step is taken and `(0.0, zeros)` is
+    returned. Mutates `env`.
 
     Returns the discounted (r_hat, n_hat), as the reference specification
     defines them over an option of duration tau:
@@ -106,13 +108,18 @@ def run_option(
 
     discount = 1.0
     r_hat = 0.0
-    n_hat: Optional[np.ndarray] = None
+    # Shaped from the current state, so an option that takes no step (the
+    # episode had already ended) still returns a well-formed zero vector.
+    n_hat = np.zeros_like(np.asarray(env.phi(), dtype=np.float32))
     steps = 0
 
-    while horizon is None or steps < horizon:
+    # Check the episode is still running BEFORE every step: an env that has
+    # already ended must not be stepped again. Envs without `episode_over`
+    # rely on terminated/truncated alone.
+    while (horizon is None or steps < horizon) and not getattr(
+        env, "episode_over", False
+    ):
         phi = np.asarray(env.phi(), dtype=np.float32)  # phi(x_t), pre-step
-        if n_hat is None:
-            n_hat = np.zeros_like(phi)
         # Objectives used to sum per-step changes, not state levels.
         # This came from baseline/idle_policy.py:51, written for the
         # 2-objective LunarLander env, whose objectives are per-step reward

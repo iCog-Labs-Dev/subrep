@@ -65,6 +65,38 @@ def test_run_option_stops_at_episode_end_mid_option():
     assert env.episode_over
 
 
+def test_run_option_takes_no_step_after_the_episode_has_ended():
+    """An episode that has already ended must not be stepped again."""
+    env = _fresh_env()
+    for _ in range(env.episode_length):
+        env.step(0)
+    assert env.episode_over
+
+    r_hat, n_hat = run_option(env, 1, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    assert env._t == env.episode_length  # no extra step
+    assert r_hat == 0.0
+    assert n_hat.shape == (env.num_objectives,)
+    np.testing.assert_array_equal(n_hat, 0.0)
+
+
+def test_execute_option_after_the_episode_has_ended_is_a_no_op():
+    """No improvement is measured, and the env is left exactly as it was."""
+    env = _fresh_env(noise_scale=0.02)
+    for _ in range(env.episode_length):
+        env.step(0)
+    before = _snapshot(env)
+
+    delta_r, delta_n = execute_option(env, 2, horizon=DEFAULT_HORIZON, gamma=GAMMA)
+
+    assert delta_r == 0.0
+    np.testing.assert_array_equal(delta_n, 0.0)
+    after = _snapshot(env)
+    assert before[0] == after[0]
+    np.testing.assert_array_equal(before[2], after[2])
+    assert before[3] == after[3]
+
+
 def test_run_option_rejects_non_positive_horizon():
     env = _fresh_env()
     with pytest.raises(ValueError):
