@@ -45,9 +45,6 @@ SKILL_NAMES: Tuple[str, ...] = (
     "ArcherKite",
     "SwingGateBarricade",
     "DiscountChain",
-    # Appended deliberately -- see BORDERLINE CANDIDATE below. Must stay last:
-    # tests/test_minecraft_stub.py indexes actions positionally in places.
-    "RiskyForage",
 )
 
 # Mean per-step payoff for each action, one row per action, columns in
@@ -60,50 +57,77 @@ _BASE_REWARDS = np.array([
     [0.25, 0.00, 0.10, 0.05, -0.15, -0.05],  # ArcherKite
     [0.35, 0.05, -0.05, -0.15, 0.00, 0.30],  # SwingGateBarricade
     [-0.10, 0.45, 0.05, 0.20, 0.10, 0.00],   # DiscountChain
-    [-0.05, 0.00, -0.05, 0.0977, 0.00, 0.00],  # RiskyForage -- see below
 ], dtype=np.float32)
-
-# ---------------------------------------------------------------------------
-# BORDERLINE CANDIDATE -- why RiskyForage has the numbers it does
-# ---------------------------------------------------------------------------
-# The PDS gate admits when `delta_r + min(delta_n) >= -epsilon`. MetaMo drives
-# epsilon over roughly [0, 0.1], so epsilon can only change an admission
-# decision for a skill whose margin lands inside (-0.1, 0). Every other action
-# here sits far outside that band (margins run from -2.0 to +11.4), which is
-# why epsilon provably could not flip anything before this action existed.
-#
-# RiskyForage is constructed so its margin is analytically predictable:
-#
-#   * Its threat vulnerability equals Idle's (0.35), and the Reputation threat
-#     penalty is applied uniformly to every action, so ALL threat-dependent
-#     terms cancel exactly between RiskyForage and the idle baseline.
-#   * What remains is a constant per-step delta from the idle row:
-#         d = RiskyForage_row - Idle_row = [-0.05, 0, 0, +0.0977, 0, 0]
-#   * Over a discounted episode both rollouts share the same discount sum
-#         D = sum_{k=0..episode_length-1} gamma^k   (= 21.432 at 24 steps, gamma 0.99)
-#     so  delta_n = d * D  and  delta_r = sum(d) * D, giving
-#         margin = D * (sum(d) + min(d)) = D * (y - 2x)
-#     with x = 0.05 (the Safety cost) and y = 0.0977 (the Inventory gain).
-#
-#   => margin = 21.432 * (0.0977 - 0.100) ~= -0.049
-#
-# That sits mid-band, so epsilon above ~0.05 admits it and epsilon below
-# rejects it. Semantically it reads as risky foraging: inventory gained, safety
-# spent, time lost.
-#
-# The margin is pinned by tests/test_minecraft_stub.py; if the episode length,
-# gamma, or the idle row ever change, that test fails and these numbers need
-# re-deriving rather than nudging.
 
 # How badly rising threat hurts each action's Safety payoff. Trading while
 # under attack is the most exposed thing you can do; spawning a golem is the
 # least.
-# RiskyForage shares Idle's 0.35 deliberately: matching the baseline's
-# vulnerability is what makes its margin threat-independent and analytically
-# exact. Do not "tune" it without re-deriving the margin above.
 _THREAT_VULNERABILITY = np.array(
-    [0.35, 0.20, 0.05, 0.30, 0.10, 0.60, 0.35], dtype=np.float32
+    [0.35, 0.20, 0.05, 0.30, 0.10, 0.60], dtype=np.float32
 )
+
+# ---------------------------------------------------------------------------
+# REWARD SCALE -- calibrated, see below
+# ---------------------------------------------------------------------------
+# One uniform factor on the whole per-step objective vector (base payoff,
+# threat penalties and noise alike), so the tables above keep their relative
+# meaning and only the units change. `noise_scale` is in the tables' units.
+#
+# Why 0.08. The PDS gate admits when delta_r + min(delta_n) >= -epsilon, and
+# MetaMo drives epsilon over [0, 0.1], so epsilon can only decide options whose
+# margin lands in (-0.1, 0). The reference specification's options all sit
+# there: their worst objective change is -0.05, -0.08, -0.05, -0.04, -0.05.
+# Unscaled, these tables put every margin between -0.3 and -1.0 over a 3-step
+# option, so PDS rejected everything at every epsilon. Measured at 0.08 across
+# a full threat cycle, the margins run from -0.015 to -0.083: every option is
+# inside the band, spread across it, so each epsilon admits a different subset.
+# IronGolemSpawn's worst change (-0.083) matches the specification's O5 (-0.08).
+#
+# The margins are pinned by tests/test_minecraft_stub.py; changing this value,
+# the tables, the horizon or gamma needs re-measuring, not nudging.
+_REWARD_SCALE = 0.08
+
+# ---------------------------------------------------------------------------
+# TASK REWARD -- r(x, a), separate from the objective vector
+# ---------------------------------------------------------------------------
+# The reference specification scores options as B = delta_r + w . delta_n,
+# where delta_r is the TASK reward and delta_n the objective features -- two
+# different quantities. Its option table makes the task reward sparse trade
+# value: every defensive option has delta_r = 0, and DiscountChain has
+# delta_r = 0.01. Only trading earns it.
+#
+# The per-step value is chosen so that one option of the rollout horizon
+# earns the specified option-level delta_r over idling (whose task reward is
+# 0). The stub does not import the rollout module -- an environment should not
+# depend on its evaluator -- so the horizon and discount are restated here and
+# a test pins them to minecraft_rollout.DEFAULT_HORIZON and the demo's GAMMA.
+SPEC_TRADE_DELTA_R = 0.01
+_TASK_REWARD_HORIZON = 3
+_TASK_REWARD_GAMMA = 0.99
+_TRADE_REWARD_PER_STEP = SPEC_TRADE_DELTA_R / sum(
+    _TASK_REWARD_GAMMA ** k for k in range(_TASK_REWARD_HORIZON)
+)  # ~0.0034
+
+_TASK_REWARD = np.array(
+    [
+        0.0,                     # Idle
+        0.0,                     # TorchCorridor
+        0.0,                     # IronGolemSpawn
+        0.0,                     # ArcherKite
+        0.0,                     # SwingGateBarricade
+        _TRADE_REWARD_PER_STEP,  # DiscountChain -- the only trade
+    ],
+    dtype=np.float64,
+)
+
+# Four per-action tables must stay aligned row for row. Fail at import if an
+# action is added to or removed from one but not the others.
+assert (
+    len(SKILL_NAMES)
+    == len(_BASE_REWARDS)
+    == len(_THREAT_VULNERABILITY)
+    == len(_TASK_REWARD)
+), "per-action tables are misaligned"
 
 _NUM_OBJECTIVES = len(OBJECTIVE_NAMES)
 _NUM_ACTIONS = len(SKILL_NAMES)
@@ -162,6 +186,35 @@ class MinecraftStubEnv:
     @property
     def num_objectives(self) -> int:
         return _NUM_OBJECTIVES
+
+    @property
+    def threat(self) -> float:
+        """Current threat level, in [0, 1]."""
+        return float(self._threat)
+
+    @property
+    def episode_over(self) -> bool:
+        """True once the episode has reached its declared length."""
+        return self._t >= self.episode_length
+
+    def phi(self) -> np.ndarray:
+        """State features phi(x): the current level of each objective.
+
+        These are the running totals, in OBJECTIVE_NAMES order -- how safe,
+        reputable, well-stocked ... the agent currently IS. The reward vector
+        from `step()` is the per-step CHANGE in these levels. A method rather
+        than an `info` key, so a rollout started mid-episode (on a copy, with
+        no reset) can read phi(x_0) before its first step.
+        """
+        return self._totals.copy()
+
+    def observation(self) -> np.ndarray:
+        """The current observation, without stepping.
+
+        Option execution steps the env several times, so callers need the
+        state it ended in without holding on to the last `step()` return.
+        """
+        return self._observation()
 
     def _threat_at(self, t: int) -> float:
         """Threat rises to a mid-episode peak, then falls.
@@ -222,7 +275,7 @@ class MinecraftStubEnv:
                 0.0, self.noise_scale, size=_NUM_OBJECTIVES
             ).astype(np.float32)
 
-        reward = reward.astype(np.float32)
+        reward = (reward * _REWARD_SCALE).astype(np.float32)
         self._totals += reward
 
         self._t += 1
@@ -236,6 +289,8 @@ class MinecraftStubEnv:
             "step": self._t,
             "subrep_reward": reward.copy(),
             "motive_totals": self._totals.copy(),
+            # r(x, a): the task reward, NOT sum(reward). See TASK REWARD above.
+            "task_reward": float(_TASK_REWARD[action]),
         }
 
         if reward.shape != (_NUM_OBJECTIVES,):

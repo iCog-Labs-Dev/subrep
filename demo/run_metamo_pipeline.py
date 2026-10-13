@@ -23,21 +23,25 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, List, Optional
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from baseline.idle_policy import IdlePolicy  # noqa: E402
-from baseline.improvement_calculator import ImprovementCalculator  # noqa: E402
 from bridge import weights as weights_mod  # noqa: E402
 from bridge.controller import MetaMoController  # noqa: E402
 from bridge.governor import MetaMoGovernor  # noqa: E402
 from bridge.protocol import SkillOutcome  # noqa: E402
+from env.minecraft_rollout import (  # noqa: E402
+    DEFAULT_HORIZON,
+    MINECRAFT_INITIAL_GOALS,
+    appraisal_scales,
+    evaluate_candidates,
+    execute_option,
+)
 from env.minecraft_stub import SKILL_NAMES, MinecraftStubEnv  # noqa: E402
 from generator.mdn import MotiveDecompositionNetwork  # noqa: E402
-from utils.mdn_contracts import CandidateSkillRecord  # noqa: E402
 from utils.mdn_runtime_pipeline import (  # noqa: E402
     RuntimeCertificationPipeline,
     RuntimePipelineConfig,
@@ -46,76 +50,52 @@ from utils.weight_set_store import WeightSetStore  # noqa: E402
 
 GAMMA = 0.99
 
-# A survival-oriented starting goal vector, in MetaMo's goal order
-# (core/config.py:1-3): Individuation, Transcendence, Help, Curiosity, Novelty,
-# Self, Ethical, Social.
-#
-# MetaMo's own default (core/engine.py:47-58) is tuned for a chat assistant
-# (Help=0.8, Ethical=0.9) and makes Reputation dominate from the first step,
-# which is the wrong prior for an agent that has to survive the night.
-MINECRAFT_INITIAL_GOALS = np.array(
-    [0.70, 0.40, 0.30, 0.50, 0.40, 0.60, 0.50, 0.30], dtype=np.float64
-)
+
+def build_pipeline(
+    model: MotiveDecompositionNetwork,
+    *,
+    num_objectives: int,
+    cvar_samples: int,
+) -> RuntimeCertificationPipeline:
+    """A fresh certification pipeline around `model`.
+
+    PDS carries the epsilon budget and use_cvar turns on the CVaR gate
+    alongside it (OR semantics, see utils/mdn_runtime_pipeline.py:402-404).
+    """
+    return RuntimeCertificationPipeline(
+        model=model,
+        weight_store=WeightSetStore(num_objectives=num_objectives),
+        config=RuntimePipelineConfig(
+            gate_type="PDS",
+            use_cvar=True,
+            require_cds_or_cvar=True,
+            cvar_samples=cvar_samples,
+            train_support_after_certify=False,
+        ),
+    )
 
 
-def rollout_fixed_action(
+def start_new_episode(
     env: MinecraftStubEnv,
-    action: int,
+    controller: MetaMoController,
     *,
     seed: int,
-    gamma: float = GAMMA,
-) -> Tuple[float, np.ndarray]:
-    """Run one episode always taking `action`.
+    make_pipeline: Callable[[], RuntimeCertificationPipeline],
+) -> np.ndarray:
+    """Reset the env and give the controller a fresh pipeline.
 
-    Uses the same discounting convention as `IdlePolicy.run_baseline_episodes`
-    (baseline/idle_policy.py:35-56) so the results are directly comparable.
+    The pipeline caches certificates by (rounded context, skill_id). On a hit
+    it rechecks eligibility under the current risk budgets, but it returns the
+    STORED delta, not the one measured now. Every episode starts from the same
+    observation, so without a fresh pipeline each new episode would open on the
+    previous episode's deltas. Within an episode contexts never repeat
+    (progress t/T changes), so one pipeline per episode is enough.
+
+    The governor is kept: MetaMo's motivational state carries across episodes.
     """
     obs, _ = env.reset(seed=seed)
-    discount = 1.0
-    total_payoff = 0.0
-    motives: Optional[np.ndarray] = None
-
-    while True:
-        obs, reward_vec, terminated, truncated, _ = env.step(action)
-        reward_vec = np.asarray(reward_vec, dtype=np.float32)
-        if motives is None:
-            motives = np.zeros_like(reward_vec)
-        total_payoff += discount * float(np.sum(reward_vec))
-        motives += discount * reward_vec
-        if terminated or truncated:
-            break
-        discount *= gamma
-
-    return float(total_payoff), np.asarray(motives, dtype=np.float32)
-
-
-def build_candidates(
-    env: MinecraftStubEnv,
-    baseline_stats: Dict[str, Any],
-    *,
-    seed: int,
-) -> List[CandidateSkillRecord]:
-    """Evaluate each non-idle action as a candidate skill."""
-    calculator = ImprovementCalculator(baseline_stats)
-    records: List[CandidateSkillRecord] = []
-
-    for action in range(1, len(SKILL_NAMES)):
-        payoff, motives = rollout_fixed_action(env, action, seed=seed)
-        delta_r, delta_n = calculator.compute_improvements(
-            skill_payoff=payoff,
-            skill_motives=motives,
-        )
-        records.append(
-            CandidateSkillRecord(
-                skill_id=SKILL_NAMES[action],
-                delta_r=float(delta_r),
-                delta_n=tuple(float(v) for v in delta_n),
-                is_certified=False,
-                gate_type="PDS",
-                metadata={"action": action},
-            )
-        )
-    return records
+    controller.pipeline = make_pipeline()
+    return obs
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -123,6 +103,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--steps", type=int, default=12)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--cvar-samples", type=int, default=1000)
+    parser.add_argument(
+        "--horizon",
+        type=int,
+        default=DEFAULT_HORIZON,
+        help="option duration in env steps, for evaluation AND execution",
+    )
     args = parser.parse_args(argv)
 
     env = MinecraftStubEnv(seed=args.seed)
@@ -132,14 +118,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("MetaMo -> SubRep, 6-objective Minecraft stub")
     print("=" * 78)
 
-    # 1. Baseline.
-    idle = IdlePolicy(env=env, idle_action=0, gamma=GAMMA)
-    baseline_stats = idle.run_baseline_episodes(num_episodes=5, seed=args.seed)
+    # 1-2. Baseline and candidate skills at the start state, for display and
+    #      for sizing the appraisal scales. The loop re-evaluates both at every
+    #      decision, from whatever state the episode has reached.
+    env.reset(seed=args.seed)
+    baseline_stats, candidates = evaluate_candidates(
+        env, gamma=GAMMA, horizon=args.horizon
+    )
     print(f"\nBaseline payoff: {baseline_stats['baseline_payoff']:.4f}")
     print(f"Baseline motives: {np.round(baseline_stats['baseline_motives'], 3)}")
 
-    # 2. Candidate skills.
-    candidates = build_candidates(env, baseline_stats, seed=args.seed)
     print(f"\nCandidate skills ({len(candidates)}):")
     for record in candidates:
         print(
@@ -147,37 +135,31 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"min(delta_n)={min(record.delta_n):+.3f}"
         )
 
-    # 3. Certification pipeline. PDS carries the epsilon budget and use_cvar
-    #    turns on the CVaR gate alongside it (OR semantics, see
-    #    utils/mdn_runtime_pipeline.py:402-404).
-    obs, _ = env.reset(seed=args.seed)
+    # 3. Certification pipeline (rebuilt at every episode start, see
+    #    start_new_episode). Seed before building the untrained MDN: the
+    #    controller seeds torch before each certification, but the model's
+    #    weights are drawn here, and the CVaR gate samples from them.
+    import torch
+
+    torch.manual_seed(args.seed)
     model = MotiveDecompositionNetwork(
-        input_dim=int(obs.shape[0]),
+        input_dim=int(env.observation().shape[0]),
         num_objectives=num_objectives,
     )
     model.eval()
-    pipeline = RuntimeCertificationPipeline(
-        model=model,
-        weight_store=WeightSetStore(num_objectives=num_objectives),
-        config=RuntimePipelineConfig(
-            gate_type="PDS",
-            use_cvar=True,
-            require_cds_or_cvar=True,
-            cvar_samples=args.cvar_samples,
-            train_support_after_certify=False,
-        ),
-    )
 
-    # 4. Governor + controller.
-    #
-    # Scale the appraisal inputs to this environment's actual magnitudes. The
-    # stimulus builder squashes through tanh, so leaving the scales at 1.0
-    # while deltas run to |10| saturates risk on the first step and pins the
-    # modulators at their bounds, flattening the coupling into a constant.
-    payoff_scale = float(np.mean([abs(r.delta_r) for r in candidates])) or 1.0
-    motive_scale = float(
-        np.mean([np.mean(np.abs(r.delta_n)) for r in candidates])
-    ) or 1.0
+    def make_pipeline() -> RuntimeCertificationPipeline:
+        return build_pipeline(
+            model,
+            num_objectives=num_objectives,
+            cvar_samples=args.cvar_samples,
+        )
+
+    # 4. Governor + controller, with appraisal inputs scaled to this
+    #    environment's actual magnitudes (see appraisal_scales). The governor
+    #    takes its scales once, at construction (bridge/governor.py:135-136),
+    #    so they come from the start-state candidates and stay fixed.
+    payoff_scale, motive_scale = appraisal_scales(candidates)
     print(f"\nAppraisal scales: payoff={payoff_scale:.3f}  motive={motive_scale:.3f}")
 
     governor = MetaMoGovernor(
@@ -186,7 +168,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         payoff_scale=payoff_scale,
         motive_scale=motive_scale,
     )
-    controller = MetaMoController(governor, pipeline, seed=args.seed)
+    controller = MetaMoController(governor, make_pipeline(), seed=args.seed)
 
     # Diagnostic: how many candidates the PDS gate alone would admit at a
     # given epsilon. Under OR semantics (use_cvar=True,
@@ -195,46 +177,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     # epsilon actually biting.
     from certification.pds_test import PDSGate  # noqa: E402
 
-    def pds_only_admitted(epsilon: float) -> int:
+    def pds_only_admitted(epsilon: float, records: List[Any]) -> int:
         gate = PDSGate(epsilon=epsilon)
         return sum(
             1
-            for r in candidates
+            for r in records
             if gate.admit(r.delta_r, np.asarray(r.delta_n, dtype=np.float64))
         )
 
-    # Per-step baseline, for turning a single realized reward vector into an
-    # improvement. The episode-level baseline covers the whole episode.
-    per_step_baseline = (
-        np.asarray(baseline_stats["baseline_motives"], dtype=np.float64)
-        / env.episode_length
-    )
-
-    # Mutable cell so the outcome closure can drive the environment and
-    # publish what it observed back to the print loop.
-    live: Dict[str, Any] = {"obs": None, "info": {"threat": 0.0}}
-
     def outcome_for(record: Optional[Any]) -> SkillOutcome:
-        """Execute the selected skill and appraise what actually happened.
+        """Execute the selected option for `horizon` steps and appraise it.
 
-        Feeding back the REALIZED single-step reward (rather than the
-        precomputed episode-level delta) is what makes the loop live: the stub
-        env's threat cycle changes the payoff of the same action over time, so
-        MetaMo's appraisal sees varying risk instead of a constant.
+        The realized improvement is measured against idling from the same
+        state over the same horizon (execute_option), so MetaMo's appraisal
+        sees what this option actually did here, under the current threat.
         """
         action = 0 if record is None else SKILL_NAMES.index(record.skill_id)
-        obs, reward_vec, terminated, truncated, info = env.step(action)
-
-        realized = np.asarray(reward_vec, dtype=np.float64)
-        delta_n = realized - per_step_baseline
-        delta_r = float(np.sum(delta_n))
-
-        if terminated or truncated:
-            obs, info = env.reset(seed=args.seed)
-
-        live["obs"] = obs
-        live["info"] = info
-
+        delta_r, delta_n = execute_option(
+            env, action, horizon=args.horizon, gamma=GAMMA
+        )
         return SkillOutcome(
             delta_r=delta_r,
             delta_n=delta_n,
@@ -254,31 +215,39 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(header)
     print("-" * len(header))
 
-    obs, info = env.reset(seed=args.seed)
-    live["obs"] = obs
-    live["info"] = info
+    env.reset(seed=args.seed)
 
     for _ in range(args.steps):
-        threat_before = float(live["info"].get("threat", 0.0))
+        threat_before = env.threat
+        # Per-state evaluation: delta(x, o) is only meaningful against the
+        # baseline at the SAME state x. Rollouts run on copies, so the live
+        # episode is untouched (env/minecraft_rollout.py:evaluate_option).
+        baseline_stats, candidates = evaluate_candidates(
+            env, gamma=GAMMA, horizon=args.horizon
+        )
         record = controller.step(
-            context=live["obs"],
+            context=env.observation(),
             candidate_skills=candidates,
             baseline_stats=baseline_stats,
             outcome_for=outcome_for,
         )
 
-        info = {"threat": threat_before}
         mods = record.modulators
         print(
-            f"{record.step:>4} {info['threat']:>7.3f} "
+            f"{record.step:>4} {threat_before:>7.3f} "
             f"{mods.get('securing', float('nan')):>6.3f} "
             f"{mods.get('threshold', float('nan')):>7.3f} "
             f"{record.pds_epsilon:>7.4f} {record.cvar_tail_level:>7.4f} "
             f"{record.admitted_count:>2}/{record.candidate_count:<2} "
-            f"{pds_only_admitted(record.pds_epsilon):>4} "
+            f"{pds_only_admitted(record.pds_epsilon, candidates):>4} "
             f"{(record.selected_skill_id or '-'):<20} "
             f"{record.weights[0]:>9.3f}"
         )
+
+        if env.episode_over:
+            start_new_episode(
+                env, controller, seed=args.seed, make_pipeline=make_pipeline
+            )
 
     # 6. Summary.
     eps_values = [r.pds_epsilon for r in controller.history]

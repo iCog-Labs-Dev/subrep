@@ -29,7 +29,8 @@ THREE TRAPS THIS FILE HAS TO AVOID
 ------------------------------------------------------------------------------
 1. Certification is cached by `(context_key, skill_id)`. The cached certificate
    is kept, but when the risk budgets change its eligibility is rechecked under
-   the current ones, so budget changes DO reach a repeated context (S1c pins
+   the current ones, so budget changes DO reach a repeated context
+   (`test_s1c_cached_approval_is_not_selected_after_epsilon_tightens` pins
    this). The cache still returns the STORED delta, so tests that need fresh
    deltas for a repeated context build a fresh pipeline.
 2. OR gate semantics (`use_cvar=True, require_cds_or_cvar=True`) let CVaR
@@ -41,15 +42,19 @@ THREE TRAPS THIS FILE HAS TO AVOID
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import List
 
 import numpy as np
 import pytest
 
-from baseline.idle_policy import IdlePolicy
-from baseline.improvement_calculator import ImprovementCalculator
 from bridge._loader import is_available
 from bridge.protocol import GovernorSignal, SkillOutcome
+from env.minecraft_rollout import (
+    DEFAULT_HORIZON,
+    MINECRAFT_INITIAL_GOALS,
+    appraisal_scales,
+    evaluate_candidates,
+)
 from env.minecraft_stub import SKILL_NAMES, MinecraftStubEnv
 from generator.mdn import MotiveDecompositionNetwork
 from utils.mdn_contracts import CandidateSkillRecord
@@ -69,75 +74,40 @@ SEED = 42
 NUM_OBJECTIVES = 6
 SAFETY = 0  # index into phi(x)
 
-# Survival-oriented starting goals, matching demo/run_metamo_pipeline.py.
-# MetaMo's own default is tuned for a chat assistant and makes Reputation
-# dominate from step 0, which is the wrong prior here.
-MINECRAFT_INITIAL_GOALS = np.array(
-    [0.70, 0.40, 0.30, 0.50, 0.40, 0.60, 0.50, 0.30], dtype=np.float64
-)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
 
 
-def _discounted_rollout(env, action: int, *, seed: int) -> Tuple[float, np.ndarray]:
-    """One episode always taking `action`.
-
-    Matches IdlePolicy.run_baseline_episodes' discounting exactly
-    (baseline/idle_policy.py:35-56) so results are directly comparable.
-    """
-    env.reset(seed=seed)
-    discount = 1.0
-    total_payoff = 0.0
-    motives: Optional[np.ndarray] = None
-
-    while True:
-        _, reward_vec, terminated, truncated, _ = env.step(action)
-        reward_vec = np.asarray(reward_vec, dtype=np.float32)
-        if motives is None:
-            motives = np.zeros_like(reward_vec)
-        total_payoff += discount * float(np.sum(reward_vec))
-        motives += discount * reward_vec
-        if terminated or truncated:
-            break
-        discount *= GAMMA
-
-    return float(total_payoff), np.asarray(motives, dtype=np.float32)
-
-
 def build_world(seed: int = SEED):
-    """Noiseless env + idle baseline + one candidate per non-idle action."""
-    env = MinecraftStubEnv(seed=seed, noise_scale=0.0)
-    baseline = IdlePolicy(env=env, idle_action=0, gamma=GAMMA).run_baseline_episodes(
-        num_episodes=2, seed=seed
-    )
-    calculator = ImprovementCalculator(baseline)
+    """Noiseless env + idle baseline + one candidate per non-idle action.
 
-    candidates: List[CandidateSkillRecord] = []
-    for action in range(1, len(SKILL_NAMES)):
-        payoff, motives = _discounted_rollout(env, action, seed=seed)
-        delta_r, delta_n = calculator.compute_improvements(
-            skill_payoff=payoff, skill_motives=motives
-        )
-        candidates.append(
-            CandidateSkillRecord(
-                skill_id=SKILL_NAMES[action],
-                delta_r=float(delta_r),
-                delta_n=tuple(float(v) for v in delta_n),
-                is_certified=False,
-                gate_type="PDS",
-                metadata={"action": action},
-            )
-        )
+    Uses the same rollout module as the demo (env/minecraft_rollout.py), so
+    these tests exercise the estimation the demo actually runs.
+    """
+    env = MinecraftStubEnv(seed=seed, noise_scale=0.0)
+    env.reset(seed=seed)
+    baseline, candidates = evaluate_candidates(
+        env, gamma=GAMMA, horizon=DEFAULT_HORIZON
+    )
 
     obs, _ = env.reset(seed=seed)
     return env, baseline, candidates, obs
 
 
 def make_pipeline(obs_dim: int, *, use_cvar: bool, cvar_samples: int = 1000):
-    """A fresh pipeline. Fresh matters: permanence caches across calls."""
+    """A fresh pipeline. Fresh matters: permanence caches across calls.
+
+    Seeded, so every pipeline gets the same untrained MDN. The controller seeds
+    torch before each certification, but the model's weights are drawn here,
+    earlier, from whatever state the global RNG is in. Unseeded, two
+    "identical" runs certify with different models, and whenever the CVaR gate
+    decides admission (PDS admitting nothing, OR semantics) they diverge.
+    """
+    import torch
+
+    torch.manual_seed(SEED)
     model = MotiveDecompositionNetwork(
         input_dim=obs_dim, num_objectives=NUM_OBJECTIVES
     )
@@ -163,10 +133,7 @@ def make_governor(candidates: List[CandidateSkillRecord]):
     """
     from bridge.governor import MetaMoGovernor
 
-    payoff_scale = float(np.mean([abs(c.delta_r) for c in candidates])) or 1.0
-    motive_scale = float(
-        np.mean([np.mean(np.abs(c.delta_n)) for c in candidates])
-    ) or 1.0
+    payoff_scale, motive_scale = appraisal_scales(candidates)
     return MetaMoGovernor(
         initial_goals=MINECRAFT_INITIAL_GOALS,
         payoff_scale=payoff_scale,
@@ -177,7 +144,7 @@ def make_governor(candidates: List[CandidateSkillRecord]):
 def threatening_outcome() -> SkillOutcome:
     """A rejected option whose Safety motive collapses.
 
-    Deliberately synthetic rather than a realized rollout: Task 11 asks for a
+    Deliberately synthetic rather than a realized rollout: these tests need a
     *threatening-outcome* scenario, so the appraisal input must reliably push
     the modulators toward caution rather than depending on what the stub
     happened to return.
@@ -239,33 +206,33 @@ def run_loop(steps: int = 10, *, seed: int = SEED, use_cvar: bool = True):
 
 
 # ---------------------------------------------------------------------------
-# S1 -- budgets reach certification (Scope 4b)
+# S1 -- budgets reach certification
 # ---------------------------------------------------------------------------
 
 
 def test_s1_epsilon_change_flips_a_borderline_admission():
     """A change in epsilon must change what the PDS gate admits.
 
-    RiskyForage exists precisely so this is observable: its margin sits inside
-    the (-0.1, 0) band that MetaMo's epsilon range can straddle. Every other
-    candidate's margin is orders of magnitude outside it, which is why epsilon
-    could not flip anything before that action was added.
+    Epsilon can only decide an option whose margin lies in the (-0.1, 0) band
+    MetaMo's epsilon range spans. The calibrated stub puts every option there
+    (pinned by tests/test_minecraft_stub.py), so this picks, at runtime, the
+    natural candidate nearest mid-band -- no hand-built action, and nothing to
+    re-derive if the stub is recalibrated.
 
-    Self-calibrating: epsilon values are derived from the measured margin, so
-    this keeps working if the stub's reward table is retuned.
+    Self-calibrating: epsilon values are derived from the measured margin.
 
     `use_cvar=False` is required -- under OR semantics an untrained MDN's CVaR
     gate admits nearly everything and would mask the PDS verdict entirely.
     """
     _, baseline, candidates, obs = build_world()
 
-    borderline = next(c for c in candidates if c.skill_id == "RiskyForage")
-    margin = margin_of(borderline)
-
-    assert -0.1 < margin < 0.0, (
-        f"RiskyForage margin {margin:.6f} is outside the band epsilon can "
-        "reach; epsilon cannot flip it and this test proves nothing"
+    in_band = [c for c in candidates if -0.1 < margin_of(c) < 0.0]
+    assert in_band, (
+        "no candidate margin lies in (-0.1, 0); epsilon cannot flip anything "
+        "and this test proves nothing"
     )
+    borderline = min(in_band, key=lambda c: abs(margin_of(c) + 0.05))
+    margin = margin_of(borderline)
 
     eps_reject = abs(margin) * 0.5
     eps_admit = abs(margin) * 1.5
@@ -286,8 +253,8 @@ def test_s1_epsilon_change_flips_a_borderline_admission():
         )
         return admitted_ids(records)
 
-    assert "RiskyForage" not in certify_at(eps_reject)
-    assert "RiskyForage" in certify_at(eps_admit)
+    assert borderline.skill_id not in certify_at(eps_reject)
+    assert borderline.skill_id in certify_at(eps_admit)
 
 
 class _StubGovernor:
@@ -315,15 +282,19 @@ def test_s1c_cached_approval_is_not_selected_after_epsilon_tightens():
     certificate is kept as history, but eligibility must follow the current
     budget all the way through to selection.
 
+    The skill is the natural candidate nearest mid-band, chosen at runtime as
+    in `test_s1_epsilon_change_flips_a_borderline_admission`, so the test does
+    not depend on any one option's exact numbers.
+
     `use_cvar=False`: under OR semantics the untrained MDN's CVaR gate could
     admit the skill on its own and hide the PDS verdict.
     """
     from bridge.controller import MetaMoController
 
     _, baseline, candidates, obs = build_world()
-    borderline = next(c for c in candidates if c.skill_id == "RiskyForage")
-    margin = margin_of(borderline)
-    assert -0.1 < margin < 0.0, f"margin {margin:.4f} cannot be flipped by epsilon"
+    in_band = [c for c in candidates if -0.1 < margin_of(c) < 0.0]
+    assert in_band, "no candidate margin lies in (-0.1, 0); epsilon cannot flip anything"
+    borderline = min(in_band, key=lambda c: abs(margin_of(c) + 0.05))
 
     pipeline = make_pipeline(int(obs.shape[0]), use_cvar=False)
     controller = MetaMoController(_StubGovernor(), pipeline, seed=SEED)
@@ -340,14 +311,16 @@ def test_s1c_cached_approval_is_not_selected_after_epsilon_tightens():
         return records[0], selected
 
     loose, selected_loose = certify_and_select(0.10)
-    assert loose.is_certified and selected_loose == "RiskyForage"
+    assert loose.is_certified and selected_loose == borderline.skill_id
 
     tight, selected_tight = certify_and_select(0.0)
     assert not tight.is_certified, "cached approval survived the tighter budget"
     assert selected_tight is None, "a skill the current budget rejects was selected"
     assert tight.epsilon == pytest.approx(0.0)
 
-    historical = pipeline.get_certification_result(context=obs, skill_id="RiskyForage")
+    historical = pipeline.get_certification_result(
+        context=obs, skill_id=borderline.skill_id
+    )
     assert historical.is_certified, "the historical certificate must be kept"
     assert historical.epsilon == pytest.approx(0.10)
 
@@ -362,11 +335,11 @@ def test_s1b_governor_epsilon_change_alters_admissions():
 
     Why the endpoints are guaranteed rather than tuned:
       * At step 0 the modulators are neutral, so epsilon == epsilon_0 == 0.1
-        exactly (pinned by test_bridge_budget.py). RiskyForage's margin of
-        ~-0.05 satisfies -0.05 >= -0.1, so it is admitted.
+        exactly (pinned by test_bridge_budget.py). Every calibrated margin lies
+        in (-0.1, 0) (pinned by test_minecraft_stub.py), so all are admitted.
       * Under sustained threat epsilon floors at 0.0 within a few steps (S2
-        already asserts it ends no higher than it started). -0.05 >= -0.0 is
-        false, so RiskyForage is rejected.
+        already asserts it ends no higher than it started). A negative margin
+        cannot satisfy margin >= -0.0, so those options are rejected.
     No intermediate epsilon value is hardcoded, so the assertion survives
     coefficient retuning as long as epsilon still spans the margin.
 
@@ -401,7 +374,7 @@ def test_s1b_governor_epsilon_change_alters_admissions():
 
 
 # ---------------------------------------------------------------------------
-# S2 -- epsilon/alpha coherence (Issue 2, the headline)
+# S2 -- epsilon/alpha coherence
 # ---------------------------------------------------------------------------
 
 
@@ -453,7 +426,7 @@ def test_s2_budgets_stay_inside_their_declared_contracts():
 
 
 # ---------------------------------------------------------------------------
-# S3 -- safety priority adapts (Scope 4a)
+# S3 -- safety priority adapts
 # ---------------------------------------------------------------------------
 
 
@@ -472,7 +445,7 @@ def test_s3_safety_weight_rises_under_sustained_threat():
 
 
 # ---------------------------------------------------------------------------
-# S4 -- abstention (AC3b)
+# S4 -- abstention
 # ---------------------------------------------------------------------------
 
 
@@ -518,7 +491,7 @@ def test_s4_abstains_when_nothing_qualifies_and_still_feeds_back():
 
 
 # ---------------------------------------------------------------------------
-# S5 -- seed determinism (Scope 5)
+# S5 -- seed determinism
 # ---------------------------------------------------------------------------
 
 
@@ -540,7 +513,7 @@ def test_s5_identical_seeds_reproduce_identical_runs():
 
 
 # ---------------------------------------------------------------------------
-# S6 -- priorities reach selection (Scope 4b, the other half)
+# S6 -- priorities reach selection
 # ---------------------------------------------------------------------------
 
 
@@ -656,7 +629,7 @@ def test_s6b_governor_weights_change_skill_scores():
 
 
 # ---------------------------------------------------------------------------
-# S7 -- selected skills stay admissible (AC3a)
+# S7 -- selected skills stay admissible
 # ---------------------------------------------------------------------------
 
 
