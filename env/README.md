@@ -10,7 +10,7 @@ SubRep motives:
 
 ```text
 Safety = terminal result + dense shaping
-Fuel   = -(main engine cost + side engine cost)
+Fuel   = main engine cost + side engine cost
 ```
 
 Contract:
@@ -18,6 +18,13 @@ Contract:
 - observation shape: `(8,)`
 - reward shape: `(2,)`
 - reward order: `[Safety, Fuel]`
+- both motives are larger-is-better
+
+Engine usage arrives as non-positive costs (`raw[2] = -m_power`,
+`raw[3] = -s_power`), so the sum is already larger-is-better and is passed through
+unchanged. The Safety-Gymnasium wrapper below negates instead, because its `cost`
+is positive-is-worse — check the sign of the source before mapping a new
+environment. `tests/test_env.py` asserts the ordering.
 
 ## Skill Executor
 
