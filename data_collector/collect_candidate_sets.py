@@ -143,7 +143,7 @@ class CandidateSetCollector:
         *,
         seed: int = 42,
         save_dir: str = "data/mdn_candidate_sets",
-        max_steps: int | None = 200,
+        max_steps: int | None = None,
         gamma: float = 0.99,
         pilot_checkpoint: str = "models/pilot_ppo.pt",
         map_location: str = "cpu",
@@ -247,7 +247,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-dir", type=str, default="data/mdn_candidate_sets")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--prefix", type=str, default="candidate_set")
-    parser.add_argument("--max-steps", type=int, default=200)
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Optional rollout cap; omit to run until the environment ends",
+    )
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--pilot-checkpoint", type=str, default="models/pilot_ppo.pt")
     parser.add_argument("--map-location", type=str, default="cpu")

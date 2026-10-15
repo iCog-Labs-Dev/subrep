@@ -11,6 +11,8 @@ Usage:
     python -m data_collector.collect_mixed_generator_data \
       --episodes 1000 --save-dir data/raw_mixed --seed 42
 """
+from __future__ import annotations
+
 import argparse
 import os
 import random
@@ -35,9 +37,13 @@ class MixedGeneratorDataCollector:
         save_dir: str = "data/raw_mixed",
         pilot_checkpoint: str = "models/pilot_ppo.pt",
         map_location: str = "cpu",
+        max_steps: int | None = None,
+        gamma: float = 0.99,
     ) -> None:
         self.seed = seed
         self.save_dir = save_dir
+        self.max_steps = max_steps
+        self.gamma = float(gamma)
         os.makedirs(self.save_dir, exist_ok=True)
 
         random.seed(seed)
@@ -86,7 +92,8 @@ class MixedGeneratorDataCollector:
                 executor = SkillExecutor(
                     env=self.env,
                     policy_fn=candidate.policy_fn,
-                    max_steps=200,
+                    gamma=self.gamma,
+                    max_steps=self.max_steps,
                 )
                 payoff, motives, terminated = executor.run_episode(initial_obs=obs)
 
@@ -129,6 +136,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episodes", type=int, default=1000)
     parser.add_argument("--save-dir", type=str, default="data/raw_mixed")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Optional rollout cap; omit to run until the environment ends",
+    )
+    parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--pilot-checkpoint", type=str, default="models/pilot_ppo.pt")
     return parser.parse_args()
 
@@ -143,6 +157,8 @@ def main() -> None:
         seed=args.seed,
         save_dir=args.save_dir,
         pilot_checkpoint=args.pilot_checkpoint,
+        max_steps=args.max_steps,
+        gamma=args.gamma,
     )
     collector.collect(args.episodes)
 

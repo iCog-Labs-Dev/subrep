@@ -40,10 +40,10 @@ from utils.mdn_selection import alpha_to_mean_weights
 from data_collector.collect_candidate_sets import CandidatePolicy, build_default_candidate_policies
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-NUM_EPISODES        = 10
+NUM_EPISODES        = 9
 BASELINE_EPISODES   = 20
 GAMMA               = 0.99
-MAX_STEPS           = 200
+MAX_STEPS: int | None = None
 SEED                = 42
 PDS_EPSILON         = 5.0
 CERT_FILE           = "data/certificates.metta"
@@ -67,14 +67,17 @@ def _parse_policy_output(action_output) -> tuple[int, float | None]:
     return int(action_output), None
 
 
-def _ppo_then_fixed_action_policy(
+def _ppo_then_burst_policy(
     base_policy,
     *,
-    switch_step: int,
+    burst_start: int,
+    burst_len: int,
     fixed_action: int,
 ):
-    """Run PPO first, then switch to a fixed action to create a mild trade-off."""
-    class PPOThenFixedPolicy:
+    """Follow PPO, fire a fixed action for a bounded burst, then hand control back to PPO."""
+    burst_end = burst_start + burst_len
+
+    class PPOThenBurstPolicy:
         def __init__(self) -> None:
             self.steps = 0
 
@@ -83,12 +86,12 @@ def _ppo_then_fixed_action_policy(
 
         def __call__(self, obs: np.ndarray) -> tuple[int, float]:
             self.steps += 1
-            if self.steps >= switch_step:
+            if burst_start <= self.steps < burst_end:
                 return int(fixed_action), 1.0
             action, probability = _parse_policy_output(base_policy(obs))
             return action, probability if probability is not None else 1.0
 
-    return PPOThenFixedPolicy()
+    return PPOThenBurstPolicy()
 
 
 def _noisy_ppo_policy(
@@ -122,13 +125,11 @@ def _build_demo_candidate_policies(env: SubRepEnv) -> tuple[CandidatePolicy, ...
     return (
         ppo_deterministic,
         CandidatePolicy(
-            "ppo_then_side_tradeoff",
-            _ppo_then_fixed_action_policy(
+            "ppo_then_burst_policy",
+            _ppo_then_burst_policy(
                 ppo_deterministic.policy_fn,
-                # Tuned to the PDS band: fails CDS at -2.73, admitted within
-                # the 5.0 budget. Was 45, which only sat near the boundary
-                # because the old inverted fuel mapping credited the burn.
-                switch_step=180,
+                burst_start=160,
+                burst_len=50,
                 fixed_action=3,
             ),
         ),
@@ -153,7 +154,7 @@ def _make_certificate(
     margin: float,
     episode_length: int,
     gate_type: str = "CDS",
-    epsilon: float = 0.0,
+    epsilon: float =0.0,
 ) -> Certificate:
     """Build a fully-validated Certificate from computed improvements."""
     return Certificate(
@@ -297,7 +298,7 @@ def run_pipeline() -> dict:
             max_steps=MAX_STEPS,
         )
         payoff, motives, terminated = executor.run_episode(initial_obs=obs)
-        episode_length = executor.last_run_info.get("steps", MAX_STEPS)
+        episode_length = int(executor.last_run_info.get("steps", 0))
 
         # CERTIFY — compute improvements and run CDS/PDS gates
         delta_r, delta_n = calculator.compute_improvements(payoff, motives)
