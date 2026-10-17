@@ -1,0 +1,839 @@
+{
+  "schema_version": "subrep.lunar_effects.v1",
+  "environment": "mo-lunar-lander-v3",
+  "baseline_id": "idle_policy_v1",
+  "gamma": 0.99,
+  "confidence": 0.95,
+  "bootstrap_resamples": 2000,
+  "min_samples": 30,
+  "group_facts": [
+    "upright",
+    "over_pad",
+    "near_ground"
+  ],
+  "seeds": {
+    "start": 0,
+    "stop": 1000
+  },
+  "steps": [
+    {
+      "name": "brake",
+      "group": "upright=0,over_pad=0,near_ground=0",
+      "samples": 53,
+      "completion_rate": 1.0,
+      "mean_frames": 13.283019,
+      "delta_r": {
+        "mean": 34.346513,
+        "std": 1.755566,
+        "lower": 33.958195
+      },
+      "delta_safety": {
+        "mean": 46.796857,
+        "std": 2.85499,
+        "lower": 46.157239
+      },
+      "delta_fuel": {
+        "mean": -12.450344,
+        "std": 2.826183,
+        "lower": -13.090464
+      }
+    },
+    {
+      "name": "brake",
+      "group": "upright=0,over_pad=1,near_ground=0",
+      "samples": 603,
+      "completion_rate": 1.0,
+      "mean_frames": 11.887231,
+      "delta_r": {
+        "mean": 34.090246,
+        "std": 3.019687,
+        "lower": 33.87998
+      },
+      "delta_safety": {
+        "mean": 45.324517,
+        "std": 4.375819,
+        "lower": 45.0246
+      },
+      "delta_fuel": {
+        "mean": -11.234271,
+        "std": 2.167229,
+        "lower": -11.384788
+      }
+    },
+    {
+      "name": "brake",
+      "group": "upright=1,over_pad=1,near_ground=0",
+      "samples": 332,
+      "completion_rate": 1.0,
+      "mean_frames": 11.774096,
+      "delta_r": {
+        "mean": 29.722775,
+        "std": 3.868854,
+        "lower": 29.370464
+      },
+      "delta_safety": {
+        "mean": 40.849291,
+        "std": 5.424097,
+        "lower": 40.341865
+      },
+      "delta_fuel": {
+        "mean": -11.126516,
+        "std": 2.422243,
+        "lower": -11.34647
+      }
+    },
+    {
+      "name": "free_fall",
+      "group": "upright=0,over_pad=1,near_ground=0",
+      "samples": 628,
+      "completion_rate": 1.0,
+      "mean_frames": 11.996815,
+      "delta_r": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_safety": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_fuel": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      }
+    },
+    {
+      "name": "free_fall",
+      "group": "upright=1,over_pad=1,near_ground=0",
+      "samples": 360,
+      "completion_rate": 1.0,
+      "mean_frames": 15.091667,
+      "delta_r": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_safety": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_fuel": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      }
+    },
+    {
+      "name": "move_over_pad",
+      "group": "upright=1,over_pad=0,near_ground=0",
+      "samples": 735,
+      "completion_rate": 0.983673,
+      "mean_frames": 111.617687,
+      "delta_r": {
+        "mean": 8.997927,
+        "std": 19.371148,
+        "lower": 7.835164
+      },
+      "delta_safety": {
+        "mean": 49.542438,
+        "std": 23.960115,
+        "lower": 48.013326
+      },
+      "delta_fuel": {
+        "mean": -40.544511,
+        "std": 19.579522,
+        "lower": -41.649867
+      }
+    },
+    {
+      "name": "move_over_pad",
+      "group": "upright=1,over_pad=1,near_ground=0",
+      "samples": 265,
+      "completion_rate": 1.0,
+      "mean_frames": 0.0,
+      "delta_r": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_safety": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_fuel": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      }
+    },
+    {
+      "name": "slow_descent",
+      "group": "upright=0,over_pad=1,near_ground=0",
+      "samples": 628,
+      "completion_rate": 1.0,
+      "mean_frames": 134.017516,
+      "delta_r": {
+        "mean": 43.635727,
+        "std": 20.997821,
+        "lower": 42.156014
+      },
+      "delta_safety": {
+        "mean": 85.018587,
+        "std": 21.676011,
+        "lower": 83.543614
+      },
+      "delta_fuel": {
+        "mean": -41.38286,
+        "std": 5.22415,
+        "lower": -41.709449
+      }
+    },
+    {
+      "name": "slow_descent",
+      "group": "upright=1,over_pad=1,near_ground=0",
+      "samples": 360,
+      "completion_rate": 1.0,
+      "mean_frames": 175.894444,
+      "delta_r": {
+        "mean": -5.535127,
+        "std": 27.801615,
+        "lower": -7.836191
+      },
+      "delta_safety": {
+        "mean": 39.227694,
+        "std": 27.273206,
+        "lower": 36.937637
+      },
+      "delta_fuel": {
+        "mean": -44.762821,
+        "std": 4.890906,
+        "lower": -45.170489
+      }
+    },
+    {
+      "name": "stabilise",
+      "group": "upright=0,over_pad=0,near_ground=0",
+      "samples": 462,
+      "completion_rate": 1.0,
+      "mean_frames": 4.445887,
+      "delta_r": {
+        "mean": 1.53521,
+        "std": 6.752914,
+        "lower": 0.990298
+      },
+      "delta_safety": {
+        "mean": 5.452252,
+        "std": 7.800089,
+        "lower": 4.852106
+      },
+      "delta_fuel": {
+        "mean": -3.917042,
+        "std": 6.280128,
+        "lower": -4.450286
+      }
+    },
+    {
+      "name": "stabilise",
+      "group": "upright=1,over_pad=0,near_ground=0",
+      "samples": 273,
+      "completion_rate": 1.0,
+      "mean_frames": 0.0,
+      "delta_r": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_safety": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_fuel": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      }
+    },
+    {
+      "name": "stabilise",
+      "group": "upright=1,over_pad=1,near_ground=0",
+      "samples": 265,
+      "completion_rate": 1.0,
+      "mean_frames": 0.0,
+      "delta_r": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_safety": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_fuel": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      }
+    },
+    {
+      "name": "touch_down",
+      "group": "upright=0,over_pad=0,near_ground=0",
+      "samples": 90,
+      "completion_rate": 1.0,
+      "mean_frames": 120.755556,
+      "delta_r": {
+        "mean": 66.84944,
+        "std": 16.089076,
+        "lower": 63.878062
+      },
+      "delta_safety": {
+        "mean": 109.182163,
+        "std": 16.492466,
+        "lower": 106.148319
+      },
+      "delta_fuel": {
+        "mean": -42.332724,
+        "std": 1.894185,
+        "lower": -42.660856
+      }
+    },
+    {
+      "name": "touch_down",
+      "group": "upright=0,over_pad=0,near_ground=1",
+      "samples": 15,
+      "completion_rate": 0.933333,
+      "mean_frames": 35.266667,
+      "delta_r": {
+        "mean": 71.548392,
+        "std": 16.143182,
+        "lower": 65.563677
+      },
+      "delta_safety": {
+        "mean": 90.444669,
+        "std": 16.026272,
+        "lower": 84.432607
+      },
+      "delta_fuel": {
+        "mean": -18.896276,
+        "std": 1.765058,
+        "lower": -19.655431
+      }
+    },
+    {
+      "name": "touch_down",
+      "group": "upright=0,over_pad=1,near_ground=0",
+      "samples": 584,
+      "completion_rate": 0.991438,
+      "mean_frames": 112.335616,
+      "delta_r": {
+        "mean": 60.50638,
+        "std": 19.948047,
+        "lower": 59.078052
+      },
+      "delta_safety": {
+        "mean": 100.361251,
+        "std": 20.760241,
+        "lower": 98.867873
+      },
+      "delta_fuel": {
+        "mean": -39.854871,
+        "std": 2.709446,
+        "lower": -40.038607
+      }
+    },
+    {
+      "name": "touch_down",
+      "group": "upright=0,over_pad=1,near_ground=1",
+      "samples": 427,
+      "completion_rate": 0.983607,
+      "mean_frames": 33.06089,
+      "delta_r": {
+        "mean": 70.962496,
+        "std": 12.31376,
+        "lower": 69.942099
+      },
+      "delta_safety": {
+        "mean": 89.326622,
+        "std": 12.126422,
+        "lower": 88.325196
+      },
+      "delta_fuel": {
+        "mean": -18.364126,
+        "std": 1.758707,
+        "lower": -18.504228
+      }
+    },
+    {
+      "name": "touch_down",
+      "group": "upright=1,over_pad=0,near_ground=0",
+      "samples": 61,
+      "completion_rate": 1.0,
+      "mean_frames": 120.47541,
+      "delta_r": {
+        "mean": 35.077132,
+        "std": 26.133891,
+        "lower": 29.889181
+      },
+      "delta_safety": {
+        "mean": 76.727989,
+        "std": 27.177899,
+        "lower": 71.257526
+      },
+      "delta_fuel": {
+        "mean": -41.650856,
+        "std": 2.521175,
+        "lower": -42.194616
+      }
+    },
+    {
+      "name": "touch_down",
+      "group": "upright=1,over_pad=1,near_ground=0",
+      "samples": 253,
+      "completion_rate": 1.0,
+      "mean_frames": 127.162055,
+      "delta_r": {
+        "mean": 33.256001,
+        "std": 28.879633,
+        "lower": 30.218955
+      },
+      "delta_safety": {
+        "mean": 73.484362,
+        "std": 29.340686,
+        "lower": 70.38734
+      },
+      "delta_fuel": {
+        "mean": -40.228361,
+        "std": 1.99707,
+        "lower": -40.437617
+      }
+    },
+    {
+      "name": "touch_down",
+      "group": "upright=1,over_pad=1,near_ground=1",
+      "samples": 546,
+      "completion_rate": 0.998168,
+      "mean_frames": 32.985348,
+      "delta_r": {
+        "mean": 68.031249,
+        "std": 10.958983,
+        "lower": 67.265976
+      },
+      "delta_safety": {
+        "mean": 85.792339,
+        "std": 10.454723,
+        "lower": 85.057124
+      },
+      "delta_fuel": {
+        "mean": -17.76109,
+        "std": 1.7308,
+        "lower": -17.881966
+      }
+    }
+  ],
+  "plans": [
+    {
+      "name": "stabilise",
+      "group": "upright=0,over_pad=0,near_ground=0",
+      "samples": 462,
+      "completion_rate": 1.0,
+      "mean_frames": 4.445887,
+      "delta_r": {
+        "mean": 1.53521,
+        "std": 6.752914,
+        "lower": 0.990298
+      },
+      "delta_safety": {
+        "mean": 5.452252,
+        "std": 7.800089,
+        "lower": 4.852106
+      },
+      "delta_fuel": {
+        "mean": -3.917042,
+        "std": 6.280128,
+        "lower": -4.450286
+      },
+      "skills": [
+        "stabilise"
+      ],
+      "interaction": {
+        "delta_r": {
+          "mean": 0.0,
+          "std": 0.0,
+          "lower": 0.0
+        },
+        "delta_safety": {
+          "mean": 0.0,
+          "std": 0.0,
+          "lower": 0.0
+        },
+        "delta_fuel": {
+          "mean": 0.0,
+          "std": 0.0,
+          "lower": 0.0
+        }
+      }
+    },
+    {
+      "name": "stabilise",
+      "group": "upright=1,over_pad=0,near_ground=0",
+      "samples": 273,
+      "completion_rate": 1.0,
+      "mean_frames": 0.0,
+      "delta_r": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_safety": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_fuel": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "skills": [
+        "stabilise"
+      ],
+      "interaction": {
+        "delta_r": {
+          "mean": 0.0,
+          "std": 0.0,
+          "lower": 0.0
+        },
+        "delta_safety": {
+          "mean": 0.0,
+          "std": 0.0,
+          "lower": 0.0
+        },
+        "delta_fuel": {
+          "mean": 0.0,
+          "std": 0.0,
+          "lower": 0.0
+        }
+      }
+    },
+    {
+      "name": "stabilise",
+      "group": "upright=1,over_pad=1,near_ground=0",
+      "samples": 265,
+      "completion_rate": 1.0,
+      "mean_frames": 0.0,
+      "delta_r": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_safety": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "delta_fuel": {
+        "mean": 0.0,
+        "std": 0.0,
+        "lower": 0.0
+      },
+      "skills": [
+        "stabilise"
+      ],
+      "interaction": {
+        "delta_r": {
+          "mean": 0.0,
+          "std": 0.0,
+          "lower": 0.0
+        },
+        "delta_safety": {
+          "mean": 0.0,
+          "std": 0.0,
+          "lower": 0.0
+        },
+        "delta_fuel": {
+          "mean": 0.0,
+          "std": 0.0,
+          "lower": 0.0
+        }
+      }
+    },
+    {
+      "name": "stabilise>move_over_pad>free_fall>brake>touch_down",
+      "group": "upright=0,over_pad=0,near_ground=0",
+      "samples": 462,
+      "completion_rate": 0.969697,
+      "mean_frames": 348.361472,
+      "delta_r": {
+        "mean": 22.918072,
+        "std": 35.770111,
+        "lower": 20.263116
+      },
+      "delta_safety": {
+        "mean": 86.52833,
+        "std": 33.740479,
+        "lower": 83.997158
+      },
+      "delta_fuel": {
+        "mean": -63.610259,
+        "std": 6.843931,
+        "lower": -64.132494
+      },
+      "skills": [
+        "stabilise",
+        "move_over_pad",
+        "free_fall",
+        "brake",
+        "touch_down"
+      ],
+      "interaction": {
+        "delta_r": {
+          "mean": -74.099717,
+          "std": 35.598676,
+          "lower": -76.84138
+        },
+        "delta_safety": {
+          "mean": -115.457995,
+          "std": 38.291936,
+          "lower": -118.473683
+        },
+        "delta_fuel": {
+          "mean": 41.358278,
+          "std": 8.480405,
+          "lower": 40.70824
+        }
+      }
+    },
+    {
+      "name": "stabilise>move_over_pad>free_fall>brake>touch_down",
+      "group": "upright=1,over_pad=0,near_ground=0",
+      "samples": 273,
+      "completion_rate": 0.989011,
+      "mean_frames": 234.413919,
+      "delta_r": {
+        "mean": 34.453588,
+        "std": 23.908264,
+        "lower": 32.078382
+      },
+      "delta_safety": {
+        "mean": 86.080108,
+        "std": 21.999512,
+        "lower": 83.868406
+      },
+      "delta_fuel": {
+        "mean": -51.62652,
+        "std": 7.281072,
+        "lower": -52.361112
+      },
+      "skills": [
+        "stabilise",
+        "move_over_pad",
+        "free_fall",
+        "brake",
+        "touch_down"
+      ],
+      "interaction": {
+        "delta_r": {
+          "mean": -74.0643,
+          "std": 33.045475,
+          "lower": -77.097103
+        },
+        "delta_safety": {
+          "mean": -96.781167,
+          "std": 36.627601,
+          "lower": -100.113158
+        },
+        "delta_fuel": {
+          "mean": 22.716867,
+          "std": 6.580715,
+          "lower": 22.049316
+        }
+      }
+    },
+    {
+      "name": "stabilise>move_over_pad>free_fall>brake>touch_down",
+      "group": "upright=1,over_pad=1,near_ground=0",
+      "samples": 265,
+      "completion_rate": 1.0,
+      "mean_frames": 204.037736,
+      "delta_r": {
+        "mean": 18.819492,
+        "std": 20.576377,
+        "lower": 16.74173
+      },
+      "delta_safety": {
+        "mean": 59.420091,
+        "std": 20.644889,
+        "lower": 57.31567
+      },
+      "delta_fuel": {
+        "mean": -40.600598,
+        "std": 4.880588,
+        "lower": -41.124375
+      },
+      "skills": [
+        "stabilise",
+        "move_over_pad",
+        "free_fall",
+        "brake",
+        "touch_down"
+      ],
+      "interaction": {
+        "delta_r": {
+          "mean": -45.427813,
+          "std": 32.779921,
+          "lower": -48.805008
+        },
+        "delta_safety": {
+          "mean": -56.715832,
+          "std": 33.081418,
+          "lower": -60.169972
+        },
+        "delta_fuel": {
+          "mean": 11.288019,
+          "std": 4.529713,
+          "lower": 10.827833
+        }
+      }
+    },
+    {
+      "name": "stabilise>move_over_pad>slow_descent>touch_down",
+      "group": "upright=0,over_pad=0,near_ground=0",
+      "samples": 462,
+      "completion_rate": 0.95671,
+      "mean_frames": 365.311688,
+      "delta_r": {
+        "mean": 19.900553,
+        "std": 34.618674,
+        "lower": 17.338706
+      },
+      "delta_safety": {
+        "mean": 84.651477,
+        "std": 33.372963,
+        "lower": 82.189906
+      },
+      "delta_fuel": {
+        "mean": -64.750924,
+        "std": 5.891601,
+        "lower": -65.185521
+      },
+      "skills": [
+        "stabilise",
+        "move_over_pad",
+        "slow_descent",
+        "touch_down"
+      ],
+      "interaction": {
+        "delta_r": {
+          "mean": -96.541852,
+          "std": 40.131091,
+          "lower": -99.625178
+        },
+        "delta_safety": {
+          "mean": -143.743842,
+          "std": 41.825736,
+          "lower": -146.959213
+        },
+        "delta_fuel": {
+          "mean": 47.201989,
+          "std": 8.68636,
+          "lower": 46.514396
+        }
+      }
+    },
+    {
+      "name": "stabilise>move_over_pad>slow_descent>touch_down",
+      "group": "upright=1,over_pad=0,near_ground=0",
+      "samples": 273,
+      "completion_rate": 1.0,
+      "mean_frames": 274.223443,
+      "delta_r": {
+        "mean": 22.164641,
+        "std": 22.249095,
+        "lower": 19.916412
+      },
+      "delta_safety": {
+        "mean": 78.464292,
+        "std": 21.335242,
+        "lower": 76.236579
+      },
+      "delta_fuel": {
+        "mean": -56.299651,
+        "std": 6.07587,
+        "lower": -56.881288
+      },
+      "skills": [
+        "stabilise",
+        "move_over_pad",
+        "slow_descent",
+        "touch_down"
+      ],
+      "interaction": {
+        "delta_r": {
+          "mean": -99.147282,
+          "std": 37.273172,
+          "lower": -102.902986
+        },
+        "delta_safety": {
+          "mean": -127.888536,
+          "std": 40.489351,
+          "lower": -132.008588
+        },
+        "delta_fuel": {
+          "mean": 28.741254,
+          "std": 6.41357,
+          "lower": 28.119432
+        }
+      }
+    },
+    {
+      "name": "stabilise>move_over_pad>slow_descent>touch_down",
+      "group": "upright=1,over_pad=1,near_ground=0",
+      "samples": 265,
+      "completion_rate": 0.996226,
+      "mean_frames": 255.324528,
+      "delta_r": {
+        "mean": -2.303453,
+        "std": 21.627487,
+        "lower": -4.534534
+      },
+      "delta_safety": {
+        "mean": 45.491295,
+        "std": 21.173093,
+        "lower": 43.321267
+      },
+      "delta_fuel": {
+        "mean": -47.794747,
+        "std": 5.423556,
+        "lower": -48.345779
+      },
+      "skills": [
+        "stabilise",
+        "move_over_pad",
+        "slow_descent",
+        "touch_down"
+      ],
+      "interaction": {
+        "delta_r": {
+          "mean": -56.409345,
+          "std": 11.40401,
+          "lower": -57.493719
+        },
+        "delta_safety": {
+          "mean": -71.244818,
+          "std": 11.123018,
+          "lower": -72.351176
+        },
+        "delta_fuel": {
+          "mean": 14.835473,
+          "std": 1.466168,
+          "lower": 14.690715
+        }
+      }
+    }
+  ]
+}
