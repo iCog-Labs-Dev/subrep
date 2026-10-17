@@ -13,7 +13,8 @@ only if the episode ended in a successful landing. Leg contact flickers when
 the lander comes to rest, so the last frame's facts alone can miss a landing.
 
 The runtime never acts without a certificate: when no plan is admitted it
-stops and leaves the lander to the caller.
+stops and leaves the lander to the caller. Given a feedback log, it also skips
+plans whose certificates the log has revoked.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import numpy as np
 
 from decomposition.effects import EffectTable
 from decomposition.executor import Execution, execute
+from decomposition.feedback import FeedbackLog
 from decomposition.planner import propose
 from decomposition.recipe_book import Goal, RecipeBook, holds
 from decomposition.verifier import PlanVerdict, Priorities, best_plan, plan_skill_id, verify
@@ -97,6 +99,7 @@ def pursue(
     table: EffectTable,
     priorities: Priorities,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    feedback: Optional[FeedbackLog] = None,
     timestamp: Optional[str] = None,
 ) -> GoalRun:
     """Pursue ``goal`` from ``observation``, which ``env`` must have just produced."""
@@ -118,6 +121,8 @@ def pursue(
         for _ in range(max_attempts):
             facts = lander_facts(obs)
             verdicts = tuple(verify(propose(book, goal, facts), facts, table, priorities, timestamp))
+            if feedback is not None:
+                verdicts = feedback.screen(verdicts, facts)
             chosen = best_plan(verdicts)
             if chosen is None:
                 attempts.append(Attempt(facts, verdicts, None))
