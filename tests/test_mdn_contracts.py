@@ -40,7 +40,7 @@ def test_candidate_skill_record_rejects_invalid_delta_n_length():
         CandidateSkillRecord(
             skill_id="skill_a",
             delta_r=0.5,
-            delta_n=(0.2, -0.1, 0.4),
+            delta_n=(),
             is_certified=True,
             gate_type="CDS",
         )
