@@ -35,12 +35,21 @@ from data_collector.collect_candidate_sets import CandidatePolicy, _fixed_action
 from env.skill_executor import SkillExecutor
 from utils.mdn_contracts import CandidateSkillRecord
 
-# Same discount the candidate-set collector uses, so the two stay comparable.
-# The landing result arrives on the final step, so it is shrunk by
-# gamma^(steps - 1): over seeds 1-20 the discounted |delta_r| keeps only ~0.39
-# of the undiscounted landing gap, and a crash that comes later reads as an
-# improvement over one that comes sooner.
-DEFAULT_GAMMA = 0.99
+# No discounting. The landing result arrives on the final step, so any
+# gamma < 1 shrinks it by gamma^(steps - 1) and makes a later crash read as
+# better than an earlier one. Compared over seeds 1-20 with the default
+# candidates:
+#   gamma 0.9   -- a landing at ~200 steps is discounted to ~0; landing and
+#                  crash both give delta_r ~0.
+#   gamma 0.99  -- main_engine crashes every time yet scores delta_r ~+18,
+#                  a third of a real landing (~+58).
+#   gamma 0.999 -- landings stand out (~+169), small timing bias remains.
+#   gamma 1.0   -- crash-vs-crash delta_r is exactly 0 and a landing scores
+#                  the full +200 over a crashing baseline.
+# Undiscounted sums are only safe because every episode is finite: this relies
+# on the environment's 1000-step time limit (EPISODE_STEP_LIMIT), which ends
+# an uncapped episode by truncation if it neither lands nor crashes.
+DEFAULT_GAMMA = 1.0
 
 # Run each episode until the environment ends it. The collector's 200-step cap
 # is deliberately not copied: most landings take longer than that, so a capped
@@ -55,13 +64,16 @@ EPISODE_STEP_LIMIT = 1000
 # Doing nothing: the main engine and both side engines stay off.
 NOOP_BASELINE = CandidatePolicy("noop", _fixed_action_policy(0))
 
-# Lower bound on both appraisal scales. Measured over seeds 1-20 with the
-# default candidates (gamma 0.99, uncapped): mean |delta_r| is about 25 and
-# mean |delta_n| about 134 per component (Safety ~217, Fuel ~52), so the floor
-# does not bind on a normal candidate set. It guards a degenerate one: two
-# crashes differ in delta_r only by when the -100 arrives (|delta_r| ~2 for
-# the side engines), and a set where every candidate crashes would otherwise
-# read that timing noise as a full unit of payoff.
+# Lower bound on both appraisal scales. With gamma = 1.0, delta_r only takes
+# the values 0, +-100 (one side timed out instead of ending) and +-200 (one
+# landed, the other crashed), so there is no crash-timing noise to guard
+# against. Measured over seeds 1-20 with the default candidates (uncapped):
+# the scales are (65, 301) pooled and never below (50, 195) for a single
+# seed, so the floor does not bind on an uncapped set. It guards capped runs
+# instead: with max_steps <= 50 no candidate lands or crashes, every delta_r
+# is 0 (the payoff scale falls back to 1.0), and the motive scale drops to
+# ~6 at max_steps = 10. The floor keeps such a set from producing scales so
+# small that the next non-zero outcome saturates every stimulus.
 APPRAISAL_SCALE_FLOOR = 10.0
 
 

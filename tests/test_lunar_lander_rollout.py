@@ -169,6 +169,19 @@ def test_a_crash_gives_a_negative_task_reward(env):
     assert r_hat < 0.0
 
 
+def test_default_task_reward_is_the_undiscounted_landing_result(env):
+    # The default gamma is 1.0, so the landing result arrives at full size and
+    # every gap is a whole number of landing results.
+    r_hat, _, info = run_episode(env, _fixed_action_policy(0), seed=SEED)
+    assert info["gamma"] == 1.0
+    assert info["crashed"]
+    assert r_hat == -100.0
+
+    _, records = evaluate_candidates(env, _ci_candidates(env), seed=SEED)
+    for record in records:
+        assert record.delta_r in (-200.0, -100.0, 0.0, 100.0, 200.0), record.skill_id
+
+
 def test_an_episode_cut_off_by_max_steps_has_no_task_reward(env):
     r_hat, n_hat, info = run_episode(
         env, _fixed_action_policy(0), seed=SEED, gamma=GAMMA, max_steps=10
