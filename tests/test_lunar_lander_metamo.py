@@ -129,6 +129,19 @@ def test_governor_emits_two_valid_objective_weights() -> None:
     not is_available(),
     reason="MetaMo checkout not found (see bridge/_loader.py for search paths)",
 )
+def test_governor_uses_approved_mapping_and_initial_goals() -> None:
+    governor = make_lunar_lander_governor()
+
+    signal = governor.signal()
+
+    assert signal.weights[0] == pytest.approx(0.6325, abs=1e-3)
+    assert signal.weights[1] == pytest.approx(0.3675, abs=1e-3)
+
+
+@pytest.mark.skipif(
+    not is_available(),
+    reason="MetaMo checkout not found (see bridge/_loader.py for search paths)",
+)
 def test_repeated_threatening_outcomes_raise_safety_weight() -> None:
     governor = make_lunar_lander_governor()
     baseline = governor.signal()
