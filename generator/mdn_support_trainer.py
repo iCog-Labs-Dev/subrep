@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -22,6 +23,9 @@ class SupportTrainerConfig:
     weight_decay: float = 1e-4
     gradient_clip_norm: float = 1.0
     min_contexts_to_train: int = 1
+    max_epochs: int = 500
+    early_stopping_patience: int = 50
+    min_delta: float = 1e-6
     checkpoint_path: str = "models/mdn_support_best.pth"
 
 
@@ -55,7 +59,7 @@ class MDNSupportTrainer:
             return None
 
         self.model.train()
-        self.optimizer.zero_grad(set_to_none=True)
+        self.model.zero_grad(set_to_none=True)
 
         contexts = torch.tensor(np.stack([item[0] for item in targets], axis=0), dtype=torch.float32, device=self.device)
         target_values = torch.tensor(np.stack([item[1] for item in targets], axis=0), dtype=torch.float32, device=self.device)
@@ -76,6 +80,96 @@ class MDNSupportTrainer:
 
         return float(loss.item())
 
+    def evaluation_metrics(self, store: WeightSetStore) -> dict[str, float]:
+        """Evaluate support regression without updating the model."""
+        targets = store.get_all_support_targets()
+        if not targets:
+            raise ValueError("Support evaluation requires at least one target context")
+
+        contexts = torch.tensor(
+            np.stack([item[0] for item in targets], axis=0),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        target_values = torch.tensor(
+            np.stack([item[1] for item in targets], axis=0),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        self.model.eval()
+        with torch.no_grad():
+            _, predictions = self.model.forward_inference(contexts)
+            errors = predictions - target_values
+        return {
+            "mse": float(torch.mean(errors.square()).item()),
+            "mae": float(torch.mean(torch.abs(errors)).item()),
+            "feasibility_violation_rate": self._feasibility_violation_rate(predictions),
+        }
+
+    def fit(self, validation_store: WeightSetStore) -> dict[str, float]:
+        """Fit on the attached training store and select by validation MSE."""
+        if self.store.context_count() < self.config.min_contexts_to_train:
+            raise ValueError(
+                "Training store does not meet min_contexts_to_train: "
+                f"{self.store.context_count()} < {self.config.min_contexts_to_train}"
+            )
+        if self.config.max_epochs <= 0:
+            raise ValueError(f"max_epochs must be positive, got {self.config.max_epochs}")
+        if self.config.early_stopping_patience < 0:
+            raise ValueError(
+                "early_stopping_patience must be non-negative, got "
+                f"{self.config.early_stopping_patience}"
+            )
+
+        initial_validation = self.evaluation_metrics(validation_store)
+        best_validation_mse = initial_validation["mse"]
+        best_epoch = 0
+        best_support_state = copy.deepcopy(self.model.support_head.state_dict())
+        best_optimizer_state = copy.deepcopy(self.optimizer.state_dict())
+        epochs_without_improvement = 0
+        last_train_loss = float("nan")
+        epochs_completed = 0
+
+        for epoch in range(1, self.config.max_epochs + 1):
+            train_loss = self.training_step()
+            if train_loss is None:
+                raise ValueError("Support training unexpectedly produced no loss")
+            last_train_loss = train_loss
+            epochs_completed = epoch
+            validation_mse = self.evaluation_metrics(validation_store)["mse"]
+            if validation_mse < best_validation_mse - self.config.min_delta:
+                best_validation_mse = validation_mse
+                best_epoch = epoch
+                best_support_state = copy.deepcopy(self.model.support_head.state_dict())
+                best_optimizer_state = copy.deepcopy(self.optimizer.state_dict())
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+
+            if (
+                self.config.early_stopping_patience > 0
+                and epochs_without_improvement >= self.config.early_stopping_patience
+            ):
+                break
+
+        self.model.support_head.load_state_dict(best_support_state)
+        self.optimizer.load_state_dict(best_optimizer_state)
+        final_train = self.evaluation_metrics(self.store)
+        final_validation = self.evaluation_metrics(validation_store)
+        return {
+            "epochs_completed": float(epochs_completed),
+            "best_epoch": float(best_epoch),
+            "last_train_step_mse": float(last_train_loss),
+            "train_mse": final_train["mse"],
+            "train_mae": final_train["mae"],
+            "validation_mse": final_validation["mse"],
+            "validation_mae": final_validation["mae"],
+            "initial_validation_mse": initial_validation["mse"],
+            "validation_feasibility_violation_rate": final_validation[
+                "feasibility_violation_rate"
+            ],
+        }
+
     @staticmethod
     def _feasibility_violation_rate(support_values: torch.Tensor) -> float:
         """Fraction of predictions violating either W_x feasibility constraint.
@@ -89,17 +183,22 @@ class MDNSupportTrainer:
         violations = (out_of_range | empty_region).float()
         return float(violations.mean().item())
 
-    def save_checkpoint(self, path: str | Path | None = None) -> str:
+    def save_checkpoint(
+        self,
+        path: str | Path | None = None,
+        *,
+        metadata: dict[str, object] | None = None,
+    ) -> str:
         checkpoint_path = Path(path or self.config.checkpoint_path)
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(
-            {
-                "model_state_dict": self.model.state_dict(),
-                "optimizer_state_dict": self.optimizer.state_dict(),
-                "config": self.config.__dict__,
-            },
-            checkpoint_path,
-        )
+        payload: dict[str, object] = {
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "config": self.config.__dict__,
+        }
+        if metadata is not None:
+            payload["support_training"] = metadata
+        torch.save(payload, checkpoint_path)
         return str(checkpoint_path)
 
     @classmethod

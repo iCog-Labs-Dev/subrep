@@ -8,6 +8,13 @@ The repo uses two generated data formats:
 Generated datasets are ignored by git and should be regenerated locally unless
 attached as an external artifact.
 
+> **Datasets collected before `fix/lunar-lander-fuel-reward-sign` are stale.**
+> The wrapper negated the engine-cost sum, inverting the `Fuel` motive. A positive
+> `motives[1]` on a rollout that fired an engine marks an old-mapping file; the
+> corrected value is always `<= 0`. Recollect before training an MDN, and retrain
+> `models/mdn_auxiliary_best.pth`. Safety-Gymnasium rollouts use a separate
+> adapter and are unaffected.
+
 ## Raw Rollout Records
 
 Default path:

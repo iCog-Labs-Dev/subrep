@@ -101,6 +101,19 @@ def test_probability_aware_log_roundtrip(tmp_path):
 
     assert str(np.asarray(loaded["selected_skill_id"]).reshape(()).item()) == "main_engine"
     assert loaded["metadata"]["behavior_policy"] == "epsilon_softmax_certified_candidates"
+    assert loaded["candidate_epsilons"].shape == (3,)
+
+
+def test_probability_aware_log_preserves_pds_epsilon(tmp_path):
+    record = _log_record()
+    record["candidate_gate_types"] = np.asarray(["PDS", "PDS", "PDS"])
+    record["candidate_epsilons"] = np.asarray([0.2, 0.2, 0.2], dtype=np.float32)
+    path = tmp_path / "pds_runtime_log.npz"
+
+    save_probability_aware_log(path, **record)
+    loaded = load_probability_aware_log(path)
+
+    assert np.allclose(loaded["candidate_epsilons"], np.asarray([0.2, 0.2, 0.2]))
 
 
 def test_probability_aware_log_rejects_missing_behavior_probability():

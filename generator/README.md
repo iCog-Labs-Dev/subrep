@@ -118,6 +118,13 @@ Support values are trained separately by `MDNSupportTrainer`
 support-function targets from a `WeightSetStore`, driven via
 `utils.mdn_support_pipeline.observe_and_train_support`.
 
+For offline, leakage-controlled support fitting, use
+`generator.train_mdn_support`. It groups every observed vertex for one context
+into the same train, validation, or test partition; uses validation MSE for
+model selection; and evaluates the untouched test partition against `StubMDN`
+and `FULL_SIMPLEX`. Generated reports include target semantics, metric
+definitions, and limitations.
+
 Two things to know about that trainer:
 
 - It exposes `last_feasibility_violation_rate`, a **diagnostic only** — never
@@ -138,8 +145,8 @@ Recommended training collection:
 
 ```bash
 python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 42 --prefix seed42
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 43 --prefix seed43
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 44 --prefix seed44
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10042 --prefix seed10042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 20042 --prefix seed20042
 ```
 
 This gives 3,000 contexts and 21,000 candidate outcomes with the default seven
@@ -148,10 +155,14 @@ candidate policies.
 Recommended held-out collection:
 
 ```bash
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 100 --prefix seed100
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 101 --prefix seed101
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 102 --prefix seed102
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 30042 --prefix seed30042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 40042 --prefix seed40042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets_eval --seed 50042 --prefix seed50042
 ```
+
+These ranges are intentionally separated. Do not use consecutive base seeds for
+multi-context collections: each run uses `base_seed + context_index`, so
+consecutive bases create almost entirely overlapping context seeds.
 
 ## Train the MDN
 
@@ -175,6 +186,69 @@ Training phases:
 - Q-target normalization: enabled by default and stored in checkpoints,
 - best auxiliary checkpoint restore: final policy and auxiliary checkpoints share
   the best validation state.
+
+### Train and evaluate the support head
+
+Collect probability-aware runtime decisions with the trained policy checkpoint.
+These logs contain the context, certified selected weight, and every candidate's
+certification deltas, so the same collected records can provide support targets
+and held-out downstream metrics:
+
+```bash
+python -m data_collector.collect_probability_aware_runtime_logs \
+  --decisions 3000 \
+  --save-dir data/mdn_support_runtime_logs \
+  --seed 60042 \
+  --prefix learned \
+  --behavior-mdn-checkpoint models/mdn_policy_best.pth \
+  --map-location cpu
+```
+
+Support prediction and admission metrics need one observation per context. A
+real motive-shift reuse metric needs at least two distinct observed weights at
+the same context. Collect a second pass with the same context seeds and a
+different behavior weight when that metric is required:
+
+```bash
+python -m data_collector.collect_probability_aware_runtime_logs \
+  --decisions 3000 \
+  --save-dir data/mdn_support_runtime_logs \
+  --seed 60042 \
+  --prefix comparison \
+  --behavior-weights 0.2 0.8 \
+  --gate-type PDS \
+  --pds-epsilon 0.1 \
+  --map-location cpu
+```
+
+This second pass also supplies PDS examples; the first pass supplies CDS
+examples. The evaluator reports motive-shift context coverage and leaves reuse
+metrics unavailable instead of treating a single observed weight as a shift.
+
+Fit only the support head, select it on a context-disjoint validation split, and
+evaluate the untouched test split:
+
+```bash
+python -m generator.train_mdn_support \
+  --base-checkpoint models/mdn_policy_best.pth \
+  --runtime-log-dir data/mdn_support_runtime_logs \
+  --runtime-log-pattern "*.npz" \
+  --output-checkpoint models/mdn_support_best.pth \
+  --output-dir data/mdn_support_evaluation \
+  --seed 42 \
+  --device cpu
+```
+
+This writes the split stores and manifest, the selected support checkpoint,
+`support_experiment.json`, and `support_test_report.md`. The report includes
+support error and feasibility, CDS/PDS agreement, false admission/rejection,
+reuse under the logged motive weights, and comparisons with `StubMDN`,
+`FULL_SIMPLEX`, and the training-mean constant baseline.
+
+`--weight-store` remains available when a `RuntimeCertificationPipeline` has
+already persisted `data/weight_store.json`. In that mode, pass a matching
+`--candidate-data-dir` to compute downstream candidate metrics; otherwise those
+metrics are explicitly reported as unavailable.
 
 Optional experimental flags:
 
@@ -204,7 +278,9 @@ The evaluator reports:
 - per-objective Q MSE and MAE,
 - bootstrap confidence intervals.
 
-Reference held-out validation after the support-geometry fix:
+Historical candidate-set validation after the support-geometry fix (not a
+support-head evaluation, and not leakage-free under the old overlapping seed
+commands):
 
 | Metric | Mean |
 |---|---:|
@@ -262,6 +338,7 @@ python -m pytest tests/test_generator.py tests/test_generator_training.py -v
 python -m pytest tests/test_mdn.py tests/test_mdn_skill_selection.py -v
 # SASP guarantees + downstream generalization
 python -m pytest tests/test_skill_library.py tests/test_mdn_support_trainer.py tests/test_mdn_stub.py -v
+python -m pytest tests/test_mdn_support_data.py tests/test_evaluate_mdn_support.py tests/test_train_mdn_support.py -v
 python -m pytest tests/test_train_mdn_candidate_sets.py tests/test_evaluate_mdn_candidate_sets.py -v
 python -m pytest tests/test_trained_mdn_end_to_end.py tests/test_trained_mdn_zero_shot.py -v
 ```
