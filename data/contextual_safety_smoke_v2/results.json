@@ -1,0 +1,306 @@
+[
+  {
+    "training_seed": 42,
+    "context_seed": 90011,
+    "scenario": "balanced",
+    "weight": [
+      0.3333333333333333,
+      0.3333333333333333,
+      0.3333333333333333
+    ],
+    "skill_id": null,
+    "policy": "zero_action",
+    "fallback": true,
+    "actual_motives": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90011,
+    "scenario": "safety",
+    "weight": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "skill_id": null,
+    "policy": "zero_action",
+    "fallback": true,
+    "actual_motives": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90011,
+    "scenario": "task",
+    "weight": [
+      0.1,
+      0.8,
+      0.1
+    ],
+    "skill_id": null,
+    "policy": "zero_action",
+    "fallback": true,
+    "actual_motives": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90011,
+    "scenario": "effort",
+    "weight": [
+      0.1,
+      0.1,
+      0.8
+    ],
+    "skill_id": null,
+    "policy": "zero_action",
+    "fallback": true,
+    "actual_motives": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90012,
+    "scenario": "balanced",
+    "weight": [
+      0.3333333333333333,
+      0.3333333333333333,
+      0.3333333333333333
+    ],
+    "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "policy": "small_random",
+    "fallback": false,
+    "actual_motives": [
+      0.0,
+      -0.017586393127677225,
+      -1.761954896595852
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90012,
+    "scenario": "safety",
+    "weight": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "policy": "small_random",
+    "fallback": false,
+    "actual_motives": [
+      0.0,
+      -0.017586393127677225,
+      -1.761954896595852
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90012,
+    "scenario": "task",
+    "weight": [
+      0.1,
+      0.8,
+      0.1
+    ],
+    "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "policy": "small_random",
+    "fallback": false,
+    "actual_motives": [
+      0.0,
+      -0.017586393127677225,
+      -1.761954896595852
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90012,
+    "scenario": "effort",
+    "weight": [
+      0.1,
+      0.1,
+      0.8
+    ],
+    "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "policy": "small_random",
+    "fallback": false,
+    "actual_motives": [
+      0.0,
+      -0.017586393127677225,
+      -1.761954896595852
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90013,
+    "scenario": "balanced",
+    "weight": [
+      0.3333333333333333,
+      0.3333333333333333,
+      0.3333333333333333
+    ],
+    "skill_id": null,
+    "policy": "zero_action",
+    "fallback": true,
+    "actual_motives": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90013,
+    "scenario": "safety",
+    "weight": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "skill_id": null,
+    "policy": "zero_action",
+    "fallback": true,
+    "actual_motives": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90013,
+    "scenario": "task",
+    "weight": [
+      0.1,
+      0.8,
+      0.1
+    ],
+    "skill_id": null,
+    "policy": "zero_action",
+    "fallback": true,
+    "actual_motives": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90013,
+    "scenario": "effort",
+    "weight": [
+      0.1,
+      0.1,
+      0.8
+    ],
+    "skill_id": null,
+    "policy": "zero_action",
+    "fallback": true,
+    "actual_motives": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90014,
+    "scenario": "balanced",
+    "weight": [
+      0.3333333333333333,
+      0.3333333333333333,
+      0.3333333333333333
+    ],
+    "skill_id": "small_random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "policy": "small_random",
+    "fallback": false,
+    "actual_motives": [
+      0.0,
+      0.03852163889731649,
+      -1.8003453349223824
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90014,
+    "scenario": "safety",
+    "weight": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "skill_id": "small_random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "policy": "small_random",
+    "fallback": false,
+    "actual_motives": [
+      0.0,
+      0.03852163889731649,
+      -1.8003453349223824
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90014,
+    "scenario": "task",
+    "weight": [
+      0.1,
+      0.8,
+      0.1
+    ],
+    "skill_id": "small_random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "policy": "small_random",
+    "fallback": false,
+    "actual_motives": [
+      0.0,
+      0.03852163889731649,
+      -1.8003453349223824
+    ],
+    "goals": 0
+  },
+  {
+    "training_seed": 42,
+    "context_seed": 90014,
+    "scenario": "effort",
+    "weight": [
+      0.1,
+      0.1,
+      0.8
+    ],
+    "skill_id": "small_random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "policy": "small_random",
+    "fallback": false,
+    "actual_motives": [
+      0.0,
+      0.03852163889731649,
+      -1.8003453349223824
+    ],
+    "goals": 0
+  }
+]

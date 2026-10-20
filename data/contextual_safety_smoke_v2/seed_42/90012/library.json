@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "skill_count": 1,
+  "skills": {
+    "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46": {
+      "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+      "gate_type": "PDS",
+      "certificate": {
+        "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+        "gate_type": "PDS",
+        "delta_r": 0.045215055687725186,
+        "delta_n": [
+          0.0,
+          0.045215055687725186,
+          -0.09426342767124837
+        ],
+        "admission_margin": 0.15095162801647682,
+        "epsilon": 0.2,
+        "timestamp": "2026-10-15T13:49:08.452734+00:00",
+        "seed": 42,
+        "gamma": 0.99,
+        "baseline_id": "zero_action",
+        "environment": "SafetyPointGoal1-v0",
+        "episode_length": 200,
+        "version": "exact-context-v1",
+        "weight_region_type": "FULL_SIMPLEX",
+        "certification_context": null,
+        "mdn_alpha": null,
+        "wx_support_directions": null,
+        "wx_support_values": null
+      },
+      "executions": 0,
+      "success_rate": 0.0,
+      "avg_payoff": 0.0,
+      "weight_region_type": "FULL_SIMPLEX"
+    }
+  }
+}

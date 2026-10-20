@@ -470,3 +470,74 @@ Vertex enumeration was retired because its cost grows combinatorially with M.
 - Add MetaMo integration for dynamic weight management and risk budgets.
 - Explore cross-paradigm skill sources through logic macros and evolutionary programs.
 - Expand benchmark comparisons against MORL baselines.
+
+### Exact-context certification and reuse pilot
+
+Run from this directory in the `subrep-safety` environment:
+
+```bash
+conda run --no-capture-output -n subrep-safety python -m demo.run_contextual_safety_benchmark \
+  --output data/contextual_safety_smoke_v1 \
+  --training-seeds 42 --development-contexts 10 --contexts 4 --max-steps 200
+```
+
+Use a new output directory for every run. This runs existing policies; it does
+not train them. `report.md` lists individual admission paths and re-execution
+outcomes. `admissions.json` includes margins and unavailable MDN checks.
+Each seed directory contains raw development/evidence records with initial
+observations; each context directory contains its library, pre-execution
+selection, and subsequent execution outcomes.
+
+Certificates apply only to the same environment configuration, reset seed and
+exact initial observation. Full-simplex certification does not waive this
+context check. This pilot does not establish transfer to unseen situations.
+Policies are re-executed from the same start; deterministic policies can produce
+identical outcomes. Random policies use a separate repetition seed. Task payoff
+still also appears in the motive vector, matching the previous benchmark.
+
+The ordered admission path is full-simplex CDS, full-simplex PDS, MDN-region CDS,
+then MDN-region PDS, stopping at the first pass. Without a checkpoint, MDN checks
+are explicitly unavailable. To enable them, append `--mdn-checkpoint PATH
+--mdn-contract CONTRACT.json`. The model must use three objectives and raw native
+flat observations, with a compatible SASP head. The training-associated contract
+must contain:
+
+```json
+{"environment":"SafetyPointGoal1-v0","observation_schema":"native_flat_v1","objectives":["safety","task","control_efficiency"]}
+```
+
+This contract must describe the actual training inputs; it is not a conversion
+for an incompatible model. Learned regions are stored with certificates and
+queries outside those regions cannot reuse those entries. The contextual runner
+applies these checks explicitly; the older batch-average runner is unchanged.
+
+### Three-objective Safety-Gymnasium data with the existing MDN trainer
+
+The MDN architecture and its context-only inference / context-plus-skill-ID
+auxiliary paths are unchanged. The candidate-set record builder infers M from
+the outcomes. Use `--baseline-candidate-id zero_action` to use the measured
+baseline from each starting context, rather than running a LunarLander baseline.
+The baseline remains in the candidate set, as an explicit zero-improvement option.
+
+```bash
+python -m data_collector.collect_safety_gymnasium_rollouts \
+  --objectives 3 --contexts 300 --seed 120000 --max-steps 200 \
+  --save-dir data/safety_mdn3_train_v1 --prefix train \
+  --ppo-checkpoint models/safety_ppo_fixed_seed42_updates50.pt \
+  --ppo-lagrangian-checkpoint models/safety_ppo_lagrangian_fixed_seed42_updates50.pt
+
+python -m generator.train_mdn_candidate_sets \
+  --data-dir data/safety_mdn3_train_v1 --baseline-candidate-id zero_action \
+  --device cpu --seed 42 \
+  --policy-checkpoint models/safety_mdn3_policy_v1.pth \
+  --auxiliary-checkpoint models/safety_mdn3_auxiliary_v1.pth
+```
+
+Use fresh directories/checkpoint paths and keep separate context seeds reserved
+for final evaluation. These commands retain the existing training objectives,
+normalization, skill-ID mapping and policy/auxiliary phases. They do not introduce
+manual priority labels. The existing candidate-set trainer does not explicitly
+supervise support-region targets; SASP feasibility alone does not validate a
+learned region. Review support learning and held-out region coverage separately
+before claiming MDN-based certification quality. Its internal validation is not
+a substitute for a separate untouched benchmark test set.

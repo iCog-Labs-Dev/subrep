@@ -1,0 +1,1230 @@
+[
+  {
+    "training_seed": 42,
+    "context_key": "835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "context_seed": 90011,
+    "policy_id": "small_random:fixed_v1",
+    "skill_id": "small_random:fixed_v1:835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "delta_r": -0.39131578781584014,
+    "delta_n": [
+      0.0,
+      -0.39131578781584014,
+      -0.1012148078512555
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.7826315756316803
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.5826315756316802
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "context_seed": 90011,
+    "policy_id": "random:fixed_v1",
+    "skill_id": "random:fixed_v1:835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "delta_r": -0.2871723448581176,
+    "delta_n": [
+      0.0,
+      -0.2871723448581176,
+      -1.5741292174747052
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -1.8613015623328228
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -1.661301562332823
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "context_seed": 90011,
+    "policy_id": "axis0_positive:fixed_v1",
+    "skill_id": "axis0_positive:fixed_v1:835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "delta_r": -4.1277480991022415,
+    "delta_n": [
+      0.0,
+      -4.1277480991022415,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -8.255496198204483
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -8.055496198204484
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "context_seed": 90011,
+    "policy_id": "axis0_negative:fixed_v1",
+    "skill_id": "axis0_negative:fixed_v1:835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "delta_r": -1.2864632075703732,
+    "delta_n": [
+      0.0,
+      -1.2864632075703732,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -2.5729264151407465
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -2.3729264151407463
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "context_seed": 90011,
+    "policy_id": "axis1_positive:fixed_v1",
+    "skill_id": "axis1_positive:fixed_v1:835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "delta_r": -0.007137151335989734,
+    "delta_n": [
+      0.0,
+      -0.007137151335989734,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.3032836866173574
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.10328368661735737
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "context_seed": 90011,
+    "policy_id": "axis1_negative:fixed_v1",
+    "skill_id": "axis1_negative:fixed_v1:835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "delta_r": -0.004608746379720312,
+    "delta_n": [
+      0.0,
+      -0.004608746379720312,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.30075528166108795
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.10075528166108794
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "context_seed": 90011,
+    "policy_id": "ppo:396e2530f4463d562ce2d50b470a6688cbd8b8a49c47d99189ed51f4b0634baa",
+    "skill_id": "ppo:396e2530f4463d562ce2d50b470a6688cbd8b8a49c47d99189ed51f4b0634baa:835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "delta_r": 2.2207333446023356,
+    "delta_n": [
+      -5.9833228731760375,
+      2.2207333446023356,
+      -1.7212061592875263
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -3.762589528573702
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -3.5625895285737017
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "context_seed": 90011,
+    "policy_id": "ppo_lagrangian:79cddad116bb90aaa1f693f7551e907fc75130c1fa358f98768eea7e66c90007",
+    "skill_id": "ppo_lagrangian:79cddad116bb90aaa1f693f7551e907fc75130c1fa358f98768eea7e66c90007:835977c1df221995f268b62f00770b08b721464b8af89cabcb4968f236403c80",
+    "delta_r": 0.8077527749807156,
+    "delta_n": [
+      -13.056113681254415,
+      0.8077527749807156,
+      -3.543976054036708
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -12.2483609062737
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -12.0483609062737
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "context_seed": 90012,
+    "policy_id": "small_random:fixed_v1",
+    "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "delta_r": 0.045215055687725186,
+    "delta_n": [
+      0.0,
+      0.045215055687725186,
+      -0.09426342767124837
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.04904837198352319
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "passed",
+        "margin": 0.15095162801647682
+      }
+    ],
+    "admitted": true,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "context_seed": 90012,
+    "policy_id": "random:fixed_v1",
+    "skill_id": "random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "delta_r": -0.1413611142373066,
+    "delta_n": [
+      0.0,
+      -0.1413611142373066,
+      -1.5697118210974625
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -1.7110729353347691
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -1.5110729353347692
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "context_seed": 90012,
+    "policy_id": "axis0_positive:fixed_v1",
+    "skill_id": "axis0_positive:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "delta_r": -1.74321554563024,
+    "delta_n": [
+      -7.544298007241283,
+      -1.74321554563024,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -9.287513552871523
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -9.087513552871524
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "context_seed": 90012,
+    "policy_id": "axis0_negative:fixed_v1",
+    "skill_id": "axis0_negative:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "delta_r": -2.8887441225235815,
+    "delta_n": [
+      0.0,
+      -2.8887441225235815,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -5.777488245047163
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -5.577488245047163
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "context_seed": 90012,
+    "policy_id": "axis1_positive:fixed_v1",
+    "skill_id": "axis1_positive:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "delta_r": 0.003605910109181288,
+    "delta_n": [
+      0.0,
+      0.003605910109181288,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.2925406251721864
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.09254062517218636
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "context_seed": 90012,
+    "policy_id": "axis1_negative:fixed_v1",
+    "skill_id": "axis1_negative:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "delta_r": -6.155254756227357e-05,
+    "delta_n": [
+      0.0,
+      -6.155254756227357e-05,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.29620808782892993
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.09620808782892992
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "context_seed": 90012,
+    "policy_id": "ppo:396e2530f4463d562ce2d50b470a6688cbd8b8a49c47d99189ed51f4b0634baa",
+    "skill_id": "ppo:396e2530f4463d562ce2d50b470a6688cbd8b8a49c47d99189ed51f4b0634baa:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "delta_r": -0.5277708733031193,
+    "delta_n": [
+      -5.971526385305508,
+      -0.5277708733031193,
+      -1.4484859913091601
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -6.499297258608627
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -6.299297258608627
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "context_seed": 90012,
+    "policy_id": "ppo_lagrangian:79cddad116bb90aaa1f693f7551e907fc75130c1fa358f98768eea7e66c90007",
+    "skill_id": "ppo_lagrangian:79cddad116bb90aaa1f693f7551e907fc75130c1fa358f98768eea7e66c90007:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "delta_r": -1.2664083142518108,
+    "delta_n": [
+      0.0,
+      -1.2664083142518108,
+      -3.543088811304578
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -4.809497125556389
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -4.609497125556389
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "context_seed": 90013,
+    "policy_id": "small_random:fixed_v1",
+    "skill_id": "small_random:fixed_v1:360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "delta_r": -0.42513499161062307,
+    "delta_n": [
+      0.0,
+      -0.42513499161062307,
+      -0.10475868181470151
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.8502699832212461
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.6502699832212462
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "context_seed": 90013,
+    "policy_id": "random:fixed_v1",
+    "skill_id": "random:fixed_v1:360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "delta_r": 0.09533920953674281,
+    "delta_n": [
+      0.0,
+      0.09533920953674281,
+      -1.7235910218103785
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -1.6282518122736356
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -1.4282518122736356
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "context_seed": 90013,
+    "policy_id": "axis0_positive:fixed_v1",
+    "skill_id": "axis0_positive:fixed_v1:360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "delta_r": 0.26627619032547806,
+    "delta_n": [
+      -7.8485997971402695,
+      0.26627619032547806,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -7.582323606814791
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -7.382323606814791
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "context_seed": 90013,
+    "policy_id": "axis0_negative:fixed_v1",
+    "skill_id": "axis0_negative:fixed_v1:360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "delta_r": -4.330919686593068,
+    "delta_n": [
+      0.0,
+      -4.330919686593068,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -8.661839373186137
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -8.461839373186137
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "context_seed": 90013,
+    "policy_id": "axis1_positive:fixed_v1",
+    "skill_id": "axis1_positive:fixed_v1:360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "delta_r": 0.006288543485061267,
+    "delta_n": [
+      0.0,
+      0.006288543485061267,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.2898579917963064
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.08985799179630638
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "context_seed": 90013,
+    "policy_id": "axis1_negative:fixed_v1",
+    "skill_id": "axis1_negative:fixed_v1:360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "delta_r": 0.007941492334875188,
+    "delta_n": [
+      0.0,
+      0.007941492334875188,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.28820504294649246
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.08820504294649245
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "context_seed": 90013,
+    "policy_id": "ppo:396e2530f4463d562ce2d50b470a6688cbd8b8a49c47d99189ed51f4b0634baa",
+    "skill_id": "ppo:396e2530f4463d562ce2d50b470a6688cbd8b8a49c47d99189ed51f4b0634baa:360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "delta_r": 0.9018455242728689,
+    "delta_n": [
+      -10.678823949184995,
+      0.9018455242728689,
+      -1.8048199703019931
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -9.776978424912127
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -9.576978424912127
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "context_seed": 90013,
+    "policy_id": "ppo_lagrangian:79cddad116bb90aaa1f693f7551e907fc75130c1fa358f98768eea7e66c90007",
+    "skill_id": "ppo_lagrangian:79cddad116bb90aaa1f693f7551e907fc75130c1fa358f98768eea7e66c90007:360186d9b687586b263d215a83f0cd4e8950c1425bd2087d954ff9ad9e790bba",
+    "delta_r": -0.13043117729532339,
+    "delta_n": [
+      0.0,
+      -0.13043117729532339,
+      -3.542220311743464
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -3.6726514890387874
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -3.472651489038787
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "context_seed": 90014,
+    "policy_id": "small_random:fixed_v1",
+    "skill_id": "small_random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "delta_r": -0.004532104147933677,
+    "delta_n": [
+      0.0,
+      -0.004532104147933677,
+      -0.10679628631513795
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.11132839046307162
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "passed",
+        "margin": 0.08867160953692839
+      }
+    ],
+    "admitted": true,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "context_seed": 90014,
+    "policy_id": "random:fixed_v1",
+    "skill_id": "random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "delta_r": -0.34298532990189956,
+    "delta_n": [
+      0.0,
+      -0.34298532990189956,
+      -1.737888929188049
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -2.0808742590899487
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -1.8808742590899488
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "context_seed": 90014,
+    "policy_id": "axis0_positive:fixed_v1",
+    "skill_id": "axis0_positive:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "delta_r": 1.0899039981333372,
+    "delta_n": [
+      -10.496878590797431,
+      1.0899039981333372,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -9.406974592664094
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -9.206974592664094
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "context_seed": 90014,
+    "policy_id": "axis0_negative:fixed_v1",
+    "skill_id": "axis0_negative:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "delta_r": -4.485843038094113,
+    "delta_n": [
+      0.0,
+      -4.485843038094113,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -8.971686076188226
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -8.771686076188226
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "context_seed": 90014,
+    "policy_id": "axis1_positive:fixed_v1",
+    "skill_id": "axis1_positive:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "delta_r": 0.008116956298807657,
+    "delta_n": [
+      0.0,
+      0.008116956298807657,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.28802957898256
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.08802957898255998
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "context_seed": 90014,
+    "policy_id": "axis1_negative:fixed_v1",
+    "skill_id": "axis1_negative:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "delta_r": 0.0075109372472269885,
+    "delta_n": [
+      0.0,
+      0.0075109372472269885,
+      -0.29614653528136764
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -0.28863559803414063
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -0.08863559803414062
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "context_seed": 90014,
+    "policy_id": "ppo:396e2530f4463d562ce2d50b470a6688cbd8b8a49c47d99189ed51f4b0634baa",
+    "skill_id": "ppo:396e2530f4463d562ce2d50b470a6688cbd8b8a49c47d99189ed51f4b0634baa:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "delta_r": 3.2029209451462393,
+    "delta_n": [
+      -11.544382265458756,
+      3.2029209451462393,
+      -1.8087160660909027
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -8.341461320312517
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -8.141461320312517
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  },
+  {
+    "training_seed": 42,
+    "context_key": "c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "context_seed": 90014,
+    "policy_id": "ppo_lagrangian:79cddad116bb90aaa1f693f7551e907fc75130c1fa358f98768eea7e66c90007",
+    "skill_id": "ppo_lagrangian:79cddad116bb90aaa1f693f7551e907fc75130c1fa358f98768eea7e66c90007:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+    "delta_r": -0.7794509818063059,
+    "delta_n": [
+      -5.132978520159522,
+      -0.7794509818063059,
+      -3.5430186138679316
+    ],
+    "attempts": [
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "CDS",
+        "status": "failed",
+        "margin": -5.912429501965828
+      },
+      {
+        "region": "FULL_SIMPLEX",
+        "gate": "PDS",
+        "status": "failed",
+        "margin": -5.712429501965828
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "CDS",
+        "status": "unavailable"
+      },
+      {
+        "region": "MDN_WX",
+        "gate": "PDS",
+        "status": "unavailable"
+      }
+    ],
+    "admitted": false,
+    "evidence": "seed_42/evidence.json"
+  }
+]

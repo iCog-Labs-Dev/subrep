@@ -1,0 +1,83 @@
+{
+  "config": {
+    "output": "data/contextual_safety_smoke_v1",
+    "training_seeds": [
+      42
+    ],
+    "ppo_template": "models/safety_ppo_fixed_seed{seed}_updates50.pt",
+    "lagrangian_template": "models/safety_ppo_lagrangian_fixed_seed{seed}_updates50.pt",
+    "env_id": "SafetyPointGoal1-v0",
+    "seed": 90000,
+    "development_contexts": 10,
+    "contexts": 4,
+    "batches": 5,
+    "max_steps": 200,
+    "epsilon": 0.2,
+    "gamma": 0.99,
+    "bootstrap_samples": 2000
+  },
+  "checkpoints": [
+    {
+      "training_seed": 42,
+      "policy": "ppo",
+      "path": "/home/tarik/omegaclaw/subrep/models/safety_ppo_fixed_seed42_updates50.pt",
+      "sha256": "8fa4bfa1f5d68a3529d8af334ade73fc6c37acbcee147578cc8a2a1c6ce929e3",
+      "parameter_sha256": "396e2530f4463d562ce2d50b470a6688cbd8b8a49c47d99189ed51f4b0634baa",
+      "training_config": {
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "clip_ratio": 0.2,
+        "learning_rate": 0.0003,
+        "rollout_steps": 1024,
+        "update_epochs": 4,
+        "minibatch_size": 256,
+        "value_coef": 0.5,
+        "entropy_coef": 0.01,
+        "max_grad_norm": 0.5,
+        "total_updates": 50,
+        "max_episode_steps": 200,
+        "cost_penalty": 0.0,
+        "use_lagrangian": false,
+        "cost_limit": 1.0,
+        "lambda_lr": 0.05,
+        "initial_lagrange_multiplier": 1.0,
+        "max_lagrange_multiplier": 50.0,
+        "seed": 42
+      }
+    },
+    {
+      "training_seed": 42,
+      "policy": "ppo_lagrangian",
+      "path": "/home/tarik/omegaclaw/subrep/models/safety_ppo_lagrangian_fixed_seed42_updates50.pt",
+      "sha256": "90ecfec1f4ff3caea152e7760bf31dc1d0cd606204bb47f72931ebf5a800a451",
+      "parameter_sha256": "79cddad116bb90aaa1f693f7551e907fc75130c1fa358f98768eea7e66c90007",
+      "training_config": {
+        "gamma": 0.99,
+        "gae_lambda": 0.95,
+        "clip_ratio": 0.2,
+        "learning_rate": 0.0003,
+        "rollout_steps": 1024,
+        "update_epochs": 4,
+        "minibatch_size": 256,
+        "value_coef": 0.5,
+        "entropy_coef": 0.01,
+        "max_grad_norm": 0.5,
+        "total_updates": 50,
+        "max_episode_steps": 200,
+        "cost_penalty": 1.0,
+        "use_lagrangian": true,
+        "cost_limit": 1.0,
+        "lambda_lr": 0.05,
+        "initial_lagrange_multiplier": 1.0,
+        "max_lagrange_multiplier": 50.0,
+        "seed": 42
+      }
+    }
+  ],
+  "scope": "Exact reset seed and observation only; same-start re-execution, not unseen-context transfer",
+  "score": "normalized task payoff plus weighted motives; task contributes twice",
+  "mdn_checkpoint": null,
+  "mdn_contract": null,
+  "mdn_sha256": null,
+  "source_sha256": "9c08a4601c6e123d4503be77caa7f554113f8e908410e86c5cb271a0752a36ca"
+}

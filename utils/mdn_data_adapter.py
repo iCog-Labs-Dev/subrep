@@ -56,6 +56,7 @@ def candidate_set_file_to_prepared_candidate_outcomes(
     *,
     default_gate_type: str = "CDS",
     default_epsilon: float | None = None,
+    baseline_candidate_id: str | None = None,
 ) -> tuple[PreparedCandidateOutcome, ...]:
     """Load one candidate-set `.npz` file into MDN prepared outcomes.
 
@@ -91,13 +92,21 @@ def candidate_set_file_to_prepared_candidate_outcomes(
     if not np.all(np.isfinite(context)) or not np.all(np.isfinite(payoffs)) or not np.all(np.isfinite(motives)):
         raise ValueError("candidate-set fields must contain only finite context, payoff, and motive values")
 
+    baseline = None
+    if baseline_candidate_id is not None:
+        matches = np.flatnonzero(skill_ids.astype(str) == baseline_candidate_id)
+        if len(matches) != 1:
+            raise ValueError(f"{path}: expected exactly one baseline {baseline_candidate_id}")
+        i = int(matches[0])
+        baseline = {"baseline_payoff": float(payoffs[i]), "baseline_motives": motives[i].tolist()}
+
     return tuple(
         PreparedCandidateOutcome(
             context=tuple(float(v) for v in context),
             skill_id=str(skill_ids[index]),
             payoff=float(payoffs[index]),
             motives=tuple(float(v) for v in motives[index]),
-            metadata={"candidate_set_path": str(path)},
+            metadata={"candidate_set_path": str(path), **({"same_context_baseline": baseline} if baseline is not None else {})},
             gate_type=default_gate_type,
             epsilon=default_epsilon,
         )
@@ -111,6 +120,7 @@ def candidate_set_directory_to_prepared_candidate_outcomes(
     pattern: str = "*.npz",
     default_gate_type: str = "CDS",
     default_epsilon: float | None = None,
+    baseline_candidate_id: str | None = None,
 ) -> tuple[PreparedCandidateOutcome, ...]:
     """Load all candidate-set files in a directory into prepared outcomes."""
     directory_path = Path(directory)
@@ -125,6 +135,7 @@ def candidate_set_directory_to_prepared_candidate_outcomes(
                 file_path,
                 default_gate_type=default_gate_type,
                 default_epsilon=default_epsilon,
+                baseline_candidate_id=baseline_candidate_id,
             )
         )
     return tuple(outcomes)

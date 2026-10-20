@@ -1,0 +1,46 @@
+[
+  {
+    "scenario": "balanced",
+    "weight": [
+      0.3333333333333333,
+      0.3333333333333333,
+      0.3333333333333333
+    ],
+    "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "policy": "small_random",
+    "fallback": false
+  },
+  {
+    "scenario": "safety",
+    "weight": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "policy": "small_random",
+    "fallback": false
+  },
+  {
+    "scenario": "task",
+    "weight": [
+      0.1,
+      0.8,
+      0.1
+    ],
+    "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "policy": "small_random",
+    "fallback": false
+  },
+  {
+    "scenario": "effort",
+    "weight": [
+      0.1,
+      0.1,
+      0.8
+    ],
+    "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+    "policy": "small_random",
+    "fallback": false
+  }
+]

@@ -155,7 +155,7 @@ class Collector:
         for name, model in models.items():
             self.policies[name] = lambda obs, m=model: m.predict(obs, deterministic=True)
 
-    def collect(self, seeds):
+    def collect(self, seeds, *, repeat=0):
         records = []
         for seed in seeds:
             outcomes, reference = {}, None
@@ -165,7 +165,7 @@ class Collector:
                     reference = np.array(obs, copy=True)
                 elif not np.allclose(obs, reference):
                     raise RuntimeError('Environment seed did not reproduce initial observation')
-                self.rng = np.random.default_rng(np.random.SeedSequence([seed, index]))
+                self.rng = np.random.default_rng(np.random.SeedSequence([seed, index, repeat]))
                 motives, totals = np.zeros(3), np.zeros(3)
                 goals = 0
                 for step in range(self.config.max_steps):
@@ -183,7 +183,8 @@ class Collector:
                 outcomes[name] = {'motives': motives.tolist(), 'undiscounted_motives': totals.tolist(),
                                   'goals': goals, 'steps': step+1,
                                   'stop_reason': 'terminated' if terminated else 'truncated' if truncated else 'max_steps'}
-            records.append({'context_seed': int(seed), 'outcomes': outcomes})
+            records.append({'context_seed': int(seed), 'initial_observation': reference.tolist(),
+                            'observation_schema': 'native_flat_v1', 'repeat': repeat, 'outcomes': outcomes})
             if len(records) % 5 == 0 or len(records) == len(seeds):
                 print(f'Collected {len(records)}/{len(seeds)} contexts; last environment seed {seed}', flush=True)
         return records
