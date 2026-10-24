@@ -22,6 +22,12 @@ confirms it.
 
 Samples are grouped by the facts of the state they start from and summarised
 by their mean, spread, count and a one-sided bootstrap lower confidence bound.
+Each group also records its support: the lowest and highest value of every
+observation number among the states it was measured from. States that share
+facts can still differ a lot: a lander at the start of an episode and one
+falling fast halfway down can both be not upright, not over the pad and not
+near the ground. A lookup therefore answers only for states inside the support,
+widened by a small margin, and treats every other state as unmeasured.
 """
 
 from __future__ import annotations
@@ -47,6 +53,8 @@ GROUP_FACTS = ("upright", "over_pad", "near_ground")
 CONFIDENCE = 0.95
 BOOTSTRAP_RESAMPLES = 2000
 MIN_SAMPLES = 30
+# Fraction of each observation range added on both sides of a group's support.
+SUPPORT_MARGIN = 0.05
 DEFAULT_TABLE_PATH = Path(__file__).resolve().parent / "data" / "lunar_effects.json"
 
 IN_FLIGHT = "in_flight"
@@ -121,6 +129,7 @@ class Sample:
     delta_n: Tuple[float, float]
     frames: int
     completed: bool
+    start: Tuple[float, ...]  # the observation the measurement started from
 
     @property
     def gains(self) -> np.ndarray:
@@ -144,6 +153,13 @@ class PlanFlight:
         return self.plan.gains - sum((step.gains for step in self.steps), np.zeros(3))
 
 
+def _sample(
+    name: str, start: np.ndarray, delta_r: float, delta_n: Tuple[float, float], frames: int, completed: bool
+) -> Sample:
+    observation = tuple(float(value) for value in np.asarray(start, dtype=np.float64).reshape(-1))
+    return Sample(name, group_key(lander_facts(observation)), delta_r, delta_n, frames, completed, observation)
+
+
 def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
     """Fly ``skills`` in order from the start of episode ``seed`` and measure the plan and each step.
 
@@ -154,15 +170,15 @@ def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
         raise ValueError("a plan needs at least one sub-skill")
 
     obs = replay(env, seed, ())
-    plan_group = group_key(lander_facts(obs))
+    plan_start = obs
     actions: List[int] = []
     rewards: List[np.ndarray] = []
-    runs = []  # (frames flown before the step, group the step started in, its run)
+    runs = []  # (frames flown before the step, observation the step started from, its run)
     info: Mapping[str, object] = {}
     ended = False
     for name in skills:
         run = run_subskill(env, SUBSKILLS[name], obs)
-        runs.append((len(actions), group_key(lander_facts(obs)), run))
+        runs.append((len(actions), obs, run))
         actions.extend(run.actions)
         rewards.extend(run.rewards)
         obs = run.observation
@@ -183,13 +199,13 @@ def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
     plan_rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, 2)
     replay(env, seed, ())
     delta_r, delta_n = improvement(plan_rewards, idle_rewards(env, len(plan_rewards)))
-    plan = Sample(plan_key(skills), plan_group, delta_r, delta_n, len(plan_rewards), completed)
+    plan = _sample(plan_key(skills), plan_start, delta_r, delta_n, len(plan_rewards), completed)
 
     steps = []
-    for start, group, run in runs:
-        replay(env, seed, actions[:start])
+    for frames_before, start, run in runs:
+        replay(env, seed, actions[:frames_before])
         delta_r, delta_n = improvement(run.rewards, idle_rewards(env, run.frames))
-        steps.append(Sample(run.skill, group, delta_r, delta_n, run.frames, run.completed))
+        steps.append(_sample(run.skill, start, delta_r, delta_n, run.frames, run.completed))
 
     return PlanFlight(seed=seed, skills=tuple(skills), plan=plan, steps=tuple(steps), outcome=outcome)
 
@@ -236,7 +252,18 @@ def summarise(samples: Sequence[Sample]) -> Dict[str, object]:
         "samples": len(samples),
         "completion_rate": round(float(np.mean([s.completed for s in samples])), _DECIMALS),
         "mean_frames": round(float(np.mean([s.frames for s in samples])), _DECIMALS),
+        "support": _support([s.start for s in samples]),
         **summarise_gains(np.stack([s.gains for s in samples]), _bootstrap_seed(name, group)),
+    }
+
+
+def _support(starts: Sequence[Tuple[float, ...]]) -> Dict[str, List[float]]:
+    """The lowest and highest value of each observation number, rounded outwards."""
+    observations = np.asarray(starts, dtype=np.float64)
+    scale = 10.0**_DECIMALS
+    return {
+        "low": [float(v) for v in np.floor(observations.min(axis=0) * scale) / scale],
+        "high": [float(v) for v in np.ceil(observations.max(axis=0) * scale) / scale],
     }
 
 
@@ -287,6 +314,7 @@ def build_table(seeds: range, plans: Sequence[Sequence[str]], min_samples: int =
             "confidence": CONFIDENCE,
             "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
             "min_samples": min_samples,
+            "support_margin": SUPPORT_MARGIN,
             "group_facts": list(GROUP_FACTS),
             "seeds": {"start": seeds.start, "stop": seeds.stop},
             "steps": steps,
@@ -321,6 +349,10 @@ class Estimate:
     outcomes: Optional[Dict[str, float]] = None  # how plan flights really ended; plans only
 
 
+def _group_of(observation: np.ndarray) -> str:
+    return group_key(lander_facts(observation))
+
+
 def _gains(stats: Mapping[str, Mapping[str, float]], field: str) -> Gains:
     return Gains(
         delta_r=float(stats["delta_r"][field]),
@@ -329,9 +361,12 @@ def _gains(stats: Mapping[str, Mapping[str, float]], field: str) -> Gains:
 
 
 class EffectTable:
-    """Measured effects of sub-skills and plans, looked up by the facts of a start state.
+    """Measured effects of sub-skills and plans, looked up by the observation of a start state.
 
-    Groups with fewer than ``min_samples`` samples are treated as unknown.
+    A lookup finds the group of the observation's facts and answers only if
+    the group has at least ``min_samples`` samples and the observation lies
+    inside the group's support, widened on each side by ``support_margin``
+    times its range. Every other state is treated as unmeasured.
     """
 
     def __init__(self, data: Mapping[str, object]) -> None:
@@ -341,6 +376,7 @@ class EffectTable:
             raise ValueError(f"table groups by {data['group_facts']}, expected {list(GROUP_FACTS)}")
         self.data = dict(data)
         self.min_samples = int(data["min_samples"])
+        self.support_margin = float(data["support_margin"])
         self._steps = {(e["name"], e["group"]): e for e in data["steps"]}
         self._plans = {(e["name"], e["group"]): e for e in data["plans"]}
 
@@ -353,16 +389,24 @@ class EffectTable:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.data, indent=2) + "\n", encoding="utf-8")
 
-    def step(self, skill: str, facts: Mapping[str, bool]) -> Optional[Estimate]:
-        """The effect of ``skill`` from a state with ``facts``, or None if not measured enough."""
-        return self._estimate(self._steps.get((skill, group_key(facts))))
+    def step(self, skill: str, observation: np.ndarray) -> Optional[Estimate]:
+        """The effect of ``skill`` from ``observation``, or None if no measurement applies there."""
+        return self._estimate(self._steps.get((skill, _group_of(observation))), observation)
 
-    def plan(self, skills: Sequence[str], facts: Mapping[str, bool]) -> Optional[Estimate]:
-        """The effect of the plan ``skills`` from a state with ``facts``, or None if not measured enough."""
-        return self._estimate(self._plans.get((plan_key(skills), group_key(facts))))
+    def plan(self, skills: Sequence[str], observation: np.ndarray) -> Optional[Estimate]:
+        """The effect of the plan ``skills`` from ``observation``, or None if no measurement applies there."""
+        return self._estimate(self._plans.get((plan_key(skills), _group_of(observation))), observation)
 
-    def _estimate(self, entry: Optional[Mapping[str, object]]) -> Optional[Estimate]:
-        if entry is None or int(entry["samples"]) < self.min_samples:
+    def supports(self, entry: Mapping[str, object], observation: np.ndarray) -> bool:
+        """Whether ``observation`` lies inside the entry's support, widened by the margin."""
+        low = np.asarray(entry["support"]["low"], dtype=np.float64)
+        high = np.asarray(entry["support"]["high"], dtype=np.float64)
+        widen = self.support_margin * (high - low)
+        values = np.asarray(observation, dtype=np.float64).reshape(-1)
+        return bool(values.shape == low.shape and np.all((values >= low - widen) & (values <= high + widen)))
+
+    def _estimate(self, entry: Optional[Mapping[str, object]], observation: np.ndarray) -> Optional[Estimate]:
+        if entry is None or int(entry["samples"]) < self.min_samples or not self.supports(entry, observation):
             return None
         return Estimate(
             samples=int(entry["samples"]),

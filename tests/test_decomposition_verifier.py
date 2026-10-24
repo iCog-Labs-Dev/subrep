@@ -15,15 +15,19 @@ from decomposition.effects import (
     GROUP_FACTS,
     SCHEMA_VERSION,
     EffectTable,
+    group_key,
     plan_key,
+    replay,
 )
 from decomposition.planner import CandidatePlan, propose
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
-from decomposition.verifier import CERTIFICATE_VERSION, MdnRegion, Priorities, best_plan, verify
-from env.lunar_facts import FACT_NAMES
-from env.lunar_subskills import SUBSKILLS
+from decomposition.verifier import CERTIFICATE_VERSION, NOT_MEASURED, MdnRegion, Priorities, best_plan, verify
+from env.lunar_facts import FACT_NAMES, lander_facts
+from env.lunar_lander_wrapper import SubRepEnv
+from env.lunar_subskills import NO_ENGINE, SUBSKILLS
 
-FACTS = {"upright": True, "over_pad": True, "near_ground": False}
+# Level, over the pad and high up: x, y, vx, vy, angle, spin, left leg, right leg.
+OBSERVATION = np.array([0.0, 1.4, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0])
 GROUP = "upright=1,over_pad=1,near_ground=0"
 TIMESTAMP = "2026-10-17T00:00:00+00:00"
 EVEN = Priorities(weights=(0.5, 0.5))
@@ -41,8 +45,8 @@ def gains(delta_r, delta_n):
 
 
 def table_of(plans, min_samples=30):
-    """A table measuring each (skills, Δr, Δn) from GROUP; the given gains are the lower bounds."""
-    assert GROUP_FACTS == tuple(FACTS)
+    """A table measuring each (skills, Δr, Δn) from states around OBSERVATION; the gains are lower bounds."""
+    assert group_key(lander_facts(OBSERVATION)) == GROUP
     entries = [
         {
             "name": plan_key(skills),
@@ -50,7 +54,15 @@ def table_of(plans, min_samples=30):
             "samples": 100,
             "completion_rate": 0.98,
             "mean_frames": 250.4,
+            "support": {"low": list(OBSERVATION - 0.05), "high": list(OBSERVATION + 0.05)},
             "skills": list(skills),
+            "outcomes": {
+                "landed_on_pad": 0.9,
+                "landed_off_pad": 0.05,
+                "crashed": 0.05,
+                "timeout": 0.0,
+                "in_flight": 0.0,
+            },
             "interaction": gains(0.5, (0.5, 0.0)),
             **gains(delta_r, delta_n),
         }
@@ -65,6 +77,7 @@ def table_of(plans, min_samples=30):
             "confidence": 0.95,
             "bootstrap_resamples": 10,
             "min_samples": min_samples,
+            "support_margin": 0.05,
             "group_facts": list(GROUP_FACTS),
             "seeds": {"start": 7, "stop": 107},
             "steps": [],
@@ -84,7 +97,7 @@ def region(support_values, alpha=(1.0, 1.0)):
 
 def verify_one(delta_r, delta_n, priorities=EVEN):
     table = table_of([(("a", "b"), delta_r, delta_n)])
-    [verdict] = verify([candidate("plan", ["a", "b"])], FACTS, table, priorities, TIMESTAMP)
+    [verdict] = verify([candidate("plan", ["a", "b"])], OBSERVATION, table, priorities, TIMESTAMP)
     return verdict
 
 
@@ -130,8 +143,9 @@ def test_the_gates_use_the_lower_bounds_not_the_means():
 
 def test_plans_without_enough_measurements_are_not_certified():
     table = table_of([(("a", "b"), 10.0, (5.0, 5.0))], min_samples=1000)
-    verdicts = verify([candidate("thin", ["a", "b"]), candidate("unknown", ["c"])], FACTS, table, EVEN, TIMESTAMP)
-    assert [v.reason for v in verdicts] == ["not measured from a state like this one"] * 2
+    candidates = [candidate("thin", ["a", "b"]), candidate("unknown", ["c"])]
+    verdicts = verify(candidates, OBSERVATION, table, EVEN, TIMESTAMP)
+    assert [v.reason for v in verdicts] == [NOT_MEASURED] * 2
     assert all(v.estimate is None and not v.admitted for v in verdicts)
 
 
@@ -187,7 +201,7 @@ def test_admitted_plans_are_ranked_by_score_then_steps_then_name():
         candidate("alpha", ["s4", "s5"]),
         candidate("top", ["best"]),
     ]
-    verdicts = verify(candidates, FACTS, table, EVEN, TIMESTAMP)
+    verdicts = verify(candidates, OBSERVATION, table, EVEN, TIMESTAMP)
     assert [v.candidate.option for v in verdicts] == ["top", "alpha", "beta", "longer", "rejected"]
     assert best_plan(verdicts).candidate.option == "top"
 
@@ -196,7 +210,7 @@ def test_admitted_plans_are_ranked_by_score_then_steps_then_name():
 def test_priorities_choose_between_trade_offs(weights, best):
     table = table_of([(("safe",), 20.0, (30.0, -10.0)), (("cheap",), 20.0, (10.0, 10.0))])
     candidates = [candidate("safe", ["safe"]), candidate("cheap", ["cheap"])]
-    verdicts = verify(candidates, FACTS, table, Priorities(weights=weights), TIMESTAMP)
+    verdicts = verify(candidates, OBSERVATION, table, Priorities(weights=weights), TIMESTAMP)
     assert all(v.admitted for v in verdicts)
     assert best_plan(verdicts).candidate.option == best
 
@@ -282,6 +296,14 @@ def test_mdn_regions_reject_invalid_values(fields, message):
 # With the LunarLander book and the measured table
 
 
+def episode_start(seed, actions=()):
+    env = SubRepEnv(seed=seed)
+    try:
+        return replay(env, seed, actions)
+    finally:
+        env.close()
+
+
 @pytest.fixture(scope="module")
 def lunar_book():
     return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
@@ -293,9 +315,10 @@ def lunar_table():
 
 
 def test_a_safety_first_region_certifies_a_landing_plan_from_the_air(lunar_book, lunar_table):
-    facts = dict(upright=False, over_pad=False, near_ground=False, slow=False, falling_fast=True, landed=False)
+    start = episode_start(seed=0)
+    assert not lander_facts(start)["upright"]
     priorities = Priorities(weights=(0.7, 0.3), region=region((1.0, 0.3)))
-    verdicts = verify(propose(lunar_book, "land_on_pad", facts), facts, lunar_table, priorities, TIMESTAMP)
+    verdicts = verify(propose(lunar_book, "land_on_pad", lander_facts(start)), start, lunar_table, priorities, TIMESTAMP)
     best = best_plan(verdicts)
     assert best is not None
     certificate = best.entry.certificate
@@ -305,8 +328,21 @@ def test_a_safety_first_region_certifies_a_landing_plan_from_the_air(lunar_book,
 
 
 def test_plans_from_unmeasured_states_are_not_certified(lunar_book, lunar_table):
-    facts = dict(upright=True, over_pad=True, near_ground=True, slow=True, falling_fast=False, landed=False)
+    near_ground = np.array([0.0, 0.2, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0])
     priorities = Priorities(weights=(0.7, 0.3), pds_epsilon=1000.0)
-    verdicts = verify(propose(lunar_book, "land_on_pad", facts), facts, lunar_table, priorities, TIMESTAMP)
+    candidates = propose(lunar_book, "land_on_pad", lander_facts(near_ground))
+    verdicts = verify(candidates, near_ground, lunar_table, priorities, TIMESTAMP)
     assert verdicts
     assert best_plan(verdicts) is None
+
+
+def test_episode_start_measurements_do_not_certify_a_mid_flight_state(lunar_book, lunar_table):
+    falling = episode_start(seed=7, actions=[NO_ENGINE] * 40)  # low and falling fast, with start-like facts
+    priorities = Priorities(weights=(0.7, 0.3), pds_epsilon=1000.0)
+    verdicts = verify(propose(lunar_book, "land_on_pad", lander_facts(falling)), falling, lunar_table, priorities)
+    assert verdicts and {v.reason for v in verdicts} == {NOT_MEASURED}
+
+
+def test_a_plan_record_reports_how_the_plan_really_ended():
+    record = verify_one(10.0, (5.0, -3.0)).record()
+    assert record["estimate"]["outcomes"]["landed_on_pad"] == 0.9

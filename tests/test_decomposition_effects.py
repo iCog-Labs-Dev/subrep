@@ -31,8 +31,17 @@ TILTED_START_SEED = 0  # starts tilted, so stabilise has work to do
 UPRIGHT_START_SEED = 1  # starts upright and not falling fast, so free_fall runs for some frames
 
 
-def facts_of(group):
-    return {name: value == "1" for name, value in (part.split("=") for part in group.split(","))}
+def episode_start(group, seeds=range(1000)):
+    """The start observation of the first seed whose start falls in ``group``."""
+    env = SubRepEnv(seed=0)
+    try:
+        for seed in seeds:
+            observation = replay(env, seed, ())
+            if group_key(lander_facts(observation)) == group:
+                return observation
+    finally:
+        env.close()
+    raise AssertionError(f"no episode start in group {group}")
 
 
 @pytest.fixture
@@ -145,8 +154,8 @@ def test_lower_bound_needs_values():
 
 
 def test_summarise_rejects_samples_from_different_groups():
-    first = Sample("brake", "upright=1,over_pad=1,near_ground=0", 1.0, (1.0, 0.0), 5, True)
-    second = Sample("brake", "upright=0,over_pad=1,near_ground=0", 1.0, (1.0, 0.0), 5, True)
+    first = Sample("brake", "upright=1,over_pad=1,near_ground=0", 1.0, (1.0, 0.0), 5, True, (0.0,) * 8)
+    second = Sample("brake", "upright=0,over_pad=1,near_ground=0", 1.0, (1.0, 0.0), 5, True, (0.0,) * 8)
     with pytest.raises(ValueError, match="one group"):
         summarise([first, second])
 
@@ -169,25 +178,48 @@ def test_the_table_round_trips_through_json(small_table, tmp_path):
     assert EffectTable.load(path).data == small_table.data
 
 
-def test_lookup_returns_the_entry_for_the_facts(small_table):
+def test_lookup_returns_the_entry_for_the_state(small_table):
     entry = small_table.data["plans"][0]
-    estimate = small_table.plan(entry["skills"], facts_of(entry["group"]))
+    estimate = small_table.plan(entry["skills"], episode_start(entry["group"], range(4)))
     assert estimate.samples == entry["samples"]
     assert estimate.mean.delta_r == entry["delta_r"]["mean"]
     assert estimate.lower.delta_n == (entry["delta_safety"]["lower"], entry["delta_fuel"]["lower"])
     assert estimate.interaction.delta_r == entry["interaction"]["delta_r"]["mean"]
 
 
+def first_steps(table):
+    """Step entries for stabilise, which starts every plan at the start of an episode."""
+    return [entry for entry in table.data["steps"] if entry["name"] == "stabilise"]
+
+
 def test_steps_have_no_interaction(small_table):
-    entry = small_table.data["steps"][0]
-    assert small_table.step(entry["name"], facts_of(entry["group"])).interaction is None
+    entry = first_steps(small_table)[0]
+    assert small_table.step("stabilise", episode_start(entry["group"], range(4))).interaction is None
 
 
 def test_unmeasured_or_thin_groups_are_unknown(small_table):
-    facts = facts_of(small_table.data["plans"][0]["group"])
-    assert small_table.step("hover", facts) is None
+    start = episode_start(small_table.data["plans"][0]["group"], range(4))
+    assert small_table.step("hover", start) is None
     strict = EffectTable({**small_table.data, "min_samples": 1000})
-    assert strict.plan(CAREFUL, facts) is None
+    assert strict.plan(CAREFUL, start) is None
+
+
+def test_the_support_holds_every_measured_start(small_table, env):
+    for entry in small_table.data["plans"]:
+        for seed in range(4):
+            start = replay(env, seed, ())
+            if group_key(lander_facts(start)) == entry["group"]:
+                assert small_table.supports(entry, start)
+
+
+def test_a_state_outside_the_support_is_not_measured(small_table):
+    entry = small_table.data["plans"][0]
+    start = episode_start(entry["group"], range(4))
+    lower = np.array(start, dtype=np.float64)
+    lower[1] -= 0.5  # same facts, but half a unit lower than any measured start
+    assert group_key(lander_facts(lower)) == entry["group"]
+    assert small_table.plan(entry["skills"], start) is not None
+    assert small_table.plan(entry["skills"], lower) is None
 
 
 def test_the_table_checks_its_format(small_table):
@@ -195,6 +227,8 @@ def test_the_table_checks_its_format(small_table):
         EffectTable({**small_table.data, "schema_version": "other"})
     with pytest.raises(ValueError, match="groups by"):
         EffectTable({**small_table.data, "group_facts": ["upright"]})
+    with pytest.raises(KeyError):
+        EffectTable({key: value for key, value in small_table.data.items() if key != "support_margin"})
 
 
 # The committed table
@@ -203,17 +237,27 @@ def test_the_table_checks_its_format(small_table):
 def test_committed_table_covers_every_plan_from_unseen_episode_starts(committed_table, env):
     unseen = range(committed_table.data["seeds"]["stop"], committed_table.data["seeds"]["stop"] + 30)
     for seed in unseen:
-        facts = lander_facts(replay(env, seed, ()))
+        start = replay(env, seed, ())
         for skills in PLANS:
-            assert committed_table.plan(skills, facts) is not None, (seed, skills)
+            assert committed_table.plan(skills, start) is not None, (seed, skills)
+
+
+def test_committed_table_refuses_a_mid_flight_state_with_the_same_facts(committed_table, env):
+    falling = replay(env, 7, [NO_ENGINE] * 40)  # 40 frames of doing nothing: low and falling fast
+    group = group_key(lander_facts(falling))
+    entry = next(e for e in committed_table.data["plans"] if e["skills"] == FUEL_SAVING and e["group"] == group)
+    assert entry["samples"] >= committed_table.min_samples
+    assert falling[1] < entry["support"]["low"][1]
+    assert committed_table.plan(FUEL_SAVING, falling) is None
 
 
 def test_committed_landing_plans_are_safer_than_doing_nothing_and_differ_in_fuel(committed_table):
     groups = {entry["group"] for entry in committed_table.data["plans"]}
     assert groups
     for group in groups:
-        careful = committed_table.plan(CAREFUL, facts_of(group))
-        fuel_saving = committed_table.plan(FUEL_SAVING, facts_of(group))
+        start = episode_start(group)
+        careful = committed_table.plan(CAREFUL, start)
+        fuel_saving = committed_table.plan(FUEL_SAVING, start)
         assert careful.lower.delta_n[0] > 0.0, group
         assert fuel_saving.lower.delta_n[0] > 0.0, group
         assert fuel_saving.mean.delta_n[1] > careful.mean.delta_n[1], group  # fuel gains are negative
@@ -237,7 +281,7 @@ def test_plan_outcomes_come_from_the_final_result(small_table, committed_table):
 
 def test_estimates_report_how_plans_really_ended(small_table):
     entry = small_table.data["plans"][0]
-    estimate = small_table.plan(entry["skills"], facts_of(entry["group"]))
+    estimate = small_table.plan(entry["skills"], episode_start(entry["group"], range(4)))
     assert estimate.outcomes == entry["outcomes"]
-    step = small_table.data["steps"][0]
-    assert small_table.step(step["name"], facts_of(step["group"])).outcomes is None
+    step = first_steps(small_table)[0]
+    assert small_table.step("stabilise", episode_start(step["group"], range(4))).outcomes is None

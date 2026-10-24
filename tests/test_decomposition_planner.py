@@ -169,9 +169,9 @@ def test_every_plan_proposed_at_an_episode_start_has_measured_effects(lunar_book
     env = SubRepEnv(seed=0)
     try:
         for seed in range(table.data["seeds"]["stop"], table.data["seeds"]["stop"] + 30):
-            facts = lander_facts(replay(env, seed, ()))
+            start = replay(env, seed, ())
             for goal in lunar_book.goals:
-                for candidate in propose(lunar_book, goal, facts):
-                    assert table.plan(candidate.skills, facts) is not None, (seed, candidate.skills)
+                for candidate in propose(lunar_book, goal, lander_facts(start)):
+                    assert table.plan(candidate.skills, start) is not None, (seed, candidate.skills)
     finally:
         env.close()

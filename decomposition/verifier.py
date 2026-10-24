@@ -1,7 +1,8 @@
 """Certify and rank candidate plans with SubRep's existing admission gates.
 
-Each candidate is looked up in the effect table by the facts of the current
-state, and the one-sided lower confidence bounds of its measured gains
+Each candidate is looked up in the effect table by the current observation,
+which answers only where its measurements apply, and the one-sided lower
+confidence bounds of its measured gains
 (Δr, Δn) go through the gates the rest of SubRep uses:
 
 - the CDS gate first, as the stronger guarantee;
@@ -22,7 +23,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -39,6 +40,7 @@ from library.skill_selector import score_skill_entry
 CERTIFICATE_VERSION = "decomposition-0.1.0"
 CVAR_SAMPLES = 1000
 CVAR_SEED = 0
+NOT_MEASURED = "not measured from states like this one"
 _SIMPLEX_TOLERANCE = 1e-6
 
 
@@ -163,15 +165,15 @@ def plan_skill_id(candidate: CandidatePlan) -> str:
 
 def verify(
     candidates: Sequence[CandidatePlan],
-    facts: Mapping[str, bool],
+    observation: np.ndarray,
     table: EffectTable,
     priorities: Priorities,
     timestamp: Optional[str] = None,
 ) -> List[PlanVerdict]:
-    """Certify every candidate from a state with ``facts``; admitted plans come first, best first."""
+    """Certify every candidate from ``observation``; admitted plans come first, best first."""
     timestamp = timestamp or datetime.now(timezone.utc).isoformat()
     verdicts = [
-        _verify(candidate, table.plan(candidate.skills, facts), table, priorities, timestamp)
+        _verify(candidate, table.plan(candidate.skills, observation), table, priorities, timestamp)
         for candidate in candidates
     ]
     return sorted(verdicts, key=_rank)
@@ -190,7 +192,7 @@ def _verify(
     timestamp: str,
 ) -> PlanVerdict:
     if estimate is None:
-        return PlanVerdict(candidate, reason="not measured from a state like this one")
+        return PlanVerdict(candidate, reason=NOT_MEASURED)
 
     delta_r = estimate.lower.delta_r
     delta_n = np.asarray(estimate.lower.delta_n, dtype=np.float64)
