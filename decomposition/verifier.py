@@ -19,6 +19,7 @@ option name.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
@@ -41,14 +42,56 @@ CVAR_SEED = 0
 _SIMPLEX_TOLERANCE = 1e-6
 
 
+def _finite_array(name: str, values: object, ndim: int = 1) -> np.ndarray:
+    """``values`` as a non-empty float array of ``ndim`` dimensions with no NaN or infinity."""
+    try:
+        array = np.asarray(values, dtype=np.float64)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must contain only numbers, got {values!r}") from error
+    if array.ndim != ndim or array.size == 0:
+        raise ValueError(f"{name} must be a non-empty {ndim}-dimensional array, got {values!r}")
+    if not np.all(np.isfinite(array)):
+        raise ValueError(f"{name} must contain only finite numbers, got {values!r}")
+    return array
+
+
+def _finite_number(name: str, value: object) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a number, got {value!r}") from error
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    return number
+
+
 @dataclass(frozen=True)
 class MdnRegion:
-    """The MDN weight region W_x = {w in the simplex : w_i <= s_i} with its audit fields."""
+    """The MDN weight region W_x = {w in the simplex : w_i <= s_i} with its audit fields.
+
+    Checked as the certificate schema checks an MDN region: every value finite,
+    alpha positive, support values in [0, 1] and summing to at least 1 so the
+    region is not empty, and one square row of directions per objective.
+    """
 
     context: Tuple[float, ...]
     alpha: Tuple[float, ...]
     support_directions: Tuple[Tuple[float, ...], ...]
     support_values: Tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        _finite_array("context", self.context)
+        alpha = _finite_array("alpha", self.alpha)
+        support = _finite_array("support_values", self.support_values)
+        directions = _finite_array("support_directions", self.support_directions, ndim=2)
+        if alpha.shape != support.shape or directions.shape != (support.size, support.size):
+            raise ValueError("alpha, support_values and support_directions must cover the same objectives")
+        if np.any(alpha <= 0.0):
+            raise ValueError(f"alpha must be positive, got {self.alpha}")
+        if np.any(support < 0.0) or np.any(support > 1.0):
+            raise ValueError(f"support_values must lie in [0, 1], got {self.support_values}")
+        if support.sum() < 1.0 - _SIMPLEX_TOLERANCE:
+            raise ValueError(f"support_values must sum to at least 1 or the region is empty, got {self.support_values}")
 
 
 @dataclass(frozen=True)
@@ -61,10 +104,10 @@ class Priorities:
     region: Optional[MdnRegion] = None
 
     def __post_init__(self) -> None:
-        weights = np.asarray(self.weights, dtype=np.float64)
-        if weights.ndim != 1 or np.any(weights < -_SIMPLEX_TOLERANCE) or abs(weights.sum() - 1.0) > _SIMPLEX_TOLERANCE:
+        weights = _finite_array("weights", self.weights)
+        if np.any(weights < -_SIMPLEX_TOLERANCE) or abs(weights.sum() - 1.0) > _SIMPLEX_TOLERANCE:
             raise ValueError(f"weights must lie on the simplex, got {self.weights}")
-        if self.pds_epsilon < 0.0:
+        if _finite_number("pds_epsilon", self.pds_epsilon) < 0.0:
             raise ValueError(f"pds_epsilon must be non-negative, got {self.pds_epsilon}")
         if self.region is not None:
             support = np.asarray(self.region.support_values, dtype=np.float64)
@@ -73,7 +116,7 @@ class Priorities:
             if np.any(weights > support + _SIMPLEX_TOLERANCE):
                 raise ValueError(f"weights {self.weights} lie outside the MDN region {self.region.support_values}")
         if self.cvar_tail_level is not None:
-            if not 0.0 < self.cvar_tail_level <= 1.0:
+            if not 0.0 < _finite_number("cvar_tail_level", self.cvar_tail_level) <= 1.0:
                 raise ValueError(f"cvar_tail_level must be in (0, 1], got {self.cvar_tail_level}")
             if self.region is None:
                 raise ValueError("the CVaR check needs an MDN region for its alpha")

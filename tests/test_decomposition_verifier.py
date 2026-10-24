@@ -235,6 +235,50 @@ def test_priorities_are_checked(kwargs, message):
         Priorities(**kwargs)
 
 
+NAN, INF = float("nan"), float("inf")
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"weights": (NAN, NAN)}, "weights must contain only finite"),
+        ({"weights": (INF, 0.0)}, "weights must contain only finite"),
+        ({"weights": ()}, "non-empty"),
+        ({"weights": (0.5, 0.5), "pds_epsilon": NAN}, "pds_epsilon must be a finite"),
+        ({"weights": (0.5, 0.5), "pds_epsilon": INF}, "pds_epsilon must be a finite"),
+        ({"weights": (0.5, 0.5), "cvar_tail_level": NAN, "region": region((1.0, 1.0))}, "finite"),
+        ({"weights": (0.5, 0.5), "cvar_tail_level": INF, "region": region((1.0, 1.0))}, "finite"),
+    ],
+)
+def test_priorities_reject_numbers_that_are_not_finite(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        Priorities(**kwargs)
+
+
+IDENTITY = ((1.0, 0.0), (0.0, 1.0))
+
+
+@pytest.mark.parametrize(
+    "fields, message",
+    [
+        ({"context": (NAN,)}, "context must contain only finite"),
+        ({"alpha": (1.0, INF)}, "alpha must contain only finite"),
+        ({"support_values": (NAN, 1.0)}, "support_values must contain only finite"),
+        ({"support_values": (1.0, INF)}, "support_values must contain only finite"),
+        ({"support_directions": ((1.0, NAN), (0.0, 1.0))}, "support_directions must contain only finite"),
+        ({"alpha": (0.0, 1.0)}, "alpha must be positive"),
+        ({"support_values": (1.2, 0.3)}, r"in \[0, 1\]"),
+        ({"support_values": (0.4, 0.3)}, "region is empty"),
+        ({"alpha": (1.0, 1.0, 1.0)}, "same objectives"),
+        ({"support_directions": ((1.0, 0.0),)}, "same objectives"),
+    ],
+)
+def test_mdn_regions_reject_invalid_values(fields, message):
+    values = {"context": (0.1,), "alpha": (1.0, 1.0), "support_directions": IDENTITY, "support_values": (1.0, 0.3)}
+    with pytest.raises(ValueError, match=message):
+        MdnRegion(**{**values, **fields})
+
+
 # With the LunarLander book and the measured table
 
 
