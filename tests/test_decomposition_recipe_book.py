@@ -1,5 +1,7 @@
 """Tests for recipe books (decomposition/recipe_book.py) and the LunarLander book."""
 
+import itertools
+
 import pytest
 
 from decomposition.recipe_book import (
@@ -149,3 +151,29 @@ def test_lunar_book_predicts_the_facts_after_every_completed_step(lunar_book, fl
 def test_lunar_book_requirements_hold_whenever_a_plan_reaches_a_step(lunar_book, flown_steps):
     for name, before, _, _ in flown_steps:
         assert holds(lunar_book.primitives[name].requires, before), (name, before)
+
+
+def possible_facts():
+    """Every combination of facts except those the fact definitions rule out.
+
+    ``slow`` (|vy| <= 0.2) and ``falling_fast`` (vy <= -0.4) cannot both hold.
+    """
+    for values in itertools.product((False, True), repeat=len(FACT_NAMES)):
+        facts = dict(zip(FACT_NAMES, values))
+        if not (facts["slow"] and facts["falling_fast"]):
+            yield facts
+
+
+def test_lunar_book_effects_follow_from_how_each_sub_skill_stops(lunar_book):
+    for name, primitive in lunar_book.primitives.items():
+        stops = [facts for facts in possible_facts() if SUBSKILLS[name].is_done(facts)]
+        assert stops, name
+        for facts in stops:
+            assert holds(primitive.effects, facts), (name, facts)
+
+
+def test_free_fall_may_stop_near_the_ground_and_brake_still_applies(lunar_book):
+    stopped_near_ground = {**dict.fromkeys(FACT_NAMES, False), "near_ground": True, "over_pad": True}
+    assert SUBSKILLS["free_fall"].is_done(stopped_near_ground)
+    after = lunar_book.primitives["free_fall"].apply(stopped_near_ground)
+    assert holds(lunar_book.primitives["brake"].requires, after)

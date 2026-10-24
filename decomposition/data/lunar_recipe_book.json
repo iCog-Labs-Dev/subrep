@@ -60,18 +60,18 @@
     },
     "free_fall": {
       "requires": {"over_pad": true},
-      "effects": {"falling_fast": true, "slow": false},
-      "may_change": ["upright", "over_pad"]
+      "effects": {},
+      "may_change": ["upright", "over_pad", "near_ground", "slow", "falling_fast"]
     },
     "brake": {
-      "requires": {"falling_fast": true},
+      "requires": {},
       "effects": {"slow": true, "falling_fast": false},
       "may_change": ["upright", "over_pad"]
     },
     "touch_down": {
       "requires": {"slow": true},
-      "effects": {"landed": true, "near_ground": true},
-      "may_change": ["upright", "over_pad", "slow"]
+      "effects": {"landed": true},
+      "may_change": ["upright", "over_pad", "near_ground", "slow"]
     }
   }
 }
