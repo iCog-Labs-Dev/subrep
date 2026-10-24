@@ -86,6 +86,7 @@ def test_a_minimal_book_loads():
     assert book.tasks["go"].methods[0].subtasks == ("step",)
     assert book.tasks["go"].methods[0].requires == {}
     assert book.primitives["step"].may_change == ("tired",)
+    assert book.goals["reach"].terminal is False
 
 
 def _set(path, value):
@@ -115,6 +116,7 @@ def _set(path, value):
         (_set(["goals", "reach", "task"], "step"), "unknown task"),
         (_set(["goals", "reach", "achieved_when"], {}), "at least one fact"),
         (lambda book: book["goals"]["reach"].pop("task"), "missing"),
+        (_set(["goals", "reach", "terminal"], "yes"), "terminal must be true or false"),
     ],
 )
 def test_malformed_books_are_rejected(change, message):
@@ -138,6 +140,13 @@ def test_a_cycle_through_several_tasks_is_rejected():
 def test_lunar_book_covers_every_sub_skill(lunar_book):
     assert set(lunar_book.primitives) == set(SUBSKILLS)
     assert set(lunar_book.goals) == {"land_on_pad", "recover_stability"}
+
+
+def test_landing_on_the_pad_is_a_terminal_goal_that_needs_the_pad(lunar_book):
+    goal = lunar_book.goals["land_on_pad"]
+    assert goal.terminal
+    assert goal.achieved_when == {"landed": True, "over_pad": True}
+    assert not lunar_book.goals["recover_stability"].terminal
 
 
 def test_lunar_book_predicts_the_facts_after_every_completed_step(lunar_book, flown_steps):

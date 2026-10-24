@@ -4,7 +4,8 @@
   "goals": {
     "land_on_pad": {
       "task": "land",
-      "achieved_when": {"landed": true}
+      "achieved_when": {"landed": true, "over_pad": true},
+      "terminal": true
     },
     "recover_stability": {
       "task": "recover",

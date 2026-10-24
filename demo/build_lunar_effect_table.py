@@ -21,14 +21,18 @@ PLANS: List[List[str]] = [*SEQUENCES.values(), ["stabilise"]]
 
 def to_text(table: EffectTable) -> str:
     """A plain-text overview of the table: one row per plan or step and group."""
-    header = f"{'name':<52} {'group':<35} {'n':>4} {'done':>5} {'Δr':>8} {'Δr low':>8} {'ΔSafety':>8} {'ΔFuel':>8}"
+    header = (
+        f"{'name':<52} {'group':<35} {'n':>4} {'done':>5} {'on pad':>6} "
+        f"{'Δr':>8} {'Δr low':>8} {'ΔSafety':>8} {'ΔFuel':>8}"
+    )
     lines = []
     for kind in ("plans", "steps"):
         lines += ["", kind, header]
         for entry in table.data[kind]:
+            on_pad = f"{entry['outcomes']['landed_on_pad']:.2f}" if "outcomes" in entry else "-"
             lines.append(
                 f"{entry['name']:<52} {entry['group']:<35} {entry['samples']:>4} "
-                f"{entry['completion_rate']:>5.2f} {entry['delta_r']['mean']:>8.2f} "
+                f"{entry['completion_rate']:>5.2f} {on_pad:>6} {entry['delta_r']['mean']:>8.2f} "
                 f"{entry['delta_r']['lower']:>8.2f} {entry['delta_safety']['mean']:>8.2f} "
                 f"{entry['delta_fuel']['mean']:>8.2f}"
             )

@@ -12,6 +12,7 @@ from env.lunar_facts import (
     SLOW_DESCENT_SPEED,
     UPRIGHT_MAX_ANGLE,
     UPRIGHT_MAX_SPIN,
+    landing_outcome,
     lander_facts,
 )
 
@@ -72,3 +73,22 @@ def test_landed_needs_both_legs():
 def test_rejects_observations_of_the_wrong_size():
     with pytest.raises(ValueError, match="8-value"):
         lander_facts(np.zeros(6))
+
+
+@pytest.mark.parametrize(
+    "info, x, outcome",
+    [
+        ({"landing_success": True}, PAD_HALF_WIDTH - 0.01, "landed_on_pad"),
+        ({"landing_success": True}, -PAD_HALF_WIDTH - 0.01, "landed_off_pad"),
+        ({"landing_success": False, "crashed": True}, 0.0, "crashed"),
+        ({"landing_success": False, "crashed": False}, 0.0, "timeout"),
+    ],
+)
+def test_landing_outcome_comes_from_the_final_result(info, x, outcome):
+    assert landing_outcome(info, observation(x=x, left=1.0, right=1.0)) == outcome
+
+
+def test_touching_the_ground_is_not_a_landing_without_the_final_result():
+    both_legs_down = observation(left=1.0, right=1.0)
+    assert lander_facts(both_legs_down)["landed"]
+    assert landing_outcome({"landing_success": False, "crashed": True}, both_legs_down) == "crashed"

@@ -1,5 +1,5 @@
 {
-  "schema_version": "subrep.lunar_effects.v1",
+  "schema_version": "subrep.lunar_effects.v2",
   "environment": "mo-lunar-lander-v3",
   "baseline_id": "idle_policy_v1",
   "gamma": 0.99,
@@ -460,6 +460,13 @@
       "skills": [
         "stabilise"
       ],
+      "outcomes": {
+        "landed_on_pad": 0.0,
+        "landed_off_pad": 0.0,
+        "crashed": 0.0,
+        "timeout": 0.0,
+        "in_flight": 1.0
+      },
       "interaction": {
         "delta_r": {
           "mean": 0.0,
@@ -502,6 +509,13 @@
       "skills": [
         "stabilise"
       ],
+      "outcomes": {
+        "landed_on_pad": 0.0,
+        "landed_off_pad": 0.0,
+        "crashed": 0.0,
+        "timeout": 0.0,
+        "in_flight": 1.0
+      },
       "interaction": {
         "delta_r": {
           "mean": 0.0,
@@ -544,6 +558,13 @@
       "skills": [
         "stabilise"
       ],
+      "outcomes": {
+        "landed_on_pad": 0.0,
+        "landed_off_pad": 0.0,
+        "crashed": 0.0,
+        "timeout": 0.0,
+        "in_flight": 1.0
+      },
       "interaction": {
         "delta_r": {
           "mean": 0.0,
@@ -590,6 +611,13 @@
         "brake",
         "touch_down"
       ],
+      "outcomes": {
+        "landed_on_pad": 0.880952,
+        "landed_off_pad": 0.064935,
+        "crashed": 0.045455,
+        "timeout": 0.0,
+        "in_flight": 0.008658
+      },
       "interaction": {
         "delta_r": {
           "mean": -74.099717,
@@ -636,6 +664,13 @@
         "brake",
         "touch_down"
       ],
+      "outcomes": {
+        "landed_on_pad": 0.981685,
+        "landed_off_pad": 0.010989,
+        "crashed": 0.007326,
+        "timeout": 0.0,
+        "in_flight": 0.0
+      },
       "interaction": {
         "delta_r": {
           "mean": -74.0643,
@@ -682,6 +717,13 @@
         "brake",
         "touch_down"
       ],
+      "outcomes": {
+        "landed_on_pad": 0.996226,
+        "landed_off_pad": 0.003774,
+        "crashed": 0.0,
+        "timeout": 0.0,
+        "in_flight": 0.0
+      },
       "interaction": {
         "delta_r": {
           "mean": -45.427813,
@@ -727,6 +769,13 @@
         "slow_descent",
         "touch_down"
       ],
+      "outcomes": {
+        "landed_on_pad": 0.937229,
+        "landed_off_pad": 0.032468,
+        "crashed": 0.021645,
+        "timeout": 0.0,
+        "in_flight": 0.008658
+      },
       "interaction": {
         "delta_r": {
           "mean": -96.541852,
@@ -772,6 +821,13 @@
         "slow_descent",
         "touch_down"
       ],
+      "outcomes": {
+        "landed_on_pad": 0.996337,
+        "landed_off_pad": 0.003663,
+        "crashed": 0.0,
+        "timeout": 0.0,
+        "in_flight": 0.0
+      },
       "interaction": {
         "delta_r": {
           "mean": -99.147282,
@@ -817,6 +873,13 @@
         "slow_descent",
         "touch_down"
       ],
+      "outcomes": {
+        "landed_on_pad": 1.0,
+        "landed_off_pad": 0.0,
+        "crashed": 0.0,
+        "timeout": 0.0,
+        "in_flight": 0.0
+      },
       "interaction": {
         "delta_r": {
           "mean": -56.409345,

@@ -19,13 +19,13 @@ from env.lunar_subskills import SUBSKILLS
 START = {"upright": False, "over_pad": False, "near_ground": False, "slow": False, "falling_fast": True, "landed": False}
 
 
-def toy_book(finish_requires=None, finish_effects=None):
+def toy_book(finish_requires=None, finish_effects=None, terminal=False):
     """Goal "g" is reached by preparing (warm or cool) then finishing, or by finishing when ready."""
     return parse_recipe_book(
         {
             "schema_version": SCHEMA_VERSION,
             "environment": "test",
-            "goals": {"g": {"task": "root", "achieved_when": {"done": True}}},
+            "goals": {"g": {"task": "root", "achieved_when": {"done": True}, "terminal": terminal}},
             "tasks": {
                 "root": {
                     "methods": [
@@ -84,12 +84,22 @@ def test_a_primitive_whose_requirements_cannot_be_met_prunes_the_branch():
     assert [c.skills for c in candidates] == [("cool", "finish")]
 
 
-def test_plans_that_do_not_achieve_the_goal_are_dropped():
-    assert propose(toy_book(finish_effects={}), "g", {}) == []
+def test_plans_predicted_to_leave_the_goal_unmet_are_dropped():
+    assert propose(toy_book(finish_effects={}), "g", {"done": False}) == []
+
+
+def test_plans_that_leave_a_goal_fact_open_are_kept():
+    candidates = propose(toy_book(finish_effects={}), "g", {})
+    assert [c.skills for c in candidates] == [("warm", "finish"), ("cool", "finish")]
+    assert "done" not in candidates[0].predicted_facts
 
 
 def test_an_achieved_goal_needs_no_plan():
     assert propose(toy_book(), "g", {"done": True}) == []
+
+
+def test_a_terminal_goal_is_never_achieved_while_planning():
+    assert propose(toy_book(terminal=True), "g", {"done": True, "ready": True})
 
 
 def test_unknown_goals_are_rejected():
@@ -141,7 +151,7 @@ def test_random_facts_give_sound_deterministic_plans(lunar_book):
         for goal in lunar_book.goals.values():
             candidates = propose(lunar_book, goal.name, facts)
             assert candidates == propose(lunar_book, goal.name, facts)
-            if holds(goal.achieved_when, facts):
+            if not goal.terminal and holds(goal.achieved_when, facts):
                 assert candidates == []
             assert len({c.option for c in candidates}) == len(candidates)
             for candidate in candidates:
@@ -151,7 +161,7 @@ def test_random_facts_give_sound_deterministic_plans(lunar_book):
                     assert holds(lunar_book.primitives[skill].requires, known), (facts, candidate.skills, skill)
                     known = lunar_book.primitives[skill].apply(known)
                 assert known == candidate.predicted_facts
-                assert holds(goal.achieved_when, known)
+                assert all(known.get(name, value) == value for name, value in goal.achieved_when.items())
 
 
 def test_every_plan_proposed_at_an_episode_start_has_measured_effects(lunar_book):

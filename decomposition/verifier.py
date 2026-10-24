@@ -285,4 +285,5 @@ def _estimate_record(estimate: Estimate) -> Dict[str, object]:
         "mean": _gains_record(estimate.mean),
         "lower": _gains_record(estimate.lower),
         "interaction": None if estimate.interaction is None else _gains_record(estimate.interaction),
+        "outcomes": None if estimate.outcomes is None else dict(estimate.outcomes),
     }

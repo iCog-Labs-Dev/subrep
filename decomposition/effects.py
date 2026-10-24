@@ -15,7 +15,10 @@ the plan leaves the lander standing on its legs, its last sub-skill keeps
 running until the episode ends, so the plan's effect includes the landing
 reward. Each step of the flight is also measured from the state where it
 started; a plan's interaction is its effect minus the sum of its steps'
-effects.
+effects. Every plan flight also records how the episode really ended (on the
+pad, off the pad, crashed, timed out, or still in flight), because a step that
+completes, such as legs touching down, is not a landing until the final result
+confirms it.
 
 Samples are grouped by the facts of the state they start from and summarised
 by their mean, spread, count and a one-sided bootstrap lower confidence bound.
@@ -32,11 +35,11 @@ from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, 
 import numpy as np
 
 from baseline.improvement_calculator import ImprovementCalculator
-from env.lunar_facts import lander_facts
+from env.lunar_facts import OUTCOMES, landing_outcome, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import NO_ENGINE, SUBSKILLS, run_subskill
 
-SCHEMA_VERSION = "subrep.lunar_effects.v1"
+SCHEMA_VERSION = "subrep.lunar_effects.v2"
 ENVIRONMENT = "mo-lunar-lander-v3"
 BASELINE_ID = "idle_policy_v1"
 GAMMA = 0.99
@@ -45,6 +48,9 @@ CONFIDENCE = 0.95
 BOOTSTRAP_RESAMPLES = 2000
 MIN_SAMPLES = 30
 DEFAULT_TABLE_PATH = Path(__file__).resolve().parent / "data" / "lunar_effects.json"
+
+IN_FLIGHT = "in_flight"
+PLAN_OUTCOMES = OUTCOMES + (IN_FLIGHT,)
 
 _GAIN_NAMES = ("delta_r", "delta_safety", "delta_fuel")
 _DECIMALS = 6
@@ -130,6 +136,7 @@ class PlanFlight:
     skills: Tuple[str, ...]
     plan: Sample
     steps: Tuple[Sample, ...]  # the steps that ran; fewer than ``skills`` if one failed
+    outcome: str  # how the episode ended, from its final result, or IN_FLIGHT
 
     @property
     def interaction(self) -> np.ndarray:
@@ -151,6 +158,7 @@ def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
     actions: List[int] = []
     rewards: List[np.ndarray] = []
     runs = []  # (frames flown before the step, group the step started in, its run)
+    info: Mapping[str, object] = {}
     ended = False
     for name in skills:
         run = run_subskill(env, SUBSKILLS[name], obs)
@@ -158,6 +166,7 @@ def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
         actions.extend(run.actions)
         rewards.extend(run.rewards)
         obs = run.observation
+        info = run.info if run.info is not None else info
         ended = run.terminated or run.truncated
         if ended or not run.completed:
             break
@@ -166,9 +175,10 @@ def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
     if completed and not ended and lander_facts(obs)["landed"]:
         last = SUBSKILLS[skills[-1]]
         while not ended:
-            obs, reward, terminated, truncated, _ = env.step(int(last.policy(obs)))
+            obs, reward, terminated, truncated, info = env.step(int(last.policy(obs)))
             rewards.append(np.asarray(reward, dtype=np.float64))
             ended = terminated or truncated
+    outcome = landing_outcome(info, obs) if ended else IN_FLIGHT
 
     plan_rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, 2)
     replay(env, seed, ())
@@ -181,7 +191,7 @@ def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
         delta_r, delta_n = improvement(run.rewards, idle_rewards(env, run.frames))
         steps.append(Sample(run.skill, group, delta_r, delta_n, run.frames, run.completed))
 
-    return PlanFlight(seed=seed, skills=tuple(skills), plan=plan, steps=tuple(steps))
+    return PlanFlight(seed=seed, skills=tuple(skills), plan=plan, steps=tuple(steps), outcome=outcome)
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +270,10 @@ def build_table(seeds: range, plans: Sequence[Sequence[str]], min_samples: int =
     for group in _by_name_and_group(flights, lambda f: f.plan):
         entry = summarise([flight.plan for flight in group])
         entry["skills"] = list(group[0].skills)
+        entry["outcomes"] = {
+            name: round(sum(flight.outcome == name for flight in group) / len(group), _DECIMALS)
+            for name in PLAN_OUTCOMES
+        }
         interaction = np.stack([flight.interaction for flight in group])
         entry["interaction"] = summarise_gains(interaction, _bootstrap_seed(entry["name"], entry["group"], "interaction"))
         plans_summary.append(entry)
@@ -304,6 +318,7 @@ class Estimate:
     mean: Gains
     lower: Gains  # one-sided lower confidence bounds
     interaction: Optional[Gains] = None  # mean interaction; plans only
+    outcomes: Optional[Dict[str, float]] = None  # how plan flights really ended; plans only
 
 
 def _gains(stats: Mapping[str, Mapping[str, float]], field: str) -> Gains:
@@ -356,4 +371,5 @@ class EffectTable:
             mean=_gains(entry, "mean"),
             lower=_gains(entry, "lower"),
             interaction=_gains(entry["interaction"], "mean") if "interaction" in entry else None,
+            outcomes=dict(entry["outcomes"]) if "outcomes" in entry else None,
         )

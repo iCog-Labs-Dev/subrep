@@ -19,13 +19,11 @@ from typing import Callable, Dict, List, Sequence
 import numpy as np
 from gymnasium.envs.box2d.lunar_lander import heuristic
 
+from env.lunar_facts import OUTCOMES, landing_outcome
 from env.lunar_lander_wrapper import SubRepEnv
 
 Policy = Callable[[np.ndarray], int]
 
-OUTCOMES = ("landed_on_pad", "landed_off_pad", "crashed", "timeout")
-# The landing pad spans x in [-0.2, 0.2] in observation coordinates.
-PAD_HALF_WIDTH = 0.2
 DEFAULT_PPO_CHECKPOINT = "models/pilot_ppo.pt"
 
 
@@ -53,15 +51,9 @@ def run_episode(env: SubRepEnv, policy: Policy, seed: int) -> EpisodeResult:
         if terminated or truncated:
             break
 
-    if info["landing_success"]:
-        outcome = "landed_on_pad" if abs(float(obs[0])) <= PAD_HALF_WIDTH else "landed_off_pad"
-    elif info["crashed"]:
-        outcome = "crashed"
-    else:
-        outcome = "timeout"
     return EpisodeResult(
         seed=seed,
-        outcome=outcome,
+        outcome=landing_outcome(info, obs),
         safety=float(totals[0]),
         fuel=float(totals[1]),
         frames=frames,

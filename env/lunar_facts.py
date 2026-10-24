@@ -9,7 +9,7 @@ normalised so the landing pad is centred at (0, 0) and spans |x| <= 0.2.
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Any, Dict, Mapping
 
 import numpy as np
 
@@ -23,6 +23,7 @@ SLOW_DESCENT_SPEED = 0.2
 FAST_FALL_SPEED = 0.4
 
 FACT_NAMES = ("upright", "over_pad", "near_ground", "slow", "falling_fast", "landed")
+OUTCOMES = ("landed_on_pad", "landed_off_pad", "crashed", "timeout")
 
 
 def lander_facts(observation) -> Dict[str, bool]:
@@ -47,3 +48,18 @@ def lander_facts(observation) -> Dict[str, bool]:
         "falling_fast": bool(vy <= -FAST_FALL_SPEED),
         "landed": bool(left_leg > 0 and right_leg > 0),
     }
+
+
+def landing_outcome(info: Mapping[str, Any], observation) -> str:
+    """How an episode ended, judged from its final result.
+
+    A landing counts only when the environment confirms it: the lander came to
+    rest after touching down. It is on the pad only when the lander rests within
+    the pad's width. Legs touching the ground before a crash do not count.
+    """
+    if info.get("landing_success"):
+        x = float(np.asarray(observation, dtype=np.float64).reshape(-1)[0])
+        return "landed_on_pad" if abs(x) <= PAD_HALF_WIDTH else "landed_off_pad"
+    if info.get("crashed"):
+        return "crashed"
+    return "timeout"

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
-from demo.run_lunar_baseline import PAD_HALF_WIDTH
+from env.lunar_facts import OUTCOMES, landing_outcome
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import SUBSKILLS, run_subskill
 
@@ -40,14 +40,6 @@ class Flight:
     failed_step: Optional[str]
     fuel: float
     frames: int
-
-
-def _outcome(info: dict, observation: np.ndarray) -> str:
-    if info.get("landing_success"):
-        return "landed_on_pad" if abs(float(observation[0])) <= PAD_HALF_WIDTH else "landed_off_pad"
-    if info.get("crashed"):
-        return "crashed"
-    return "timeout"
 
 
 def fly(env: SubRepEnv, steps: Sequence[str], seed: int) -> Flight:
@@ -81,7 +73,7 @@ def fly(env: SubRepEnv, steps: Sequence[str], seed: int) -> Flight:
 
     return Flight(
         seed=seed,
-        outcome=_outcome(info, obs),
+        outcome=landing_outcome(info, obs),
         completed_steps=completed,
         failed_step=failed,
         fuel=fuel,
@@ -100,10 +92,9 @@ def summarise(flights: Sequence[Flight], steps: Sequence[str]) -> dict:
             successes[name] += 1
         if flight.failed_step is not None:
             attempts[flight.failed_step] += 1
-    outcomes = ("landed_on_pad", "landed_off_pad", "crashed", "timeout")
     return {
         "flights": count,
-        **{f"{o}_rate": sum(f.outcome == o for f in flights) / count for o in outcomes},
+        **{f"{o}_rate": sum(f.outcome == o for f in flights) / count for o in OUTCOMES},
         "mean_fuel": float(np.mean([f.fuel for f in flights])),
         "step_completion": {
             name: {"completed": successes[name], "attempted": attempts[name]} for name in steps

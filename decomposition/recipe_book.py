@@ -4,7 +4,8 @@ A recipe book is a versioned JSON file in the style of a hierarchical task
 network (HTN):
 
 - a goal names the task that achieves it and the facts that show it is
-  achieved;
+  achieved; a terminal goal is achieved only by how the episode ends, so its
+  facts are confirmed on the final result rather than mid-episode;
 - a task has one or more methods; a method is an ordered list of subtasks
   (tasks or primitives) and the facts that must hold before it is chosen;
 - a primitive is a sub-skill with the facts it requires, the facts it makes
@@ -77,6 +78,7 @@ class Goal:
     name: str
     task: str
     achieved_when: Dict[str, bool]
+    terminal: bool = False  # achieved only by how the episode ends
 
 
 @dataclass(frozen=True)
@@ -190,11 +192,14 @@ def _task(name: str, spec: Mapping, facts: Set[str]) -> Task:
 
 
 def _goal(name: str, spec: Mapping, facts: Set[str]) -> Goal:
-    _check_keys(spec, f"goal {name}", required={"task", "achieved_when"})
+    _check_keys(spec, f"goal {name}", required={"task", "achieved_when"}, optional={"terminal"})
     achieved_when = _conditions(spec["achieved_when"], facts, f"goal {name} achieved_when")
     if not achieved_when:
         raise RecipeBookError(f"goal {name} needs at least one fact in achieved_when")
-    return Goal(name, str(spec["task"]), achieved_when)
+    terminal = spec.get("terminal", False)
+    if not isinstance(terminal, bool):
+        raise RecipeBookError(f"goal {name} terminal must be true or false")
+    return Goal(name, str(spec["task"]), achieved_when, terminal)
 
 
 def _check_acyclic(tasks: Mapping[str, Task]) -> None:

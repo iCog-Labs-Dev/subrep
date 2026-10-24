@@ -6,6 +6,8 @@ import pytest
 from decomposition.effects import (
     DEFAULT_TABLE_PATH,
     GAMMA,
+    IN_FLIGHT,
+    PLAN_OUTCOMES,
     EffectTable,
     Sample,
     build_table,
@@ -98,6 +100,7 @@ def test_a_finished_step_takes_no_frames_and_gains_nothing(env):
 def test_a_step_inside_a_plan_matches_the_step_flown_alone(env):
     in_plan = fly_plan(env, TILTED_START_SEED, CAREFUL).steps[0]
     alone = fly_plan(env, TILTED_START_SEED, CAREFUL[:1])
+    assert alone.outcome == IN_FLIGHT
     assert in_plan == alone.steps[0] == alone.plan
     np.testing.assert_array_equal(alone.interaction, np.zeros(3))
 
@@ -105,6 +108,7 @@ def test_a_step_inside_a_plan_matches_the_step_flown_alone(env):
 def test_a_landing_plan_runs_until_the_episode_ends(env):
     flight = fly_plan(env, TILTED_START_SEED, CAREFUL)
     assert flight.plan.completed
+    assert flight.outcome == "landed_on_pad"
     assert [step.name for step in flight.steps] == CAREFUL
     assert flight.plan.frames == fly(env, CAREFUL, TILTED_START_SEED).frames
     assert flight.plan.frames > sum(step.frames for step in flight.steps)
@@ -219,3 +223,21 @@ def test_committed_doing_nothing_steps_gain_nothing(committed_table):
     free_fall = [entry for entry in committed_table.data["steps"] if entry["name"] == "free_fall"]
     assert free_fall
     assert all(entry["delta_r"]["mean"] == 0.0 and entry["delta_fuel"]["mean"] == 0.0 for entry in free_fall)
+
+
+def test_plan_outcomes_come_from_the_final_result(small_table, committed_table):
+    for table in (small_table, committed_table):
+        for entry in table.data["plans"]:
+            assert set(entry["outcomes"]) == set(PLAN_OUTCOMES)
+            assert sum(entry["outcomes"].values()) == pytest.approx(1.0)
+    landings = [e for e in committed_table.data["plans"] if e["skills"] in (CAREFUL, FUEL_SAVING)]
+    # Completed steps overstate landings on the pad: some end off the pad or crash after touching down.
+    assert max(e["completion_rate"] - e["outcomes"]["landed_on_pad"] for e in landings) > 0.05
+
+
+def test_estimates_report_how_plans_really_ended(small_table):
+    entry = small_table.data["plans"][0]
+    estimate = small_table.plan(entry["skills"], facts_of(entry["group"]))
+    assert estimate.outcomes == entry["outcomes"]
+    step = small_table.data["steps"][0]
+    assert small_table.step(step["name"], facts_of(step["group"])).outcomes is None
