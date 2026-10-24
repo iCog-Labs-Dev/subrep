@@ -5,9 +5,8 @@ import json
 import numpy as np
 import pytest
 
-from demo.run_goal_decomposition_eval import PROFILES, episode_outcome, evaluate, finish_episode, to_markdown
-from demo.run_lunar_baseline import OUTCOMES
-from env.lunar_facts import lander_facts
+from demo.run_goal_decomposition_eval import PROFILES, evaluate, finish_episode, to_markdown
+from env.lunar_facts import OUTCOMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 
 SEEDS = range(2000, 2004)
@@ -82,15 +81,3 @@ def test_an_unfinished_episode_is_finished_by_doing_nothing():
     env.close()
     assert result.outcome == "crashed" and result.fuel == 0.0 and result.frames > 0
 
-
-@pytest.mark.parametrize(
-    "info, x, outcome",
-    [
-        ({"landing_success": True}, 0.1, "landed_on_pad"),
-        ({"landing_success": True}, 0.5, "landed_off_pad"),
-        ({"crashed": True}, 0.0, "crashed"),
-        ({}, 0.0, "timeout"),
-    ],
-)
-def test_episode_outcomes(info, x, outcome):
-    assert episode_outcome(info, np.array([x, 0.0])) == outcome

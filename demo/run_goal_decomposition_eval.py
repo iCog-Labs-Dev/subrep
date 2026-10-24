@@ -38,16 +38,9 @@ from decomposition.recipe_book import LUNAR_LANDER_BOOK, RecipeBook, load_recipe
 from decomposition.runtime import GoalStatus, pursue
 from decomposition.verifier import MdnRegion, Priorities
 from demo.build_lunar_effect_table import PLANS
-from demo.run_lunar_baseline import (
-    CONTROLLERS,
-    OUTCOMES,
-    PAD_HALF_WIDTH,
-    EpisodeResult,
-    run_episode,
-    summarise,
-)
+from demo.run_lunar_baseline import CONTROLLERS, EpisodeResult, run_episode, summarise
 from demo.run_lunar_subskill_reliability import SEQUENCES
-from env.lunar_facts import FACT_NAMES, lander_facts
+from env.lunar_facts import FACT_NAMES, OUTCOMES, landing_outcome, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import NO_ENGINE, SUBSKILLS
 
@@ -82,15 +75,6 @@ PROFILES: Dict[str, Priorities] = {
 # ---------------------------------------------------------------------------
 
 
-def episode_outcome(info: Mapping[str, Any], observation: np.ndarray) -> str:
-    """How an episode ended, from its last info and observation."""
-    if info.get("landing_success"):
-        return "landed_on_pad" if abs(float(observation[0])) <= PAD_HALF_WIDTH else "landed_off_pad"
-    if info.get("crashed"):
-        return "crashed"
-    return "timeout"
-
-
 def finish_episode(
     env: SubRepEnv,
     seed: int,
@@ -109,7 +93,7 @@ def finish_episode(
         episode_over = terminated or truncated
     return EpisodeResult(
         seed=seed,
-        outcome=episode_outcome(info or {}, observation),
+        outcome=landing_outcome(info or {}, observation),
         safety=float(totals[0]),
         fuel=float(totals[1]),
         frames=frames,

@@ -52,8 +52,8 @@ def start(env):
 
 @pytest.fixture
 def verdicts(book, table, start):
-    _, facts = start
-    return verify(propose(book, "land_on_pad", facts), facts, table, SAFETY_FIRST)
+    observation, facts = start
+    return verify(propose(book, "land_on_pad", facts), observation, table, SAFETY_FIRST)
 
 
 def shifted(gains, by, count, spread=1.0):
@@ -114,8 +114,8 @@ def test_a_few_bad_outcomes_do_not_revoke_a_certificate(verdicts, start):
 
 
 def test_only_admitted_plans_can_be_recorded(book, table, start):
-    _, facts = start
-    rejected = verify(propose(book, "land_on_pad", facts), facts, table, Priorities(weights=(0.5, 0.5)))[0]
+    observation, facts = start
+    rejected = verify(propose(book, "land_on_pad", facts), observation, table, Priorities(weights=(0.5, 0.5)))[0]
     with pytest.raises(ValueError, match="admitted"):
         FeedbackLog().record(rejected, facts, Gains(0.0, (0.0, 0.0)))
 

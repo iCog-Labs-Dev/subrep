@@ -7,10 +7,21 @@ the next attempt plans again from the state the lander is really in. The run
 ends when the goal is achieved, no plan is admitted, the episode ends, or the
 attempts run out.
 
-While the episode runs, the goal's facts say whether it is achieved. Once the
-episode is over, the environment's verdict decides: the goal counts as achieved
-only if the episode ended in a successful landing. Leg contact flickers when
-the lander comes to rest, so the last frame's facts alone can miss a landing.
+Whether a goal is achieved is confirmed, never assumed:
+
+- once the episode is over, the final result decides. The goal counts as
+  achieved only if the environment confirms a landing and the goal's facts hold
+  in the final state, so landing on the pad needs the lander to rest on the pad.
+  Legs touching the ground before a crash, or a landing beside the pad, do not
+  count. The environment's verdict stands in for leg contact, which flickers
+  when the lander comes to rest;
+- while the episode runs, a goal that is not terminal is achieved when its facts
+  hold. A terminal goal, such as landing on the pad, is achieved only by how the
+  episode ends.
+
+Plans are certified from the current observation, so after a step fails
+mid-flight the verifier admits a new plan only where the effect table has
+measurements that apply to the state the lander is really in.
 
 The runtime never acts without a certificate: when no plan is admitted it
 stops and leaves the lander to the caller. Given a feedback log, it also skips
@@ -114,13 +125,13 @@ def pursue(
     info: Optional[Dict[str, Any]] = None
     episode_over = False
 
-    if _achieved(target, obs, episode_over, info):
+    if goal_achieved(target, obs, episode_over, info):
         status = GoalStatus.ALREADY_ACHIEVED
     else:
         status = GoalStatus.FAILED
         for _ in range(max_attempts):
             facts = lander_facts(obs)
-            verdicts = tuple(verify(propose(book, goal, facts), facts, table, priorities, timestamp))
+            verdicts = tuple(verify(propose(book, goal, facts), obs, table, priorities, timestamp))
             if feedback is not None:
                 verdicts = feedback.screen(verdicts, facts)
             chosen = best_plan(verdicts)
@@ -135,7 +146,7 @@ def pursue(
             obs, episode_over = execution.observation, execution.episode_over
             if execution.info is not None:
                 info = execution.info
-            if _achieved(target, obs, episode_over, info):
+            if goal_achieved(target, obs, episode_over, info):
                 status = GoalStatus.ACHIEVED
                 break
             if episode_over:
@@ -152,12 +163,16 @@ def pursue(
     )
 
 
-def _achieved(
+def goal_achieved(
     target: Goal, observation: np.ndarray, episode_over: bool, info: Optional[Mapping[str, Any]]
 ) -> bool:
+    """Whether ``target`` is achieved in the state ``observation``, confirmed as the module describes."""
     if episode_over:
-        return bool(info and info.get("landing_success"))
-    return holds(target.achieved_when, lander_facts(observation))
+        if not (info and info.get("landing_success")):
+            return False
+        final = {**lander_facts(observation), "landed": True}  # the environment confirmed the landing
+        return holds(target.achieved_when, final)
+    return not target.terminal and holds(target.achieved_when, lander_facts(observation))
 
 
 def _attempt_record(attempt: Attempt) -> Dict[str, object]:
