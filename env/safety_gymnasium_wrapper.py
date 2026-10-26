@@ -24,14 +24,21 @@ class SafeRLGymnasiumEnv:
         seed: int = 42,
         render_mode: Optional[str] = None,
         make_env: Optional[Callable] = None,
+        env=None,
     ) -> None:
         self.env_id = env_id
         self.seed = int(seed)
-        self.env = self._create_env(env_id, render_mode=render_mode, make_env=make_env)
-        self.env.reset(seed=self.seed)
 
-        self.observation_space = self.env.observation_space
-        self.action_space = self.env.action_space
+        # Direct env injection for stubs/tests takes priority over make_env / env_id.
+        if env is not None:
+            self.env = env
+        else:
+            self.env = self._create_env(env_id, render_mode=render_mode, make_env=make_env)
+            self.env.reset(seed=self.seed)
+
+        # observation_space / action_space are optional on stubs
+        self.observation_space = getattr(self.env, "observation_space", None)
+        self.action_space = getattr(self.env, "action_space", None)
         self.reward_space = Box(
             low=np.array([-np.inf, -np.inf], dtype=np.float32),
             high=np.array([np.inf, np.inf], dtype=np.float32),
@@ -61,6 +68,19 @@ class SafeRLGymnasiumEnv:
 
     @property
     def metadata(self) -> dict:
+<<<<<<< HEAD
+        """Environment metadata conforming to SubRepBaseEnv specification."""
+        return {
+            "environment_id": "subrep_safety_gymnasium_v1",
+            "motive_names": ["Safety", "Task"],
+            "motive_schema_version": "1.0.0",
+            "payoff_schema_version": "1.0.0",
+            "observation_schema_version": "1.0.0",
+            "action_schema_version": "1.0.0",
+        }
+
+    def reset(self, seed=None):
+=======
         """Environment metadata dictionary conforming to SubRep specification."""
         return {
             "environment_id": "subrep_safety_gymnasium_v1",
@@ -73,6 +93,7 @@ class SafeRLGymnasiumEnv:
 
     def reset(self, seed=None, options=None):
         kwargs = {} if options is None else {"options": options}
+>>>>>>> upstream/refactor/minecraft-environment
         if seed is not None:
             self.seed = int(seed)
             return self.env.reset(seed=self.seed, **kwargs)
@@ -85,6 +106,8 @@ class SafeRLGymnasiumEnv:
         cost_value = float(np.asarray(cost, dtype=np.float64).reshape(-1)[0])
         reward_vector = self._map_reward_and_cost(reward_value, cost_value)
 
+        # task_payoff: required SubRepBaseEnv channel (scalar, separate from motives)
+        info["task_payoff"] = reward_value
         info["task_reward"] = reward_value
         info["task_payoff"] = reward_value
         info["safety_cost"] = cost_value
@@ -103,3 +126,9 @@ class SafeRLGymnasiumEnv:
 
     def close(self) -> None:
         self.env.close()
+
+
+# Backward-compatible alias: registry.py and test_env_contract.py import
+# SafetyGymnasiumEnv; the class was renamed to SafeRLGymnasiumEnv for clarity.
+# Both names are intentionally valid — do not remove this alias.
+SafetyGymnasiumEnv = SafeRLGymnasiumEnv
