@@ -10,6 +10,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import json
 import random
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--initial-lagrange-multiplier", type=float, default=1.0)
     parser.add_argument("--max-lagrange-multiplier", type=float, default=50.0)
     parser.add_argument("--eval-episodes", type=int, default=10)
+    parser.add_argument("--eval-every", type=int, default=25)
+    parser.add_argument("--eval-seed", type=int, default=180000)
     return parser.parse_args()
 
 
@@ -79,6 +82,7 @@ def main() -> None:
         config=config,
         device=args.device,
         eval_episodes=args.eval_episodes,
+        eval_every=args.eval_every, eval_seed=args.eval_seed,
     )
     print("Safety-Gymnasium PPO Training Complete", flush=True)
     print("======================================", flush=True)
@@ -94,9 +98,22 @@ def train_safety_ppo(
     config: SafetyPPOConfig,
     device: str = "cpu",
     eval_episodes: int = 10,
+    eval_every: int = 25,
+    eval_seed: int = 180000,
 ) -> dict[str, Any]:
     import safety_gymnasium
 
+    if min(config.total_updates, config.rollout_steps, config.update_epochs,
+           config.minibatch_size, config.max_episode_steps, eval_episodes, eval_every) < 1:
+        raise ValueError("Training and evaluation counts must be positive")
+    output_path = Path(output_path)
+    run_dir = output_path.parent / (output_path.stem + "_run")
+    if output_path.exists() or run_dir.exists():
+        raise FileExistsError("Use a new checkpoint path and run directory")
+    run_dir.mkdir(parents=True)
+    history = []
+    best_key = None
+    best_metadata = None
     _seed_everything(config.seed)
     env = safety_gymnasium.make(env_id)
     env.reset(seed=config.seed)
@@ -109,8 +126,16 @@ def train_safety_ppo(
         action_dim=action_dim,
         action_low=np.asarray(env.action_space.low, dtype=np.float32).reshape(-1),
         action_high=np.asarray(env.action_space.high, dtype=np.float32).reshape(-1),
+        separate_critic=config.use_lagrangian,
     ).to(device)
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
+    # Training-only cost value function; inference still uses the same actor API.
+    cost_critic = None
+    cost_optimizer = None
+    if config.use_lagrangian:
+        cost_critic = torch.nn.Sequential(torch.nn.Linear(obs_dim, 128), torch.nn.Tanh(),
+            torch.nn.Linear(128, 128), torch.nn.Tanh(), torch.nn.Linear(128, 1)).to(device)
+        cost_optimizer = optim.Adam(cost_critic.parameters(), lr=config.learning_rate)
 
     obs, _ = env.reset(seed=config.seed)
     obs = np.asarray(obs, dtype=np.float32).reshape(-1)
@@ -138,24 +163,64 @@ def train_safety_ppo(
             completed_returns=completed_returns,
             completed_costs=completed_costs,
             current_cost_penalty=lagrange_multiplier,
+            cost_critic=cost_critic,
         )
         obs = rollout.pop("next_obs")
         episode_return = rollout.pop("episode_return")
         episode_cost = rollout.pop("episode_cost")
         episode_length = rollout.pop("episode_length")
 
-        _ppo_update(model=model, optimizer=optimizer, rollout=rollout, config=config, device=device)
+        optimization = _ppo_update(model=model, optimizer=optimizer, rollout=rollout,
+            config=config, device=device, cost_critic=cost_critic, cost_optimizer=cost_optimizer)
 
         if config.use_lagrangian:
-            mean_episode_cost = float(rollout["rollout_mean_episode_cost"])
-            lagrange_multiplier = float(
-                np.clip(
-                    lagrange_multiplier + config.lambda_lr * (mean_episode_cost - config.cost_limit),
-                    0.0,
-                    config.max_lagrange_multiplier,
-                )
-            )
+            lagrange_multiplier = _update_lagrange_multiplier(
+                lagrange_multiplier, rollout["rollout_mean_episode_cost"], config)
 
+        row = {"update": update, "environment_steps": update * config.rollout_steps,
+               "recent_return": float(np.mean(completed_returns[-10:])) if completed_returns else None,
+               "recent_cost": float(np.mean(completed_costs[-10:])) if completed_costs else None,
+               "lagrange_multiplier": lagrange_multiplier,
+               "rollout_mean_episode_cost": rollout["rollout_mean_episode_cost"]}
+        row.update(optimization)
+        with torch.no_grad():
+            observations = torch.as_tensor(rollout["observations"], device=device)
+            means, stds, _ = model(observations)
+            low, high = model.action_low, model.action_high
+            near = ((means-low)/(high-low) < .01) | ((high-means)/(high-low) < .01)
+            row["mean_near_bound_rate"] = float(near.float().mean().cpu())
+            row["exploration_std"] = stds.mean(0).cpu().tolist()
+            actions = rollout["actions"]
+            row["sampled_action_clip_rate"] = float(np.mean(
+                (actions < low.cpu().numpy()) | (actions > high.cpu().numpy())))
+        if update == 1 or update % eval_every == 0 or update == config.total_updates:
+            # Evaluation must not perturb the training random streams.
+            numpy_state, python_state = np.random.get_state(), random.getstate()
+            try:
+                with torch.random.fork_rng(devices=list(range(torch.cuda.device_count()))):
+                    evaluation = evaluate_safety_ppo(model, env_id=env_id, seed=eval_seed,
+                        episodes=eval_episodes, max_episode_steps=config.max_episode_steps)
+            finally:
+                np.random.set_state(numpy_state)
+                random.setstate(python_state)
+            metadata = {"training_entrypoint": "pilot.train_safety_gymnasium_ppo",
+                "environment": env_id, "config": config_to_dict(config),
+                "trainer_version": "separate_reward_cost_critics_v2" if config.use_lagrangian else "ppo_v1",
+                "evaluation": evaluation, "evaluation_role": "development checkpoint selection, not final test",
+                "evaluation_seeds": list(range(eval_seed, eval_seed+eval_episodes)),
+                "update": update, "final_lagrange_multiplier": lagrange_multiplier if config.use_lagrangian else None,
+                "selection_rule": "PPO: goal rate then return; Lagrangian: budget feasibility first, then goal rate/return; if infeasible, lower cost first."}
+            model.save(run_dir / f"update_{update:05d}.pt", metadata=metadata)
+            key = _checkpoint_rank(evaluation, config)
+            if best_key is None or key > best_key:
+                best_key, best_metadata = key, metadata
+                model.save(output_path, metadata=metadata)
+            row["evaluation"] = evaluation
+            row["selected_best_update"] = best_metadata["update"]
+            print(f"Development evaluation update {update}: {evaluation}; best={best_metadata['update']}", flush=True)
+        history.append(row)
+        with (run_dir / "metrics.jsonl").open("a") as handle:
+            handle.write(json.dumps(row, allow_nan=False) + "\n")
         if update == 1 or update % max(1, config.total_updates // 5) == 0:
             recent_return = float(np.mean(completed_returns[-10:])) if completed_returns else 0.0
             recent_cost = float(np.mean(completed_costs[-10:])) if completed_costs else 0.0
@@ -166,24 +231,32 @@ def train_safety_ppo(
                 flush=True,
             )
 
-    evaluation = evaluate_safety_ppo(
-        model,
-        env_id=env_id,
-        seed=config.seed + 10_000,
-        episodes=eval_episodes,
-        max_episode_steps=config.max_episode_steps,
-    )
     env.close()
+    (run_dir / "summary.json").write_text(json.dumps({"best_checkpoint": str(output_path),
+        "best_metadata": best_metadata, "updates": len(history),
+        "budget_met": best_metadata["evaluation"]["mean_cost"] <= config.cost_limit,
+        "note": "Development selection only. Check independent contexts before accepting this policy."}, indent=2))
+    return {"evaluation": best_metadata["evaluation"], "metadata": best_metadata}
 
-    metadata = {
-        "training_entrypoint": "pilot.train_safety_gymnasium_ppo",
-        "environment": env_id,
-        "config": config_to_dict(config),
-        "evaluation": evaluation,
-        "final_lagrange_multiplier": lagrange_multiplier if config.use_lagrangian else None,
-    }
-    model.save(output_path, metadata=metadata)
-    return {"evaluation": evaluation, "metadata": metadata}
+
+def _checkpoint_rank(evaluation, config):
+    goal, reward, cost = (evaluation[k] for k in ("goal_reached_rate", "mean_return", "mean_cost"))
+    if config.use_lagrangian:
+        if cost <= config.cost_limit:
+            return (1., goal, reward, -cost)
+        return (0., -cost, goal, reward)
+    return (goal, reward, -cost)
+
+
+def _update_lagrange_multiplier(multiplier, mean_completed_episode_cost, config):
+    """Episode budget must be compared with completed episodes, not fragments."""
+    if mean_completed_episode_cost is None:
+        return float(multiplier)
+    if not np.isfinite(mean_completed_episode_cost):
+        raise ValueError("Episode cost must be finite")
+    return float(np.clip(multiplier + config.lambda_lr *
+                         (mean_completed_episode_cost - config.cost_limit),
+                         0., config.max_lagrange_multiplier))
 
 
 def _collect_rollout(
@@ -199,6 +272,7 @@ def _collect_rollout(
     completed_returns: list[float],
     completed_costs: list[float],
     current_cost_penalty: float,
+    cost_critic=None,
 ) -> dict[str, Any]:
     observations: list[np.ndarray] = []
     raw_actions: list[np.ndarray] = []
@@ -208,6 +282,9 @@ def _collect_rollout(
     dones: list[float] = []
     rollout_completed_costs: list[float] = []
 
+    if config.use_lagrangian and cost_critic is None:
+        raise ValueError("Lagrangian training requires a separate cost critic")
+    cost_values, cost_rewards = [], []
     current_obs = obs
     for _ in range(config.rollout_steps):
         env_action, raw_action, log_prob, value = model.act(
@@ -217,7 +294,12 @@ def _collect_rollout(
         )
         next_obs, reward, cost, terminated, truncated, _ = env.step(env_action)
         next_obs = np.asarray(next_obs, dtype=np.float32).reshape(-1)
-        reward_value = float(reward) - float(current_cost_penalty) * float(cost)
+        reward_value = float(reward) if config.use_lagrangian else float(reward) - float(current_cost_penalty) * float(cost)
+        cost_value = 0.
+        cost_reward = float(cost)
+        if cost_critic is not None:
+            with torch.no_grad():
+                cost_value = float(cost_critic(torch.as_tensor(current_obs, device=device)).item())
         cutoff = episode_length + 1 >= config.max_episode_steps
         done = bool(terminated or truncated or cutoff)
         # Time limits end the sampled episode, not the underlying task. Bootstrap
@@ -229,12 +311,17 @@ def _collect_rollout(
                     torch.as_tensor(next_obs, dtype=torch.float32, device=device)
                 )
             reward_value += config.gamma * float(final_value.detach().cpu().item())
+            if cost_critic is not None:
+                with torch.no_grad():
+                    cost_reward += config.gamma * float(cost_critic(torch.as_tensor(next_obs, device=device)).item())
 
         observations.append(current_obs)
         raw_actions.append(raw_action)
         log_probs.append(log_prob)
         values.append(value)
         rewards.append(reward_value)
+        cost_values.append(cost_value)
+        cost_rewards.append(cost_reward)
         dones.append(float(done))
 
         episode_return += float(reward)
@@ -263,9 +350,21 @@ def _collect_rollout(
         next_value=float(next_value.detach().cpu().item()),
         gamma=config.gamma,
         gae_lambda=config.gae_lambda,
+        normalize=not config.use_lagrangian,
     )
+    cost_returns = None
+    if cost_critic is not None:
+        with torch.no_grad():
+            next_cost = float(cost_critic(torch.as_tensor(current_obs, device=device)).item())
+        cost_advantages, cost_returns = _compute_gae(
+            rewards=np.asarray(cost_rewards, dtype=np.float32),
+            values=np.asarray(cost_values, dtype=np.float32),
+            dones=np.asarray(dones, dtype=np.float32), next_value=next_cost,
+            gamma=config.gamma, gae_lambda=config.gae_lambda, normalize=False)
+        advantages = _lagrangian_advantages(advantages, cost_advantages, current_cost_penalty)
 
     return {
+        "cost_returns": cost_returns,
         "observations": np.asarray(observations, dtype=np.float32),
         "actions": np.asarray(raw_actions, dtype=np.float32),
         "old_log_probs": np.asarray(log_probs, dtype=np.float32),
@@ -274,7 +373,7 @@ def _collect_rollout(
         "rollout_mean_episode_cost": (
             float(np.mean(rollout_completed_costs))
             if rollout_completed_costs
-            else float(episode_cost)
+            else None
         ),
         "next_obs": current_obs,
         "episode_return": episode_return,
@@ -291,6 +390,7 @@ def _compute_gae(
     next_value: float,
     gamma: float,
     gae_lambda: float,
+    normalize: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     advantages = np.zeros_like(rewards, dtype=np.float32)
     last_advantage = 0.0
@@ -301,8 +401,15 @@ def _compute_gae(
         last_advantage = delta + gamma * gae_lambda * next_non_terminal * last_advantage
         advantages[index] = last_advantage
     returns = advantages + values
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    if normalize:
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     return advantages.astype(np.float32), returns.astype(np.float32)
+
+
+def _lagrangian_advantages(reward_advantages, cost_advantages, multiplier):
+    # Preserve the relative reward/cost scale; normalize only after combining.
+    combined = (reward_advantages - multiplier * cost_advantages) / (1. + multiplier)
+    return ((combined - combined.mean()) / (combined.std() + 1e-8)).astype(np.float32)
 
 
 def _ppo_update(
@@ -312,13 +419,18 @@ def _ppo_update(
     rollout: dict[str, np.ndarray],
     config: SafetyPPOConfig,
     device: str,
-) -> None:
+    cost_critic=None,
+    cost_optimizer=None,
+) -> dict[str, float]:
     obs = torch.as_tensor(rollout["observations"], dtype=torch.float32, device=device)
     actions = torch.as_tensor(rollout["actions"], dtype=torch.float32, device=device)
     old_log_probs = torch.as_tensor(rollout["old_log_probs"], dtype=torch.float32, device=device)
     advantages = torch.as_tensor(rollout["advantages"], dtype=torch.float32, device=device)
     returns = torch.as_tensor(rollout["returns"], dtype=torch.float32, device=device)
 
+    losses = []
+    cost_returns = (torch.as_tensor(rollout["cost_returns"], device=device)
+                    if cost_critic is not None else None)
     rng = np.random.default_rng(config.seed)
     indices = np.arange(len(obs))
     model.train()
@@ -349,9 +461,28 @@ def _ppo_update(
 
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            if model.separate_critic:
+                actor_parameters = list(model.backbone.parameters()) + list(model.actor_mean.parameters()) + [model.log_std]
+                critic_parameters = list(model.critic_backbone.parameters()) + list(model.critic.parameters())
+                torch.nn.utils.clip_grad_norm_(actor_parameters, config.max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(critic_parameters, config.max_grad_norm)
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
+            cost_loss = torch.zeros((), device=device)
+            if cost_critic is not None:
+                cost_loss = F.mse_loss(cost_critic(obs[batch_tensor]).squeeze(-1), cost_returns[batch_tensor])
+                cost_optimizer.zero_grad()
+                cost_loss.backward()
+                torch.nn.utils.clip_grad_norm_(cost_critic.parameters(), config.max_grad_norm)
+                cost_optimizer.step()
+            with torch.no_grad():
+                log_ratio = new_log_probs - old_log_probs[batch_tensor]
+                approx_kl = ((ratio - 1) - log_ratio).mean()
+            losses.append([policy_loss.item(), value_loss.item(), cost_loss.item(), approx_kl.item()])
     model.eval()
+    return dict(zip(("policy_loss", "reward_value_loss", "cost_value_loss", "approx_kl"),
+                    np.mean(losses, axis=0).tolist()))
 
 
 def evaluate_safety_ppo(
@@ -368,15 +499,18 @@ def evaluate_safety_ppo(
     returns: list[float] = []
     costs: list[float] = []
     lengths: list[int] = []
+    goals: list[int] = []
     try:
         for episode in range(episodes):
             obs, _ = env.reset(seed=seed + episode)
             obs = np.asarray(obs, dtype=np.float32).reshape(-1)
             total_return = 0.0
             total_cost = 0.0
+            episode_goals = 0
             for step in range(1, max_episode_steps + 1):
                 action = model.predict(obs, deterministic=True)
-                obs, reward, cost, terminated, truncated, _ = env.step(action)
+                obs, reward, cost, terminated, truncated, info = env.step(action)
+                episode_goals += int(bool(info.get("goal_met", False)))
                 obs = np.asarray(obs, dtype=np.float32).reshape(-1)
                 total_return += float(reward)
                 total_cost += float(cost)
@@ -385,11 +519,14 @@ def evaluate_safety_ppo(
             returns.append(total_return)
             costs.append(total_cost)
             lengths.append(step)
+            goals.append(episode_goals)
     finally:
         env.close()
 
     return {
         "episodes": float(episodes),
+        "goal_reached_rate": float(np.mean(np.asarray(goals)>0)) if goals else 0.,
+        "mean_goals": float(np.mean(goals)) if goals else 0.,
         "mean_return": float(np.mean(returns)) if returns else 0.0,
         "mean_cost": float(np.mean(costs)) if costs else 0.0,
         "mean_episode_length": float(np.mean(lengths)) if lengths else 0.0,

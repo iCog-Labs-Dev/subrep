@@ -15,7 +15,6 @@ import torch
 
 from baseline.idle_policy import IdlePolicy
 from data_collector.collect_candidate_sets import CandidatePolicy, build_default_candidate_policies
-from env.lunar_lander_wrapper import SubRepEnv
 from env.skill_executor import SkillExecutor
 from utils.mdn_checkpoint_loader import load_mdn_checkpoint
 from utils.mdn_record_builder import build_candidate_skill_records
@@ -75,6 +74,9 @@ class ProbabilityAwareRuntimeLogCollector:
         torch.manual_seed(self.seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(self.seed)
+
+        # Log utilities can be imported without installing LunarLander.
+        from env.lunar_lander_wrapper import SubRepEnv
 
         self.env = SubRepEnv(seed=self.seed)
         self.env.env.action_space.seed(self.seed)

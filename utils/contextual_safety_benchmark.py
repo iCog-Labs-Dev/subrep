@@ -56,7 +56,7 @@ def eligible(library, stored_key, current_key, weight):
     return result
 
 
-def run_contextual(config, mdn_checkpoint=None, mdn_contract=None):
+def run_contextual(config, mdn_checkpoint=None, mdn_contract=None, scales_file=None):
     config.validate()
     root = Path(config.output)
     if root.exists():
@@ -78,7 +78,7 @@ def run_contextual(config, mdn_checkpoint=None, mdn_contract=None):
     write_json(root/'manifest.json', {'config': vars(config), 'checkpoints': provenance,
         'scope': 'Exact reset seed and observation only; same-start re-execution, not unseen-context transfer',
         'score': 'normalized task payoff plus weighted motives; task contributes twice',
-        'mdn_checkpoint': mdn_checkpoint, 'mdn_contract': mdn_contract,
+        'scales_file': scales_file, 'mdn_checkpoint': mdn_checkpoint, 'mdn_contract': mdn_contract,
         'mdn_sha256': hashlib.sha256(Path(mdn_checkpoint).read_bytes()).hexdigest() if model else None,
         'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()})
     dev_seeds = list(range(config.seed + 1, config.seed + 1 + config.development_contexts))
@@ -88,7 +88,11 @@ def run_contextual(config, mdn_checkpoint=None, mdn_contract=None):
         collector = Collector(config, models[seed])
         try:
             dev = collector.collect(dev_seeds)
-            scales = fit_scales([dev])
+            if scales_file:
+                from utils.safety_objectives import FrozenObjectiveScales
+                scales = np.asarray(FrozenObjectiveScales.load(scales_file).divisors)
+            else:
+                scales = fit_scales([dev])
             folder = root/f'seed_{seed}'
             write_json(folder/'development.json', dev)
             write_json(folder/'scales.json', scales.tolist())

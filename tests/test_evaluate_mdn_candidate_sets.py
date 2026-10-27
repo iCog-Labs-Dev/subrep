@@ -64,7 +64,7 @@ def test_evaluate_mdn_candidate_sets_returns_metrics(tmp_path):
     assert metrics["avg_certified_candidates"] >= 1.0
     assert metrics["mean_score_lift_vs_random"] >= 0.0
     assert "mean_score_lift_vs_ppo" in metrics
-    assert "mean_predicted_weight_regret" in metrics
+    assert "mean_predicted_weight_regret" not in metrics
     assert 0.0 <= metrics["balanced_top1_accuracy"] <= 1.0
     assert "score_lift_vs_ppo_ci95_low" in metrics
     assert "score_lift_vs_ppo_ci95_high" in metrics
@@ -81,3 +81,29 @@ def test_evaluate_mdn_candidate_sets_returns_metrics(tmp_path):
     assert metrics["q_motive_mse_1"] == pytest.approx(0.01)
     assert metrics["q_motive_mae_0"] == pytest.approx(0.35)
     assert metrics["q_motive_mae_1"] == pytest.approx(0.1)
+
+
+def test_idle_coverage_and_paired_ppo_metrics(tmp_path):
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    for index, reward in enumerate([2., -2.]):
+        np.savez(data_dir / f'{index}.npz', context=np.full(8, index),
+                 candidate_skill_ids=['zero_action', 'ppo_deterministic'],
+                 candidate_payoffs=[0., reward],
+                 candidate_motives=[[0., 0., 0.], [0., reward, 0.]])
+    model = MotiveDecompositionNetwork(input_dim=8, num_objectives=3, num_skills=16)
+    for parameter in model.parameters():
+        parameter.data.zero_()
+    checkpoint = tmp_path / 'model.pth'
+    torch.save({'model_state_dict': model.state_dict()}, checkpoint)
+    metrics = evaluate_mdn_candidate_sets(checkpoint_path=checkpoint, data_dir=data_dir,
+        baseline_candidate_id='zero_action', bootstrap_samples=10)
+    assert metrics['idle_selected_contexts'] == 1
+    assert metrics['idle_selection_rate'] == .5
+    assert metrics['nonidle_certified_records'] == 1
+    assert metrics['contexts_with_nonidle_certified'] == 1
+    assert metrics['contexts_with_multiple_certified'] == 1
+    assert metrics['ppo_deterministic_contexts'] == 1
+    assert metrics['mean_selected_score_on_ppo_certified_contexts'] == pytest.approx(metrics['mean_ppo_deterministic_score'])
+    assert 'mean_alpha_weight_2' in metrics
+    assert 'mean_predicted_weight_regret' not in metrics

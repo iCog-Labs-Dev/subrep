@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch.nn import BCEWithLogitsLoss, HuberLoss, MSELoss
 from torch.nn.utils import clip_grad_norm_
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset, Subset
 
 from baseline.improvement_calculator import ImprovementCalculator
 from certification.cds_test import CDSGate
@@ -19,6 +19,20 @@ from generator.mdn import MotiveDecompositionNetwork
 from utils.mdn_selection import alpha_to_mean_weights
 from utils.return_targets import discounted_motive_return, doubly_robust_return
 from utils.weight_set_store import WeightSet
+
+
+def context_split_indices(records, fraction, seed):
+    """Keep every candidate for a context in the same partition."""
+    if not 0 < fraction < 1:
+        raise ValueError("validation fraction must be between zero and one")
+    keys = sorted({tuple(r.context) for r in records})
+    if len(keys) < 2:
+        raise ValueError("At least two distinct contexts are required for validation")
+    order = np.random.default_rng(seed).permutation(len(keys))
+    count = min(len(keys) - 1, max(1, round(len(keys) * fraction)))
+    validation = {keys[int(i)] for i in order[:count]}
+    return ([i for i, r in enumerate(records) if tuple(r.context) not in validation],
+            [i for i, r in enumerate(records) if tuple(r.context) in validation])
 
 
 def _seed_everything(seed: int) -> None:
@@ -390,13 +404,10 @@ class MDNAuxiliaryTrainer:
                 "probability-aware auxiliary estimators require train_probability_aware_records(...), not train_records(...)"
             )
         dataset = AuxiliaryDataset(records)
-        val_size = max(1, int(round(len(dataset) * self.config.validation_split)))
-        train_size = len(dataset) - val_size
-        if train_size <= 0:
-            raise ValueError("Dataset too small for configured validation split")
-
+        train_indices, val_indices = context_split_indices(
+            dataset.records, self.config.validation_split, self.config.random_seed)
         generator = torch.Generator().manual_seed(self.config.random_seed)
-        train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=generator)
+        train_dataset, val_dataset = Subset(dataset, train_indices), Subset(dataset, val_indices)
         train_loader = DataLoader(train_dataset, batch_size=self.config.batch_size, shuffle=True, generator=generator)
         val_loader = DataLoader(val_dataset, batch_size=self.config.batch_size, shuffle=False)
 
@@ -466,15 +477,10 @@ class MDNAuxiliaryTrainer:
             if record.selected_candidate_index is None:
                 raise ValueError("All probability-aware records must include selected_candidate_index")
 
-        rng = np.random.default_rng(self.config.random_seed)
-        indices = rng.permutation(len(records_list))
-        val_size = max(1, int(round(len(records_list) * self.config.validation_split)))
-        train_size = len(records_list) - val_size
-        if train_size <= 0:
-            raise ValueError("Dataset too small for configured validation split")
-
-        train_records = [records_list[int(i)] for i in indices[:train_size]]
-        val_records = [records_list[int(i)] for i in indices[train_size:]]
+        train_indices, val_indices = context_split_indices(
+            records_list, self.config.validation_split, self.config.random_seed)
+        train_records = [records_list[i] for i in train_indices]
+        val_records = [records_list[i] for i in val_indices]
 
         best_val_loss = float("inf")
         best_metrics: dict[str, Any] = {}

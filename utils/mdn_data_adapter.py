@@ -92,6 +92,14 @@ def candidate_set_file_to_prepared_candidate_outcomes(
     if not np.all(np.isfinite(context)) or not np.all(np.isfinite(payoffs)) or not np.all(np.isfinite(motives)):
         raise ValueError("candidate-set fields must contain only finite context, payoff, and motive values")
 
+    # Collector preserves raw measurements; transform only the prepared view.
+    if "objective_scales" in data.files and bool(data.get("values_are_raw", False)):
+        scales = np.asarray(data["objective_scales"], dtype=np.float32)
+        if scales.shape != (motives.shape[1],) or not np.isfinite(scales).all() or np.any(scales <= 0):
+            raise ValueError("Invalid objective scales")
+        motives = motives / scales
+        payoffs = payoffs / scales[1]
+
     baseline = None
     if baseline_candidate_id is not None:
         matches = np.flatnonzero(skill_ids.astype(str) == baseline_candidate_id)

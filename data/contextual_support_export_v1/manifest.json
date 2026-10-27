@@ -1,0 +1,158 @@
+{
+  "source": "/home/tarik/omegaclaw/subrep/data/contextual_safety_smoke_v2",
+  "source_sha256": {
+    "manifest.json": "240de48afdf3c42e01457f328e7c0c85414091d3b756de26212f7252572e3343",
+    "admissions.json": "a0fb57e5ead348e699955670ec86d084dbfc6aa93d9d053f84c6e22716cfc381",
+    "seed_42/scales.json": "04fb3c3018b015bf35e27356cfbb166e9ae4228a8e5c2eceac7bbeddf9762790",
+    "seed_42/evidence.json": "e026e427f64ad22c34370d56be9c0745d6848a2ed31f4abc52f1e81cdaec601b",
+    "seed_42/90011/selection.json": "4654cf68186ea6f62ad7cf7d75f11baeacc5825e8a41bef1b74eab990075da2d",
+    "seed_42/90012/selection.json": "22fbac0bbb40558b470a515ab7ecf2e44b301cce2d508d307bbb62c2627accfd",
+    "seed_42/90013/selection.json": "4654cf68186ea6f62ad7cf7d75f11baeacc5825e8a41bef1b74eab990075da2d",
+    "seed_42/90014/selection.json": "398d7d029ad11d9698e91447ddd3b5ca2789497999f27703c4b9a60cc69e9e31"
+  },
+  "contexts": 2,
+  "observations": 8,
+  "fallbacks_excluded": 8,
+  "ready_for_split": false,
+  "constant_targets": true,
+  "semantics": "Coordinate maxima of observed certified-selection priorities; not safe-region boundaries.",
+  "scope": "Support fitting only; use separate benchmark contexts for final evaluation.",
+  "observed_selections": [
+    {
+      "training_seed": 42,
+      "context_seed": 90012,
+      "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+      "weight": [
+        0.3333333333333333,
+        0.3333333333333333,
+        0.3333333333333333
+      ],
+      "delta_r": 0.045215055687725186,
+      "delta_n": [
+        0.0,
+        0.045215055687725186,
+        -0.09426342767124837
+      ],
+      "gate": "PDS"
+    },
+    {
+      "training_seed": 42,
+      "context_seed": 90012,
+      "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+      "weight": [
+        0.8,
+        0.1,
+        0.1
+      ],
+      "delta_r": 0.045215055687725186,
+      "delta_n": [
+        0.0,
+        0.045215055687725186,
+        -0.09426342767124837
+      ],
+      "gate": "PDS"
+    },
+    {
+      "training_seed": 42,
+      "context_seed": 90012,
+      "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+      "weight": [
+        0.1,
+        0.8,
+        0.1
+      ],
+      "delta_r": 0.045215055687725186,
+      "delta_n": [
+        0.0,
+        0.045215055687725186,
+        -0.09426342767124837
+      ],
+      "gate": "PDS"
+    },
+    {
+      "training_seed": 42,
+      "context_seed": 90012,
+      "skill_id": "small_random:fixed_v1:ef1d46ed4496e8d45c0a0580fe137b3be80dfa99f2a9743bc246ab6d17049b46",
+      "weight": [
+        0.1,
+        0.1,
+        0.8
+      ],
+      "delta_r": 0.045215055687725186,
+      "delta_n": [
+        0.0,
+        0.045215055687725186,
+        -0.09426342767124837
+      ],
+      "gate": "PDS"
+    },
+    {
+      "training_seed": 42,
+      "context_seed": 90014,
+      "skill_id": "small_random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+      "weight": [
+        0.3333333333333333,
+        0.3333333333333333,
+        0.3333333333333333
+      ],
+      "delta_r": -0.004532104147933677,
+      "delta_n": [
+        0.0,
+        -0.004532104147933677,
+        -0.10679628631513795
+      ],
+      "gate": "PDS"
+    },
+    {
+      "training_seed": 42,
+      "context_seed": 90014,
+      "skill_id": "small_random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+      "weight": [
+        0.8,
+        0.1,
+        0.1
+      ],
+      "delta_r": -0.004532104147933677,
+      "delta_n": [
+        0.0,
+        -0.004532104147933677,
+        -0.10679628631513795
+      ],
+      "gate": "PDS"
+    },
+    {
+      "training_seed": 42,
+      "context_seed": 90014,
+      "skill_id": "small_random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+      "weight": [
+        0.1,
+        0.8,
+        0.1
+      ],
+      "delta_r": -0.004532104147933677,
+      "delta_n": [
+        0.0,
+        -0.004532104147933677,
+        -0.10679628631513795
+      ],
+      "gate": "PDS"
+    },
+    {
+      "training_seed": 42,
+      "context_seed": 90014,
+      "skill_id": "small_random:fixed_v1:c236614b3046b845dcb81a4965b49ad2f3c73f4d56eb3b8ef3a87ff0d2e2e0b9",
+      "weight": [
+        0.1,
+        0.1,
+        0.8
+      ],
+      "delta_r": -0.004532104147933677,
+      "delta_n": [
+        0.0,
+        -0.004532104147933677,
+        -0.10679628631513795
+      ],
+      "gate": "PDS"
+    }
+  ]
+}

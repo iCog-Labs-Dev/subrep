@@ -16,12 +16,13 @@ import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Tuple, Union
 
 import numpy as np
 import torch
 
-from env.lunar_lander_wrapper import SubRepEnv
+if TYPE_CHECKING:
+    from env.lunar_lander_wrapper import SubRepEnv
 from env.skill_executor import SkillExecutor
 from pilot.rl_pilot import RLPilot
 
@@ -160,6 +161,9 @@ class CandidateSetCollector:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(self.seed)
         os.environ["PYTHONHASHSEED"] = str(self.seed)
+
+        # Shared policy definitions do not require the optional simulator.
+        from env.lunar_lander_wrapper import SubRepEnv
 
         self.env = SubRepEnv(seed=self.seed)
         self.env.env.action_space.seed(self.seed)

@@ -48,6 +48,7 @@ class SafetyPPOPilot(nn.Module):
         action_low: Iterable[float],
         action_high: Iterable[float],
         hidden_sizes: Iterable[int] = (128, 128),
+        separate_critic: bool = False,
     ) -> None:
         super().__init__()
         self.observation_dim = int(observation_dim)
@@ -77,6 +78,10 @@ class SafetyPPOPilot(nn.Module):
             layers.append(nn.Tanh())
             input_dim = hidden_dim
         self.backbone = nn.Sequential(*layers)
+        self.separate_critic = bool(separate_critic)
+        if self.separate_critic:
+            import copy
+            self.critic_backbone = copy.deepcopy(self.backbone)
         self.actor_mean = nn.Linear(input_dim, self.action_dim)
         self.log_std = nn.Parameter(torch.full((self.action_dim,), -0.5))
         self.critic = nn.Linear(input_dim, 1)
@@ -115,7 +120,8 @@ class SafetyPPOPilot(nn.Module):
         scale = (self.action_high - self.action_low) / 2.0
         mean = center + unit_mean * scale
         std = torch.exp(self.log_std).expand_as(mean)
-        value = self.critic(features).squeeze(-1)
+        value_features = self.critic_backbone(obs) if self.separate_critic else features
+        value = self.critic(value_features).squeeze(-1)
         if is_single:
             mean = mean.squeeze(0)
             std = std.squeeze(0)
@@ -174,6 +180,7 @@ class SafetyPPOPilot(nn.Module):
             "action_low": self.action_low.detach().cpu().tolist(),
             "action_high": self.action_high.detach().cpu().tolist(),
             "hidden_sizes": self.hidden_sizes,
+            "separate_critic": self.separate_critic,
             "metadata": _metadata_to_python(metadata or {}),
         }
         torch.save(payload, path)
@@ -194,6 +201,7 @@ class SafetyPPOPilot(nn.Module):
             action_low=payload["action_low"],
             action_high=payload["action_high"],
             hidden_sizes=tuple(payload.get("hidden_sizes", (128, 128))),
+            separate_critic=bool(payload.get("separate_critic", False)),
         )
         model.load_state_dict(payload["state_dict"])
         model.to(map_location if isinstance(map_location, torch.device) else torch.device(map_location))

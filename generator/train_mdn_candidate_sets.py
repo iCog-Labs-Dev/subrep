@@ -11,7 +11,6 @@ import numpy as np
 import torch
 
 from baseline.idle_policy import IdlePolicy
-from env.lunar_lander_wrapper import SubRepEnv
 from generator.mdn import MotiveDecompositionNetwork
 from generator.mdn_auxiliary_trainer import AuxiliaryTrainingRecord, MDNAuxiliaryTrainer, MDNAuxiliaryTrainerConfig
 from generator.mdn_trainer import MDNTrainer, MDNTrainerConfig
@@ -28,6 +27,9 @@ def compute_idle_baseline_stats(
     seed: int = 42,
     gamma: float = 0.99,
 ) -> dict[str, Any]:
+    # Import only when a LunarLander baseline is actually requested.
+    from env.lunar_lander_wrapper import SubRepEnv
+
     env = SubRepEnv(seed=seed)
     return IdlePolicy(env=env, gamma=gamma).run_baseline_episodes(
         num_episodes=episodes,
@@ -87,7 +89,10 @@ def train_mdn_from_candidate_set_directory(
     auxiliary_records = raw_auxiliary_records
     target_normalization: dict[str, object] | None = None
     if normalize_auxiliary_targets:
-        target_normalization = compute_auxiliary_target_normalization(auxiliary_records)
+        from generator.mdn_auxiliary_trainer import context_split_indices
+        training_indices, _ = context_split_indices(
+            auxiliary_records, MDNAuxiliaryTrainerConfig().validation_split, seed)
+        target_normalization = compute_auxiliary_target_normalization([auxiliary_records[i] for i in training_indices])
         auxiliary_records = normalize_auxiliary_targets_in_records(
             auxiliary_records,
             target_normalization,
