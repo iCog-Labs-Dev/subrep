@@ -8,14 +8,16 @@ nothing from the same start, and compares them with what was certified.
 A certificate is revoked when the realised gains are significantly below it:
 for Δr, ΔSafety or ΔFuel, the one-sided upper confidence bound of the realised
 mean falls below the certified value. The runtime skips plans whose
-certificates are revoked until the table is rebuilt.
+certificates are revoked until the table is rebuilt. The three checks are not
+corrected for being three, which errs towards revoking: a plan is skipped a
+little more often than the confidence level alone would say, never less.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Dict, FrozenSet, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -71,6 +73,7 @@ class FeedbackLog:
             raise ValueError(f"min_samples must be at least 2, got {min_samples}")
         self.min_samples = min_samples
         self._outcomes: Dict[Tuple[str, str], List[Outcome]] = {}
+        self._report: Optional[List[Dict[str, object]]] = None  # cleared whenever an outcome is recorded
 
     def record(self, verdict: PlanVerdict, facts: Mapping[str, bool], realised: Gains) -> Outcome:
         """Record what an admitted plan, certified from a state with ``facts``, really achieved."""
@@ -84,11 +87,14 @@ class FeedbackLog:
             realised=realised,
         )
         self._outcomes.setdefault((outcome.plan, outcome.group), []).append(outcome)
+        self._report = None
         return outcome
 
     def report(self) -> List[Dict[str, object]]:
         """One entry per plan and start group: certified values, realised means and bounds, status."""
-        return [self._summary(outcomes) for _, outcomes in sorted(self._outcomes.items())]
+        if self._report is None:
+            self._report = [self._summary(outcomes) for _, outcomes in sorted(self._outcomes.items())]
+        return [dict(entry) for entry in self._report]
 
     def revoked(self) -> FrozenSet[Tuple[str, str]]:
         """(plan, group) pairs whose certificates are revoked."""

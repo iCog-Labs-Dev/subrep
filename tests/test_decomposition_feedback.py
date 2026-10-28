@@ -147,3 +147,15 @@ def test_the_report_is_json_ready(verdicts, start):
 def test_min_samples_is_checked():
     with pytest.raises(ValueError, match="min_samples"):
         FeedbackLog(min_samples=1)
+
+
+def test_the_report_follows_every_new_outcome(verdicts, start):
+    _, facts = start
+    best, log = best_plan(verdicts), FeedbackLog()
+    outcomes = shifted(certified_gains(best), by=-10.0, count=31)
+    for realised in outcomes[:30]:
+        log.record(best, facts, realised)
+    assert log.report()[0]["samples"] == 30 and log.revoked()
+    log.report()[0]["samples"] = 0  # a caller changing its copy does not change the log
+    log.record(best, facts, outcomes[30])
+    assert log.report()[0]["samples"] == 31
