@@ -225,6 +225,19 @@ to tune against a real environment.
 
 ---
 
+### LunarLander: two-objective mapping
+
+LunarLander uses a dedicated two-objective MetaMo mapping in
+`env/lunar_lander_metamo.py`, producing normalized weights for **Safety** and
+**Fuel**. The mapping represents caution through the Threshold and Securing
+modulators, which increase the Safety weight, and boldness through Approach,
+which increases the Fuel weight. Its goal-affinity and modulator-gain
+coefficients are semantically designed and evaluated with a synthetic grid
+search; they are **not fitted to actual LunarLander episode outcomes** and
+should be revisited when an end-to-end demo is available.
+
+---
+
 ## 6. One step, end to end
 
 ```
