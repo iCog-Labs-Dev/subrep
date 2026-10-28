@@ -17,6 +17,9 @@ The evaluation also checks the measurements behind the certificates:
   compared with the committed table;
 - ``recover_stability`` is pursued from every tilted start.
 
+The seeds must not overlap those the effect table was built from, and every
+episode's result is kept so that any failure can be traced to its seed.
+
     python -m demo.run_goal_decomposition_eval
     python -m demo.run_goal_decomposition_eval --seeds 50 --start-seed 5000
 """
@@ -26,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -121,16 +125,26 @@ def evaluate_profile(
     replanned = predictions_checked = predictions_held = 0
     feedback = FeedbackLog()
 
+    records: List[Dict[str, Any]] = []
     for seed in seeds:
         observation, _ = env.reset(seed=seed)
         facts = lander_facts(observation)
         run = pursue(env, observation, GOAL, book, table, priorities, timestamp=TIMESTAMP)
-        episodes.append(finish_episode(env, seed, run.rewards, run.observation, run.info, run.episode_over))
+        episode = finish_episode(env, seed, run.rewards, run.observation, run.info, run.episode_over)
+        episodes.append(episode)
 
         statuses[run.status.value] += 1
         replanned += run.replans > 0
         first = run.attempts[0].chosen if run.attempts else None
         first_plans[first.entry.skill_id if first else "none"] += 1
+        records.append(
+            {
+                **asdict(episode),
+                "status": run.status.value,
+                "plan": first.entry.skill_id if first else None,
+                "replans": run.replans,
+            }
+        )
         for attempt in run.attempts:
             if attempt.execution is None:
                 continue
@@ -151,6 +165,7 @@ def evaluate_profile(
         "plan_stops": dict(stops),
         "predictions": {"checked": predictions_checked, "held": predictions_held},
         "feedback": feedback.report(),
+        "episodes": records,
     }
 
 
@@ -215,18 +230,27 @@ def evaluate(
     profiles: Mapping[str, Priorities] = PROFILES,
     baselines: Sequence[str] = tuple(CONTROLLERS),
 ) -> Dict[str, Any]:
-    book = load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    """Fly every controller from every seed and check the measurements behind the certificates."""
     table = EffectTable.load(DEFAULT_TABLE_PATH)
+    measured = range(table.data["seeds"]["start"], table.data["seeds"]["stop"])
+    if len(seeds) == 0:
+        raise ValueError("the evaluation needs at least one seed")
+    if seeds.start < measured.stop and measured.start < seeds.stop:
+        raise ValueError(
+            f"evaluation seeds {seeds.start}-{seeds.stop - 1} overlap seeds {measured.start}-{measured.stop - 1}, "
+            "which the effect table was built from"
+        )
+    book = load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
     env = SubRepEnv(seed=int(seeds[0]))
     controllers: Dict[str, Dict[str, Any]] = {}
     goal_runs: Dict[str, Dict[str, Any]] = {}
     try:
         for name in baselines:
             policy = CONTROLLERS[name](env)
-            controllers[name] = {"summary": summarise([run_episode(env, policy, int(seed)) for seed in seeds])}
+            controllers[name] = _results([run_episode(env, policy, int(seed)) for seed in seeds])
         for name, steps in SEQUENCES.items():
             episodes = [fixed_sequence_episode(env, book, steps, int(seed)) for seed in seeds]
-            controllers[f"fixed_{name}"] = {"summary": summarise(episodes)}
+            controllers[f"fixed_{name}"] = _results(episodes)
         for name, priorities in profiles.items():
             goal_runs[name] = evaluate_profile(env, book, table, priorities, [int(seed) for seed in seeds])
             controllers[f"runtime_{name}"] = {"summary": goal_runs[name]["summary"]}
@@ -243,6 +267,10 @@ def evaluate(
         "table_check": check_table(table, seeds),
         "recover_stability": recovery,
     }
+
+
+def _results(episodes: Sequence[EpisodeResult]) -> Dict[str, Any]:
+    return {"summary": summarise(episodes), "episodes": [asdict(episode) for episode in episodes]}
 
 
 def _profile_record(priorities: Priorities) -> Dict[str, Any]:
@@ -312,7 +340,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         "## Effect table on unseen seeds",
         "",
-        "| Plan | Start group | Samples | Committed mean Δr | Committed lower Δr | Unseen mean Δr | Unseen mean below lower |",
+        "| Plan | Start group | Samples | Committed mean Δr | Committed lower Δr | Unseen mean Δr "
+        "| Unseen mean below lower |",
         "|---|---|---|---|---|---|---|",
     ]
     for row in report["table_check"]:

@@ -34,7 +34,10 @@ def test_every_controller_flies_every_seed(report):
 
 def test_without_a_certified_plan_the_runtime_does_nothing(report):
     assert report["goal_runs"]["no_region"]["statuses"] == {"no_certified_plan": len(SEEDS)}
-    assert report["controllers"]["runtime_no_region"] == report["controllers"]["idle"]
+    assert report["controllers"]["runtime_no_region"]["summary"] == report["controllers"]["idle"]["summary"]
+    runtime = [(e["seed"], e["outcome"], e["frames"]) for e in report["goal_runs"]["no_region"]["episodes"]]
+    idle = [(e["seed"], e["outcome"], e["frames"]) for e in report["controllers"]["idle"]["episodes"]]
+    assert runtime == idle
 
 
 def test_the_runtime_flies_the_plan_it_certifies(report):
@@ -43,7 +46,8 @@ def test_the_runtime_flies_the_plan_it_certifies(report):
     assert run["first_plans"] == {"plan:land_on_pad/fuel_saving_landing": len(SEEDS)}
     assert run["predictions"]["held"] == run["predictions"]["checked"] > 0
     if run["episodes_with_replans"] == 0:
-        assert report["controllers"]["runtime_safety_first"] == report["controllers"]["fixed_fuel_saving_landing"]
+        runtime = report["controllers"]["runtime_safety_first"]["summary"]
+        assert runtime == report["controllers"]["fixed_fuel_saving_landing"]["summary"]
 
 
 def test_feedback_covers_every_certified_start(report):
@@ -81,3 +85,19 @@ def test_an_unfinished_episode_is_finished_by_doing_nothing():
     env.close()
     assert result.outcome == "crashed" and result.fuel == 0.0 and result.frames > 0
 
+
+def test_every_episode_is_kept_and_traceable_to_its_seed(report):
+    for data in report["controllers"].values():
+        if "episodes" in data:
+            assert [episode["seed"] for episode in data["episodes"]] == list(SEEDS)
+    runs = report["goal_runs"]["safety_first"]["episodes"]
+    assert [run["seed"] for run in runs] == list(SEEDS)
+    achieved = [run for run in runs if run["status"] == "achieved"]
+    assert all(run["outcome"] == "landed_on_pad" for run in achieved)
+    assert all(run["plan"] is None for run in report["goal_runs"]["no_region"]["episodes"])
+
+
+@pytest.mark.parametrize("seeds, message", [(range(990, 1010), "overlap"), (range(5, 5), "at least one seed")])
+def test_the_evaluation_refuses_seeds_it_cannot_use(seeds, message):
+    with pytest.raises(ValueError, match=message):
+        evaluate(seeds, profiles={}, baselines=())
