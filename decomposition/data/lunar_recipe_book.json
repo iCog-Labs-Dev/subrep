@@ -1,0 +1,78 @@
+{
+  "schema_version": "subrep.recipe_book.v1",
+  "environment": "mo-lunar-lander-v3",
+  "goals": {
+    "land_on_pad": {
+      "task": "land",
+      "achieved_when": {"landed": true, "over_pad": true},
+      "terminal": true
+    },
+    "recover_stability": {
+      "task": "recover",
+      "achieved_when": {"upright": true}
+    }
+  },
+  "tasks": {
+    "land": {
+      "methods": [
+        {
+          "name": "careful_landing",
+          "subtasks": ["get_over_pad", "slow_descent", "touch_down"]
+        },
+        {
+          "name": "fuel_saving_landing",
+          "requires": {"near_ground": false},
+          "subtasks": ["get_over_pad", "free_fall", "brake", "touch_down"]
+        }
+      ]
+    },
+    "get_over_pad": {
+      "methods": [
+        {
+          "name": "stabilise_then_move",
+          "subtasks": ["stabilise", "move_over_pad"]
+        }
+      ]
+    },
+    "recover": {
+      "methods": [
+        {
+          "name": "stabilise_in_place",
+          "subtasks": ["stabilise"]
+        }
+      ]
+    }
+  },
+  "primitives": {
+    "stabilise": {
+      "requires": {},
+      "effects": {"upright": true},
+      "may_change": ["slow", "falling_fast"]
+    },
+    "move_over_pad": {
+      "requires": {"upright": true},
+      "effects": {"over_pad": true},
+      "may_change": ["upright", "slow", "falling_fast"]
+    },
+    "slow_descent": {
+      "requires": {"over_pad": true},
+      "effects": {"near_ground": true, "slow": true, "falling_fast": false},
+      "may_change": ["upright", "over_pad"]
+    },
+    "free_fall": {
+      "requires": {"over_pad": true},
+      "effects": {},
+      "may_change": ["upright", "over_pad", "near_ground", "slow", "falling_fast"]
+    },
+    "brake": {
+      "requires": {},
+      "effects": {"slow": true, "falling_fast": false},
+      "may_change": ["upright", "over_pad"]
+    },
+    "touch_down": {
+      "requires": {"slow": true},
+      "effects": {"landed": true},
+      "may_change": ["upright", "over_pad", "near_ground", "slow"]
+    }
+  }
+}
