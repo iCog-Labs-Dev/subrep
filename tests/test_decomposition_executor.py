@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from decomposition.executor import StepStatus, execute
+from decomposition.executor import MAX_SETTLING_FRAMES, StepStatus, execute
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book, parse_recipe_book
 from demo.run_lunar_subskill_reliability import SEQUENCES, fly
 from env.lunar_facts import FACT_NAMES
@@ -98,3 +98,43 @@ def test_execution_is_reproducible(env, book):
 def test_a_plan_needs_sub_skills(env, book):
     with pytest.raises(ValueError, match="at least one"):
         execute(env, book, [], start(env, 0))
+
+
+def lander(angle=0.0, left=0.0, right=0.0):
+    """An observation: level and slow at height 1, unless tilted or with legs down."""
+    return np.array([0.0, 1.0, 0.0, 0.0, angle, 0.0, left, right], dtype=np.float32)
+
+
+class ScriptedEnv:
+    """A stand-in environment that returns the same observation and episode end on every step."""
+
+    def __init__(self, observation, ends):
+        self.observation, self.ends, self.steps = observation, ends, 0
+
+    def step(self, action):
+        self.steps += 1
+        return self.observation, np.zeros(2), self.ends, False, {"landing_success": False, "crashed": self.ends}
+
+
+def test_an_episode_that_ends_as_a_step_completes_stops_the_plan_at_the_next_step(book):
+    env = ScriptedEnv(lander(), ends=True)  # the first frame levels the lander and ends the episode
+    execution = execute(env, book, CAREFUL[:2], lander(angle=0.5))
+    first, second = execution.steps
+    assert first.skill == "stabilise" and first.status is StepStatus.COMPLETED
+    assert second.skill == "move_over_pad" and second.status is StepStatus.EPISODE_ENDED and second.frames == 0
+    assert execution.stopped_at is second and not execution.completed
+    assert execution.episode_over and execution.frames == 1
+
+
+def test_an_episode_that_ends_as_the_last_step_completes_completes_the_plan(book):
+    execution = execute(ScriptedEnv(lander(), ends=True), book, ["stabilise"], lander(angle=0.5))
+    assert execution.completed and execution.stopped_at is None
+    assert execution.episode_over and execution.settling_frames == 0
+
+
+def test_settling_stops_if_the_environment_never_ends_the_episode(book):
+    env = ScriptedEnv(lander(left=1.0, right=1.0), ends=False)
+    execution = execute(env, book, ["touch_down"], lander(left=1.0, right=1.0))
+    assert execution.completed
+    assert execution.settling_frames == MAX_SETTLING_FRAMES == env.steps
+    assert not execution.episode_over

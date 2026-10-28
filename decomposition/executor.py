@@ -10,7 +10,8 @@ the plan: the next step's requirement check decides whether the plan can go on.
 
 A plan that leaves the lander standing on its legs keeps running its last
 sub-skill until the episode ends, as in the effect measurement, so the landing
-reward is collected.
+reward is collected. Settling stops after ``MAX_SETTLING_FRAMES`` in case the
+environment has no time limit of its own.
 """
 
 from __future__ import annotations
@@ -24,6 +25,9 @@ import numpy as np
 from decomposition.recipe_book import RecipeBook, holds
 from env.lunar_facts import lander_facts
 from env.lunar_subskills import SUBSKILLS, run_subskill
+
+# A LunarLander episode lasts at most 1000 frames, so settling never needs more.
+MAX_SETTLING_FRAMES = 1000
 
 
 class StepStatus(str, Enum):
@@ -86,7 +90,7 @@ def execute(env: Any, book: RecipeBook, skills: Sequence[str], observation: np.n
     info: Optional[Dict[str, Any]] = None
     episode_over = False
 
-    for name in skills:
+    for index, name in enumerate(skills):
         primitive = book.primitives[name]
         before = lander_facts(obs)
         if not holds(primitive.requires, before):
@@ -109,14 +113,18 @@ def execute(env: Any, book: RecipeBook, skills: Sequence[str], observation: np.n
             status = StepStatus.EPISODE_ENDED if episode_over else StepStatus.OUT_OF_FRAMES
             prediction_held = None
         steps.append(StepRecord(name, status, run.frames, before, after, prediction_held))
-        if episode_over or status is not StepStatus.COMPLETED:
+        if status is not StepStatus.COMPLETED:
+            break
+        if episode_over and index + 1 < len(skills):
+            # The episode ended on the frame this step completed: the next step never got to run.
+            steps.append(StepRecord(skills[index + 1], StepStatus.EPISODE_ENDED, 0, after, after, None))
             break
 
     settling_frames = 0
     plan_completed = len(steps) == len(skills) and steps[-1].status is StepStatus.COMPLETED
     if plan_completed and not episode_over and lander_facts(obs)["landed"]:
         last = SUBSKILLS[skills[-1]]
-        while not episode_over:
+        while not episode_over and settling_frames < MAX_SETTLING_FRAMES:
             action = int(last.policy(obs))
             obs, reward, terminated, truncated, info = env.step(action)
             actions.append(action)
