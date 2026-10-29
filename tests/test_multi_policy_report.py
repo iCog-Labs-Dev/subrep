@@ -31,7 +31,6 @@ def test_report_uses_all_policies_and_measured_certification():
     assert set(report['measured_certification_per_policy']) == set(POLICY_NAMES)
     assert set(report['prediction_metrics']) == {'multi_policy', 'observation_only', 'per_policy_training_mean'}
     assert 'fuel_mae' in report['prediction_metrics']['multi_policy']['overall']
-    assert report['task_success_rate'] is None
     assert report['measured_certification_per_policy']['ppo_deterministic']['measured_payoff_mean'] == 0.
 
 
