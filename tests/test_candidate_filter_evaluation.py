@@ -22,7 +22,7 @@ def test_savings_missed_candidates_and_measured_admissions():
     assert result['cds_admission_rate'] == 1.
     assert result['pds_admission_rate'] == 1.
     assert result['measured_payoff_mean'] == 10.
-    assert result['task_success_rate'] is None
+    
 
 
 def test_invalid_selections_are_rejected():

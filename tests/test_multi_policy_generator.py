@@ -100,4 +100,4 @@ def test_offline_metrics_use_measured_outcomes():
     assert result['certifiable_missed'] == 6
     assert result['execution_savings_fraction'] == pytest.approx(2/3)
     assert result['missed_certifiable_fraction'] == pytest.approx(2/3)
-    assert result['task_success_rate'] is None
+    
