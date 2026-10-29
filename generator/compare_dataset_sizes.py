@@ -726,4 +726,9 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--multi-policy" in sys.argv:
+        from generator.multi_policy_pipeline import main as multi_policy_main
+        multi_policy_main(["sizes"] + [arg for arg in sys.argv[1:] if arg != "--multi-policy"])
+    else:
+        main()
