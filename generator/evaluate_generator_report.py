@@ -19,12 +19,12 @@ from baseline.idle_policy import IdlePolicy
 from baseline.improvement_calculator import ImprovementCalculator
 from certification.cds_test import CDSGate
 from certification.pds_test import PDSGate
-from env.lunar_lander_wrapper import SubRepEnv
 from generator.skill_generator import SkillGenerator
 
 
 def compute_idle_baseline_stats(episodes: int = 20, seed: int = 42, gamma: float = 0.99) -> dict[str, Any]:
     """Reuse the existing IdlePolicy baseline """
+    from env.lunar_lander_wrapper import SubRepEnv
     env = SubRepEnv(seed=seed)
     return IdlePolicy(env=env, gamma=gamma).run_baseline_episodes(num_episodes=episodes, seed=seed)
 
@@ -244,6 +244,89 @@ def build_report(
     }
 
 
+def build_multi_policy_report(test_rows, train_rows, model, observation_baseline, baseline_stats):
+    """Held-out raw_mixed report; predictions never determine certification."""
+    from generator.multi_policy_data import group_contexts
+    from generator.multi_policy_pipeline import evaluate
+
+    if not test_rows or not train_rows:
+        raise ValueError("Multi-policy reporting requires nonempty train and test splits")
+    groups = group_contexts(test_rows, complete=True)
+    prediction = evaluate(test_rows, train_rows, {
+        "multi_policy": (model, True),
+        "observation_only": (observation_baseline, False),
+    })
+    calculator = ImprovementCalculator(baseline_stats)
+    cds_gate, pds_gate = CDSGate(), PDSGate()
+    per_policy = {}
+    for context_rows in groups.values():
+        for row in context_rows:
+            measured = certify_candidate(row["payoff"], row["motives"],
+                                         calculator, cds_gate, pds_gate)
+            bucket = per_policy.setdefault(row["policy"], {
+                "executed": 0, "cds_admitted": 0, "pds_admitted": 0,
+                "certifiable": 0, "payoff_sum": 0.0,
+                "motive_sum": np.zeros(2, dtype=np.float64),
+                "payoff_improvement_sum": 0.0,
+                "motive_improvement_sum": np.zeros(2, dtype=np.float64),
+            })
+            bucket["executed"] += 1
+            bucket["cds_admitted"] += int(measured["cds_admit"])
+            bucket["pds_admitted"] += int(measured["pds_admit"])
+            bucket["certifiable"] += int(measured["cds_admit"] and measured["pds_admit"])
+            bucket["payoff_sum"] += float(row["payoff"])
+            bucket["motive_sum"] += np.asarray(row["motives"], dtype=np.float64)
+            bucket["payoff_improvement_sum"] += float(measured["delta_r"])
+            bucket["motive_improvement_sum"] += np.asarray(measured["delta_n"])
+    certification = {}
+    for policy, b in per_policy.items():
+        n = b["executed"]
+        certification[policy] = {
+            "executed": n,
+            "cds_admission_rate": b["cds_admitted"] / n,
+            "cds_rejection_rate": 1 - b["cds_admitted"] / n,
+            "pds_admission_rate": b["pds_admitted"] / n,
+            "pds_rejection_rate": 1 - b["pds_admitted"] / n,
+            "joint_certifiable_count": b["certifiable"],
+            "measured_payoff_mean": b["payoff_sum"] / n,
+            "measured_motives_mean": (b["motive_sum"] / n).tolist(),
+            "measured_payoff_improvement_mean": b["payoff_improvement_sum"] / n,
+            "measured_motive_improvement_mean": (b["motive_improvement_sum"] / n).tolist(),
+        }
+    return {
+        "evaluation_mode": "multi_policy_held_out_raw_mixed",
+        "n_contexts": len(groups), "n_candidate_outcomes": len(test_rows),
+        "prediction_metrics": prediction,
+        "measured_certification_per_policy": certification,
+    }
+
+
+def run_multi_policy_report(args):
+    """Use the persisted grouped split, never a supplementary MDN dataset."""
+    from generator.multi_policy_data import load_records, load_or_create_manifest, partition
+    from generator.multi_policy_pipeline import load_model
+
+    rows = load_records(args.data_dir)
+    manifest = load_or_create_manifest(rows, args.split_manifest, seed=args.seed)
+    parts = partition(rows, manifest)
+    model, conditioned = load_model(args.model_path)
+    baseline, baseline_conditioned = load_model(args.observation_baseline_path)
+    if not conditioned or baseline_conditioned:
+        raise ValueError("Expected conditioned model and observation-only baseline checkpoints")
+    baseline_stats = compute_idle_baseline_stats(
+        episodes=args.baseline_episodes, seed=args.baseline_seed)
+    report = build_multi_policy_report(parts["test"], parts["train"],
+                                       model, baseline, baseline_stats)
+    report["split_manifest"] = str(args.split_manifest)
+    report["model_path"] = str(args.model_path)
+    report["observation_baseline_path"] = str(args.observation_baseline_path)
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2))
+    print(f"Multi-policy held-out report saved -> {out}")
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Certification-focused evaluation report for SkillGenerator.")
     parser.add_argument("--model-path", type=str, default="models/generator.pt")
@@ -254,7 +337,21 @@ def main() -> None:
     parser.add_argument("--baseline-episodes", type=int, default=20)
     parser.add_argument("--baseline-seed", type=int, default=42)
     parser.add_argument("--output", type=str, default="demo/artifacts/generator_evaluation_report.json")
+    parser.add_argument("--multi-policy", action="store_true",
+                        help="Evaluate held-out raw_mixed records with policy conditioning")
+    parser.add_argument("--data-dir", default="data/raw_mixed")
+    parser.add_argument("--split-manifest", default="data/mixed_split_manifest.json")
+    parser.add_argument("--observation-baseline-path", default="models/observation_only_baseline.pt")
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
+    if args.multi_policy:
+        # Legacy CLI defaults must not silently load an observation-only checkpoint.
+        if args.model_path == "models/generator.pt":
+            args.model_path = "models/multi_policy_generator.pt"
+        if args.output == "demo/artifacts/generator_evaluation_report.json":
+            args.output = "reports/multi_policy/generator_evaluation_report.json"
+        run_multi_policy_report(args)
+        return
 
     if not os.path.exists(args.model_path):
         print(f"Error: Model not found at '{args.model_path}'. Run generator.train_generator first.")
