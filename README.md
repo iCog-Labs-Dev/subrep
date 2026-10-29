@@ -573,6 +573,35 @@ a substitute for a separate untouched benchmark test set.
 
 ### Export contextual selections for support fitting
 
+#### Paper alignment and support-training provenance
+
+Section 3.3 of `SubRep-Minecraft-AIRIS_v2.pdf` describes context-conditioned
+support outputs, learning from logged proposals, gate outcomes and returns, and
+the update `W_next = conv(W_current union W_new)`. It does not specify maximizing
+the area of a region for any passing candidate. The experimental
+`generator.build_safety_support_targets` grid teacher has been removed for that
+reason. Its generated targets, support checkpoints and benchmark results are
+historical heuristic experiments, not a reproduction of that learning rule.
+Do not use those targets for new paper-aligned support experiments. Changing
+epsilon does not change this distinction.
+
+The retained empirical workflow uses recorded decision weights, through
+`generator.train_mdn_support --runtime-log-dir`, or the audited selection export
+below. `WeightSetStore` accumulates observed vertices and computes their support
+values; support of their convex hull equals support of these vertices. The
+support trainer regresses these empirical values while retaining the existing
+MDN architecture. This regression is an implementation choice, not an explicit
+loss prescribed by the paper. The distribution producing new weights must be
+recorded and justified; do not invent weights to increase certification counts.
+
+The present standard-basis support head represents a capped simplex, which can
+outer-approximate the empirical convex hull. Always recheck certificates on the
+actual predicted region. Neither accumulating weights nor fitting their supports
+guarantees that previous certificates remain valid as a region expands.
+The paper's displayed gate/Q loss does not specify how support outputs receive
+training gradients or how `W_new` is generated. Exact replication of that part
+requires resolving those details rather than silently adding a new objective.
+
 The existing MDN architecture is unchanged. Export a completed **non-MDN**
 contextual run to the existing support trainer's WeightSetStore format:
 
