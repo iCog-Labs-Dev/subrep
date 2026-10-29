@@ -56,10 +56,10 @@ def eligible(library, stored_key, current_key, weight):
     return result
 
 
-def run_contextual(config, mdn_checkpoint=None, mdn_contract=None, scales_file=None):
+def run_contextual(config, mdn_checkpoint=None, mdn_contract=None, scales_file=None, resume=False):
     config.validate()
     root = Path(config.output)
-    if root.exists():
+    if root.exists() and not resume:
         raise FileExistsError(f'Use a new output directory: {root}')
     model = None
     if mdn_checkpoint:
@@ -74,29 +74,45 @@ def run_contextual(config, mdn_checkpoint=None, mdn_contract=None, scales_file=N
         if model.num_objectives != 3:
             raise ValueError('MDN must have three objectives')
     models, provenance = load_models(config)
-    root.mkdir(parents=True)
-    write_json(root/'manifest.json', {'config': vars(config), 'checkpoints': provenance,
+    manifest = {'config': vars(config), 'checkpoints': provenance,
         'scope': 'Exact reset seed and observation only; same-start re-execution, not unseen-context transfer',
         'score': 'normalized task payoff plus weighted motives; task contributes twice',
         'scales_file': scales_file, 'mdn_checkpoint': mdn_checkpoint, 'mdn_contract': mdn_contract,
         'mdn_sha256': hashlib.sha256(Path(mdn_checkpoint).read_bytes()).hexdigest() if model else None,
-        'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()})
+        'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+    if resume:
+        previous = json.loads((root/'manifest.json').read_text())
+        normalized = json.loads(json.dumps(manifest))
+        for field in ('config', 'checkpoints', 'mdn_sha256', 'mdn_contract', 'scales_file'):
+            if previous[field] != normalized[field]:
+                raise ValueError(f'Resume provenance mismatch: {field}')
+        write_json(root/'resume_manifest.json', manifest)
+    else:
+        root.mkdir(parents=True)
+        write_json(root/'manifest.json', manifest)
     dev_seeds = list(range(config.seed + 1, config.seed + 1 + config.development_contexts))
     evidence_seeds = list(range(dev_seeds[-1] + 1, dev_seeds[-1] + 1 + config.contexts))
     audits, results = [], []
     for seed in config.training_seeds:
         collector = Collector(config, models[seed])
         try:
-            dev = collector.collect(dev_seeds)
+            folder = root/f'seed_{seed}'
+            dev_path = folder/'development.json'
+            dev = json.loads(dev_path.read_text()) if resume and dev_path.exists() else collector.collect(dev_seeds)
             if scales_file:
                 from utils.safety_objectives import FrozenObjectiveScales
                 scales = np.asarray(FrozenObjectiveScales.load(scales_file).divisors)
             else:
                 scales = fit_scales([dev])
-            folder = root/f'seed_{seed}'
+            if resume and (folder/'scales.json').exists():
+                if not np.array_equal(scales, np.asarray(json.loads((folder/'scales.json').read_text()))):
+                    raise ValueError('Resume scales changed')
             write_json(folder/'development.json', dev)
             write_json(folder/'scales.json', scales.tolist())
-            evidence = collector.collect(evidence_seeds)
+            evidence_path = folder/'evidence.json'
+            evidence = json.loads(evidence_path.read_text()) if resume and evidence_path.exists() else collector.collect(evidence_seeds)
+            if [r['context_seed'] for r in evidence] != evidence_seeds:
+                raise ValueError('Evidence context seeds do not match configuration')
             write_json(folder/'evidence.json', evidence)
             for record in evidence:
                 key = context_key(record, config)

@@ -20,6 +20,14 @@ from certification.pds_test import PDSGate
 
 logger = logging.getLogger(__name__)
 
+
+def _numpy_json(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f'Object of type {type(value).__name__} is not JSON serializable')
+
 # Tolerance for the sum(s) >= 1 feasibility test, shared with the greedy solver
 # so the library and utils.support_geometry cannot drift apart on what counts as
 # feasible.
@@ -357,8 +365,10 @@ class SkillLibrary:
             },
         }
 
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=2)
+        # Serialize before opening the destination so encoding errors cannot
+        # truncate an existing library.
+        encoded = json.dumps(data, indent=2, default=_numpy_json)
+        filepath.write_text(encoded)
 
     def load(self, path: Optional[str] = None) -> None:
         """ Load a library from a JSON file """

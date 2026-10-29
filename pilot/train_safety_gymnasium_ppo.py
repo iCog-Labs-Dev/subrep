@@ -133,7 +133,7 @@ def train_safety_ppo(
     cost_critic = None
     cost_optimizer = None
     if config.use_lagrangian:
-        cost_critic = torch.nn.Sequential(torch.nn.Linear(obs_dim, 128), torch.nn.Tanh(),
+        cost_critic = torch.nn.Sequential(torch.nn.Linear(obs_dim + 1, 128), torch.nn.Tanh(),
             torch.nn.Linear(128, 128), torch.nn.Tanh(), torch.nn.Linear(128, 1)).to(device)
         cost_optimizer = optim.Adam(cost_critic.parameters(), lr=config.learning_rate)
 
@@ -205,7 +205,7 @@ def train_safety_ppo(
                 random.setstate(python_state)
             metadata = {"training_entrypoint": "pilot.train_safety_gymnasium_ppo",
                 "environment": env_id, "config": config_to_dict(config),
-                "trainer_version": "separate_reward_cost_critics_v2" if config.use_lagrangian else "ppo_v1",
+                "trainer_version": "finite_episode_cost_v3" if config.use_lagrangian else "ppo_v1",
                 "evaluation": evaluation, "evaluation_role": "development checkpoint selection, not final test",
                 "evaluation_seeds": list(range(eval_seed, eval_seed+eval_episodes)),
                 "update": update, "final_lagrange_multiplier": lagrange_multiplier if config.use_lagrangian else None,
@@ -284,7 +284,7 @@ def _collect_rollout(
 
     if config.use_lagrangian and cost_critic is None:
         raise ValueError("Lagrangian training requires a separate cost critic")
-    cost_values, cost_rewards = [], []
+    cost_values, cost_rewards, cost_observations = [], [], []
     current_obs = obs
     for _ in range(config.rollout_steps):
         env_action, raw_action, log_prob, value = model.act(
@@ -299,7 +299,9 @@ def _collect_rollout(
         cost_reward = float(cost)
         if cost_critic is not None:
             with torch.no_grad():
-                cost_value = float(cost_critic(torch.as_tensor(current_obs, device=device)).item())
+                cost_obs = _cost_observation(current_obs, episode_length, config.max_episode_steps)
+                cost_value = float(cost_critic(torch.as_tensor(cost_obs, device=device)).item())
+            cost_observations.append(cost_obs)
         cutoff = episode_length + 1 >= config.max_episode_steps
         done = bool(terminated or truncated or cutoff)
         # Time limits end the sampled episode, not the underlying task. Bootstrap
@@ -311,9 +313,8 @@ def _collect_rollout(
                     torch.as_tensor(next_obs, dtype=torch.float32, device=device)
                 )
             reward_value += config.gamma * float(final_value.detach().cpu().item())
-            if cost_critic is not None:
-                with torch.no_grad():
-                    cost_reward += config.gamma * float(cost_critic(torch.as_tensor(next_obs, device=device)).item())
+            # Cost budget ends at every episode boundary, including time limits.
+            # Reward retains its existing continuing-task bootstrap.
 
         observations.append(current_obs)
         raw_actions.append(raw_action)
@@ -355,16 +356,19 @@ def _collect_rollout(
     cost_returns = None
     if cost_critic is not None:
         with torch.no_grad():
-            next_cost = float(cost_critic(torch.as_tensor(current_obs, device=device)).item())
+            next_cost = float(cost_critic(torch.as_tensor(
+                _cost_observation(current_obs, episode_length, config.max_episode_steps),
+                device=device)).item())
         cost_advantages, cost_returns = _compute_gae(
             rewards=np.asarray(cost_rewards, dtype=np.float32),
             values=np.asarray(cost_values, dtype=np.float32),
             dones=np.asarray(dones, dtype=np.float32), next_value=next_cost,
-            gamma=config.gamma, gae_lambda=config.gae_lambda, normalize=False)
+            gamma=1.0, gae_lambda=config.gae_lambda, normalize=False)
         advantages = _lagrangian_advantages(advantages, cost_advantages, current_cost_penalty)
 
     return {
         "cost_returns": cost_returns,
+        "cost_observations": np.asarray(cost_observations, dtype=np.float32),
         "observations": np.asarray(observations, dtype=np.float32),
         "actions": np.asarray(raw_actions, dtype=np.float32),
         "old_log_probs": np.asarray(log_probs, dtype=np.float32),
@@ -404,6 +408,14 @@ def _compute_gae(
     if normalize:
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     return advantages.astype(np.float32), returns.astype(np.float32)
+
+
+def _cost_observation(observation, elapsed_steps, horizon):
+    """Time-aware value of remaining raw cost within this evaluation episode."""
+    if horizon < 1 or not 0 <= elapsed_steps <= horizon:
+        raise ValueError("Invalid episode time")
+    return np.concatenate((np.asarray(observation, dtype=np.float32).reshape(-1),
+                           np.array([1. - elapsed_steps / horizon], dtype=np.float32)))
 
 
 def _lagrangian_advantages(reward_advantages, cost_advantages, multiplier):
@@ -471,7 +483,7 @@ def _ppo_update(
             optimizer.step()
             cost_loss = torch.zeros((), device=device)
             if cost_critic is not None:
-                cost_loss = F.mse_loss(cost_critic(obs[batch_tensor]).squeeze(-1), cost_returns[batch_tensor])
+                cost_loss = F.mse_loss(cost_critic(torch.as_tensor(rollout["cost_observations"], device=device)[batch_tensor]).squeeze(-1), cost_returns[batch_tensor])
                 cost_optimizer.zero_grad()
                 cost_loss.backward()
                 torch.nn.utils.clip_grad_norm_(cost_critic.parameters(), config.max_grad_norm)

@@ -201,4 +201,24 @@ def test_lagrangian_reward_and_cost_returns_bootstrap_separately(ending):
         device='cpu', episode_return=0., episode_cost=0., episode_length=0,
         completed_returns=[], completed_costs=[], current_cost_penalty=20., cost_critic=CostValue())
     np.testing.assert_allclose(rollout['returns'], [1.5, 1.] if ending=='terminated' else [2., 2.])
-    np.testing.assert_allclose(rollout['cost_returns'], [3., 2.] if ending=='terminated' else [4.5, 5.])
+    np.testing.assert_allclose(rollout['cost_returns'], [4., 2.])
+
+
+@pytest.mark.parametrize('rollout_steps', [1, 2, 3])
+def test_finite_cost_bootstraps_only_rollout_boundary_and_resets_time(rollout_steps):
+    import torch
+    class Env(EpisodeEnv):
+        def step(self, action):
+            obs, reward, _, terminal, truncated, info = super().step(action)
+            return obs, reward, 2., False, False, info
+    class RemainingCost(torch.nn.Module):
+        def forward(self, obs):
+            return obs[-1:] * 4.  # Two steps at cost 2, exact remaining cost.
+    r = _collect_rollout(env=Env('cutoff',100.),model=ValueModel(),
+        obs=np.zeros(1,dtype=np.float32),
+        config=SafetyPPOConfig(use_lagrangian=True,rollout_steps=rollout_steps,
+            gamma=.5,gae_lambda=1.,max_episode_steps=2),device='cpu',
+        episode_return=0.,episode_cost=0.,episode_length=0,
+        completed_returns=[],completed_costs=[],current_cost_penalty=1.,cost_critic=RemainingCost())
+    np.testing.assert_allclose(r['cost_returns'], [4.,2.,4.][:rollout_steps])
+    np.testing.assert_allclose(r['cost_observations'][:,-1], [1.,.5,1.][:rollout_steps])

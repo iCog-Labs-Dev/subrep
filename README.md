@@ -683,3 +683,11 @@ Use a new output filename for retraining. Inspect the run directory's
 `metrics.jsonl` (including policy loss, reward/cost value losses and approximate
 KL) and `summary.json`. Passing tests verifies the implementation paths, not
 that a run will learn a successful policy within the safety budget.
+
+Lagrangian trainer v3 (`finite_episode_cost_v3`) aligns cost value targets with
+raw episode cost: cost gamma is 1, cost continuation is zero at termination,
+truncation or the configured episode cutoff, and the cost critic receives the
+remaining fraction of the episode. Unfinished rollout buffers still bootstrap
+cost values. Reward discounting/bootstrapping, the actor observation interface,
+and MDN are unchanged. This fixes the cost-target definition; it does not
+promise convergence or budget compliance. Retrain under a new checkpoint name.

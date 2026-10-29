@@ -25,6 +25,21 @@ def make_dummy_policy(action: int = 0):
     """Create a simple deterministic policy that always returns `action`."""
     return lambda obs: action
 
+
+def test_save_numpy_certificate_scalars(tmp_path):
+    from dataclasses import replace
+    import json
+    cert = replace(make_cds_certificate(), delta_r=np.float32(.5),
+                   delta_n=(np.float32(.3), np.float32(.2)))
+    library = SkillLibrary()
+    assert library.add_skill(cert.skill_id, cert, make_dummy_policy())
+    path = tmp_path / 'library.json'
+    library.save(str(path))
+    assert json.loads(path.read_text())['skill_count'] == 1
+    restored = SkillLibrary()
+    restored.load(str(path))
+    assert restored.count() == 1
+
 def make_cds_certificate(skill_id: str = "cert-cds-001"):
     """
     Create a CDS certificate for a universally beneficial skill.
