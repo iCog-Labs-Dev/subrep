@@ -14,12 +14,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
+from pathlib import Path
 import os
 import random
 
 import numpy as np
 import torch
 
+from generator.policy_registry import POLICY_NAMES, policy_index
 from env.lunar_lander_wrapper import SubRepEnv
 from env.skill_executor import SkillExecutor
 from data_collector.collect_candidate_sets import (
@@ -44,6 +47,8 @@ class MixedGeneratorDataCollector:
         self.save_dir = save_dir
         self.max_steps = max_steps
         self.gamma = float(gamma)
+        self.pilot_checkpoint = pilot_checkpoint
+        self.checkpoint_sha256 = hashlib.sha256(Path(pilot_checkpoint).read_bytes()).hexdigest()
         os.makedirs(self.save_dir, exist_ok=True)
 
         random.seed(seed)
@@ -64,6 +69,8 @@ class MixedGeneratorDataCollector:
             map_location=map_location,
         )
         print(f"[Init] Active candidates: {[p.skill_id for p in self.candidate_policies]}")
+        if tuple(p.skill_id for p in self.candidate_policies) != POLICY_NAMES:
+            raise ValueError("Candidate policy registry does not match the collector policy order")
 
     def collect(self, num_episodes: int) -> None:
         """Run episodes and save one .npz file per rollout."""
@@ -108,6 +115,16 @@ class MixedGeneratorDataCollector:
                     "payoff": float(payoff),
                     "motives": np.asarray(motives, dtype=np.float32),
                     "skill_id": candidate.skill_id,
+                    "policy_id": policy_index(candidate.skill_id),
+                    "context_seed": context_seed,
+                    "context_id": f"seed:{context_seed}",
+                    "collector_seed": self.seed,
+                    "policy_checkpoint": self.pilot_checkpoint,
+                    "checkpoint_sha256": self.checkpoint_sha256,
+                    "gamma": self.gamma,
+                    "max_steps": -1 if self.max_steps is None else self.max_steps,
+                    "step_count": int(executor.last_run_info.get("steps", 0)),
+                    "stop_reason": str(executor.last_run_info.get("stop_reason", "unknown")),
                     "terminated": bool(terminated),
                 }
 
@@ -117,7 +134,9 @@ class MixedGeneratorDataCollector:
 
                 # 6. Save to disk
                 total_saved += 1
-                filename = f"{candidate.skill_id}_ep{total_saved:05d}.npz"
+                filename = f"{candidate.skill_id}_seed{context_seed}.npz"
+                if os.path.exists(os.path.join(self.save_dir, filename)):
+                    raise FileExistsError(f"Existing rollout {filename}; collect into a fresh directory")
                 filepath = os.path.join(self.save_dir, filename)
                 np.savez(filepath, **recordkeys)
 
