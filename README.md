@@ -441,6 +441,24 @@ the source before mapping a new environment.
   non-neural candidate policies — on held-out seeds
   (`evaluate_generator_report.py`)
 
+## Multi-policy Neural Generator 
+
+The policy-conditioned generator predicts payoff, Safety, and Fuel for each of the nine existing candidate policies from a shared observation and policy ID. The original single-policy generator and MDN workflows above remain unchanged. Prediction ranks candidates; **only measured rollouts** are passed to the existing CDS/PDS certification gates.
+
+Run from the repository root, after installing the project dependencies and preparing `models/pilot_ppo.pt`:
+
+```bash
+python -m data_collector.collect_mixed_generator_data --episodes 1000 --save-dir data/raw_mixed --seed 42
+python -m generator.multi_policy_pipeline train --data-dir data/raw_mixed --epochs 50
+python -m generator.multi_policy_pipeline evaluate --data-dir data/raw_mixed
+python -m generator.multi_policy_pipeline sizes --data-dir data/raw_mixed --sizes 100 300 500 --epochs 50
+python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 50
+python -m generator.evaluate_generator_report --multi-policy --data-dir data/raw_mixed
+python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 50
+```
+
+The collection command writes nine `.npz` policy outcomes per context to `data/raw_mixed/`. Training writes both model checkpoints and `data/mixed_split_manifest.json`; evaluation writes `reports/multi_policy/prediction_metrics.json`; size comparisons write `reports/multi_policy/dataset_size_metrics.json`; offline filtering writes `reports/multi_policy/filter_metrics.json` and `reports/multi_policy/results_summary.md`; live filtering writes `reports/multi_policy/live_filter.json`. See [multi-policy commands and outputs](docs/MULTI_POLICY_GENERATOR.md) for argument details, direct-entry-point alternatives, and interpretation.
+
 ### MDN
 
 - **Input:** context vector `(8,)`
@@ -495,6 +513,7 @@ Vertex enumeration was retired because its cost grows combinatorially with M.
 - `docs/INTEGRATION_REPORT.md`: integration and validation report
 - `docs/METTA_INTEGRATION.md`: MeTTa and Hyperon integration notes
 - `docs/IPS_DR_LOGGED_TRAINING.md`: probability-aware logged-data workflow for IPS/DR checkpoints
+- `docs/MULTI_POLICY_GENERATOR.md`:  policy conditioned skill-generator train/val/test pipeline, exact commands, and file outputs
 - [MeTTa Python Integration Guide](https://metta-lang.dev/docs/learn/tutorials/python_use/metta_python_basics.html)
 
 ## Future Work
@@ -506,3 +525,6 @@ Vertex enumeration was retired because its cost grows combinatorially with M.
 - Add MetaMo integration for dynamic weight management and risk budgets.
 - Explore cross-paradigm skill sources through logic macros and evolutionary programs.
 - Expand benchmark comparisons against MORL baselines.
+
+
+

@@ -25,8 +25,7 @@ The skill generator is a supervised rollout-outcome model.
 
 Train on `data/raw`, which contains rollouts from the deterministic PPO pilot.
 The generator is a supervised prediction pre-filter; final admission still
-requires a measured policy execution. The MSE evaluator accepts one data
-directory, so `data/raw_mixed` is not supported by this workflow.
+requires a measured policy execution. 
 
 ```bash
 python -m data_collector.collect --episodes 7000 --save-dir data/raw --seed 42
@@ -49,6 +48,23 @@ held-out collection* are evaluated together:
 ```bash
 python -m generator.evaluate_generator_report --model-path models/generator.pt --eval-dir data/mdn_candidate_sets_eval
 ```
+## Multi-policy SkillGenerator workflow
+
+The policy-conditioned extension is separate from the single-policy `SkillGenerator` and MDN workflows documented. It trains from complete nine-policy starting contexts in `data/raw_mixed`; predictions do not replace measured CDS/PDS admission.
+
+```bash
+python -m data_collector.collect_mixed_generator_data --episodes 1000 --save-dir data/raw_mixed --seed 42
+python -m generator.multi_policy_pipeline train --data-dir data/raw_mixed --epochs 50
+python -m generator.multi_policy_pipeline evaluate --data-dir data/raw_mixed
+python -m generator.multi_policy_pipeline sizes --data-dir data/raw_mixed --sizes 100 300 500 --epochs 50
+python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 50
+python -m generator.evaluate_generator_report --multi-policy --data-dir data/raw_mixed
+python -u -m data_collector.run_filtered_candidates --contexts 20 --top-k 3 --baseline-episodes 50
+```
+
+`train` saves `models/multi_policy_generator.pt`, `models/observation_only_baseline.pt`, and the context-level manifest `data/mixed_split_manifest.json`. `evaluate` compares the conditioned model, observation-only model, and per-policy training means on the held-out test contexts, writing `reports/multi_policy/prediction_metrics.json` (overall and per-policy MAE/MSE). `sizes` varies the number of complete training contexts while holding validation and test fixed, writing `reports/multi_policy/dataset_size_metrics.json`. Offline filtering uses recorded outcomes to compare top-K selection with random, fixed-order, and full-budget candidates. Live filtering executes selected candidates only, measures an idle baseline directly, and saves `reports/multi_policy/live_filter.json`.
+
+For the full argument reference, commands, outputs, and caveats, see [`docs/MULTI_POLICY_GENERATOR.md`](../docs/MULTI_POLICY_GENERATOR.md)
 
 ## MDN Model Contract
 
