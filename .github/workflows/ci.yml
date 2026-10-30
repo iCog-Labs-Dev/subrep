@@ -21,7 +21,7 @@ jobs:
           pip install -r requirements.txt
       - name: Check MetaMo submodule
         run: |
-          git -C external/metamo log --oneline -1
+          git submodule status --recursive
           python -c "from bridge._loader import is_available; import sys; sys.exit(0 if is_available() else 'MetaMo submodule not found: MetaMo tests would be skipped')"
       - name: Run Tests
         run: |
