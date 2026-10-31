@@ -1,0 +1,106 @@
+Server console:
+stop
+
+Terminal after the server exits:
+cd /home/leoulteferi/subrep/minecraft/server
+rm -rf world
+./start.sh
+
+Console:
+/setworldspawn 0 64 0
+/forceload add 1 -1 4 1
+/forceload query
+
+/fill 24 60 -16 64 72 16 minecraft:air
+/fill 24 62 -16 64 72 16 minecraft:stone
+/fill 24 63 -16 64 72 16 minecraft:grass_block
+/execute if block 40 63 0 minecraft:grass_block run say floor_verified
+
+/fill 32 64 -10 48 67 10 minecraft:stone_bricks
+/fill 32 68 -10 48 68 10 minecraft:oak_planks
+/fill 32 64 -10 32 67 10 minecraft:stone_bricks
+/fill 48 64 -10 48 67 10 minecraft:stone_bricks
+/fill 32 64 -10 48 67 -10 minecraft:stone_bricks
+/fill 32 64 10 48 67 10 minecraft:stone_bricks
+/fill 33 64 -9 47 67 9 minecraft:air
+/fill 32 64 -8 32 67 -5 minecraft:air
+/fill 32 64 5 32 67 8 minecraft:air
+/fill 48 64 -8 48 67 -5 minecraft:air
+/fill 48 64 5 48 67 8 minecraft:air
+/fill 48 64 -1 48 67 1 minecraft:air
+/fill 34 64 -10 36 67 -10 minecraft:air
+/fill 44 64 -10 46 67 -10 minecraft:air
+/fill 34 64 10 36 67 10 minecraft:air
+/fill 44 64 10 46 67 10 minecraft:air
+/execute if block 32 64 -10 minecraft:stone_bricks run say perimeter_verified
+/execute if block 32 64 -7 minecraft:air run say west_gap_verified
+/execute if block 32 64 -6 minecraft:air run say west_gap_verified
+/execute if block 32 64 -5 minecraft:air run say west_gap_verified
+/execute if block 32 64 6 minecraft:air run say west_gap_verified
+/execute if block 32 64 7 minecraft:air run say west_gap_verified
+/execute if block 32 64 8 minecraft:air run say west_gap_verified
+/execute if block 48 64 -7 minecraft:air run say east_gap_verified
+/execute if block 48 64 -6 minecraft:air run say east_gap_verified
+/execute if block 48 64 -5 minecraft:air run say east_gap_verified
+/execute if block 48 64 6 minecraft:air run say east_gap_verified
+/execute if block 48 64 7 minecraft:air run say east_gap_verified
+/execute if block 48 64 8 minecraft:air run say east_gap_verified
+/execute if block 48 64 0 minecraft:air run say route_gap_verified
+/execute if block 48 64 1 minecraft:air run say route_gap_verified
+/execute if block 35 64 -10 minecraft:air run say south_gap_verified
+/execute if block 45 64 -10 minecraft:air run say south_gap_verified
+/execute if block 46 64 -10 minecraft:air run say south_gap_verified
+/execute if block 35 64 10 minecraft:air run say north_gap_verified
+/execute if block 45 64 10 minecraft:air run say north_gap_verified
+/execute if block 46 64 10 minecraft:air run say north_gap_verified
+/execute if block 32 63 -10 minecraft:grass_block run say floor_edge_verified
+/execute if block 48 68 10 minecraft:oak_planks run say roof_edge_verified
+
+/fill 38 63 -3 42 63 3 minecraft:oak_planks
+/fill 38 64 -3 42 67 3 minecraft:air
+/fill 38 68 -3 42 68 3 minecraft:oak_planks
+/execute if block 40 63 0 minecraft:oak_planks run say hall_floor_verified
+
+/fill 52 63 -4 58 63 4 minecraft:oak_planks
+/fill 52 64 -4 58 67 4 minecraft:air
+/fill 52 68 -4 58 68 4 minecraft:oak_planks
+/fill 52 64 -4 58 67 -4 minecraft:oak_planks
+/fill 52 64 4 58 67 4 minecraft:oak_planks
+/fill 52 64 -4 52 67 4 minecraft:oak_planks
+/fill 58 64 -4 58 67 4 minecraft:oak_planks
+/fill 52 64 0 52 67 0 minecraft:air
+/setblock 55 64 0 minecraft:chest
+/data get block 55 64 0
+
+/fill 43 63 0 52 63 0 minecraft:dirt_path
+/data get block 44 63 0
+/fill 44 64 0 44 64 0 minecraft:lantern
+/fill 48 64 0 48 64 0 minecraft:lantern
+/fill 52 64 0 52 64 0 minecraft:lantern
+/execute if block 48 63 0 minecraft:dirt_path run say route_verified
+
+/setblock 40 64 0 minecraft:torch
+/setblock 36 64 -10 minecraft:torch
+/setblock 44 64 -10 minecraft:torch
+/setblock 36 64 10 minecraft:torch
+/setblock 44 64 10 minecraft:torch
+/setblock 32 64 0 minecraft:torch
+/setblock 48 64 0 minecraft:torch
+/execute if block 40 64 0 minecraft:torch run say torch_verified
+
+/summon minecraft:villager 39 64 0 {VillagerData:{profession:"minecraft:librarian",level:2,type:"minecraft:plains"},Health:20f}
+/summon minecraft:villager 41 64 0 {VillagerData:{profession:"minecraft:librarian",level:2,type:"minecraft:plains"},Health:20f}
+/summon minecraft:villager 39 64 2 {VillagerData:{profession:"minecraft:farmer",level:2,type:"minecraft:plains"},Health:20f}
+/summon minecraft:villager 41 64 2 {VillagerData:{profession:"minecraft:farmer",level:2,type:"minecraft:plains"},Health:20f}
+/data get entity @e[type=minecraft:villager,sort=nearest,limit=1]
+
+/fill 34 64 -7 36 66 -5 minecraft:iron_bars
+/fill 35 64 -6 35 65 -6 minecraft:air
+/summon minecraft:zombie_villager 35 64 -6 {VillagerData:{profession:"minecraft:farmer",level:1,type:"minecraft:plains"},Health:20f}
+/data get entity @e[type=minecraft:zombie_villager,sort=nearest,limit=1]
+
+/kill @e[type=!minecraft:player,type=!minecraft:villager,type=!minecraft:zombie_villager]
+/time set 12000
+/tick freeze
+/time query daytime
+/data get block 55 64 0
