@@ -1,0 +1,27 @@
+{
+  "created_utc": "2026-10-31T11:56:03Z",
+  "files": {
+    "data/chunks.dat": "a0eb324c8322230a02d7d4e7663040dc487d9819a940eb377e0bd11bc992e486",
+    "data/raids.dat": "ab2c7fa1b47ac4d12e5e54131a171606adeb5cd73f8175f9345c6845430f119b",
+    "data/random_sequences.dat": "4d9d2c3ff9080981a4089f423bfd488ec490fae0e029f5dcf5c5ae520f4591a6",
+    "data/scoreboard.dat": "6e5c3e2bf2c4e6eb5f289ee2ced84fa155df6f208ed320cc117f84f1b51dee1e",
+    "datapacks/bukkit/pack.mcmeta": "63b1798b88df2f288f1b5ce1b93479060ba0200f1a03f83459fb2c8b1f78b703",
+    "entities/r.-1.0.mca": "47e4c9484c8d55001e7fc112d926fb655bd549e69c874eca66035617802d6875",
+    "entities/r.0.-1.mca": "4aefbfc07aa3e4a32746dac968f19fe18b9c08150ccd3d18dccada7d075e3f98",
+    "entities/r.0.0.mca": "e6d20e49d2dc63fa2356bdf3a8f7e258fec8a0a64649f5fc013717b5b09e2728",
+    "level.dat": "fba319f3c0ab432844a2416addc96857a09f9ea9d9e6ea169a27be1bae254032",
+    "level.dat_old": "a86f0481e6be3fd0710f054c861fa1f9acd450724de1a154a8a2f66933a1923d",
+    "paper-world.yml": "6e6ff923815f859ef5ef4d7f7467055b5ff4366a9d73c0b1d6bdb4764e5a46e6",
+    "region/r.-1.-1.mca": "cf1024251ab55b12eebe8dfd574eacdfed1588e4b2aff38f74f014cc0e4a60fb",
+    "region/r.-1.0.mca": "98ef9ac3072df46d59b3e95a834829592786c0fe83388811a8ec8e58f753da02",
+    "region/r.0.-1.mca": "b9aa54d4828be395d3bd472b4e048ba2ebe53fb5dbdc2fc3b1177959d7a68cca",
+    "region/r.0.0.mca": "e8c9cfd187831439f93618b9f28ef1b320b798df5e4a9306d926e0058aff8b7c",
+    "uid.dat": "7b636ce7b74a4a8a035a9f15fdd20ce5046459f2779712e5479a1284ac5e020b"
+  },
+  "sha256": "cf1fd7be1da84b226fead418b0a64ab71d98d797c1e2e5a15f148acb80665d4a",
+  "snapshot_name": "dusk_v1",
+  "source_files": [
+    "minecraft/world/dusk_v1_build_commands.txt",
+    "minecraft/world/areas.json"
+  ]
+}
