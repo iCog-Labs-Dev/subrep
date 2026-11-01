@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -363,6 +364,7 @@ def _counts(counts: Mapping[str, int]) -> str:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")  # the reports hold symbols a Windows console encoding cannot write
     parser = argparse.ArgumentParser(description="Evaluate goal decomposition on the scan-then-land mission.")
     parser.add_argument("--seeds", type=int, default=DEFAULT_SEEDS)
     parser.add_argument("--start-seed", type=int, default=DEFAULT_START_SEED)

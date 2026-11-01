@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
 from typing import List, Optional, Sequence, Tuple
 
@@ -101,6 +102,7 @@ def to_text(table: EffectTable) -> str:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")  # the reports hold symbols a Windows console encoding cannot write
     parser = argparse.ArgumentParser(description="Build the LunarLander effect table.")
     parser.add_argument("--seeds", type=int, default=2000)
     parser.add_argument("--start-seed", type=int, default=0)

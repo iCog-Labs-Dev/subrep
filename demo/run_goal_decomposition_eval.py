@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
@@ -440,6 +441,7 @@ def _number(value: Optional[float]) -> str:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")  # the reports hold symbols a Windows console encoding cannot write
     parser = argparse.ArgumentParser(description="Evaluate goal decomposition against baseline controllers.")
     parser.add_argument("--seeds", type=int, default=DEFAULT_SEEDS)
     parser.add_argument("--start-seed", type=int, default=DEFAULT_START_SEED)
