@@ -3,7 +3,7 @@
 A certificate rests on one-sided lower confidence bounds of a plan's mean
 gains, measured on the seeds the effect table was built from. Feedback records
 the gains a plan really achieved when it was flown later, paired against doing
-nothing from the same start, and compares them with what was certified.
+nothing from the same state, and compares them with what was certified.
 
 A certificate is revoked when the realised gains are significantly below it:
 for Δr or any motive gain, the one-sided upper confidence bound of the realised
@@ -44,13 +44,15 @@ class CertificateStatus(str, Enum):
     TOO_FEW_SAMPLES = "too_few_samples"
 
 
-def realised_gains(domain: Domain, env: Any, seed: int, rewards: np.ndarray) -> Gains:
-    """Gains of a run flown from the start of episode ``seed`` over doing nothing from that start.
+def realised_gains(
+    domain: Domain, env: Any, seed: int, rewards: np.ndarray, start: Sequence[int] = ()
+) -> Gains:
+    """Gains of a run flown from the state ``start`` reaches in episode ``seed`` over doing nothing from there.
 
     Replaying the seed resets ``env``.
     """
     rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives)
-    replay(env, seed, ())
+    replay(env, seed, start)
     delta_r, delta_n = improvement(rewards, idle_rewards(domain, env, len(rewards)))
     return Gains(delta_r, delta_n)
 

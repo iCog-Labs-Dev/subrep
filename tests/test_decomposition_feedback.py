@@ -5,7 +5,8 @@ import json
 import numpy as np
 import pytest
 
-from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, Gains, fly_plan, group_key
+from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, Gains, fly_plan, group_key, replay
+from decomposition.executor import execute
 from decomposition.feedback import REVOKED_REASON, CertificateStatus, FeedbackLog, realised_gains
 from decomposition.planner import propose
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
@@ -70,13 +71,25 @@ def certified_gains(verdict):
     return Gains(certificate.delta_r, certificate.delta_n)
 
 
-def test_realised_gains_match_the_paired_measurement_of_the_same_flight(env, book, table, start):
-    observation, _ = start
-    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, SAFETY_FIRST)
-    realised = realised_gains(LUNAR_LANDER, env, SEED, run.rewards)
-    measured = fly_plan(LUNAR_LANDER, env, SEED, run.attempts[0].chosen.candidate.skills).plan
+def test_realised_gains_match_the_paired_measurement_of_the_same_flight(env):
+    skills = ["stabilise", "move_over_pad", "slow_descent", "touch_down"]
+    observation, _ = env.reset(seed=SEED)
+    execution = execute(LUNAR_LANDER, env, load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS), skills, observation)
+    realised = realised_gains(LUNAR_LANDER, env, SEED, execution.rewards)
+    measured = fly_plan(LUNAR_LANDER, env, SEED, skills).plan
     assert realised.delta_r == pytest.approx(measured.delta_r)
     assert realised.delta_n == pytest.approx(measured.delta_n)
+
+
+def test_realised_gains_from_mid_flight_start_at_that_state(env):
+    skills = ["stabilise", "move_over_pad", "slow_descent", "touch_down"]
+    flight = fly_plan(LUNAR_LANDER, env, SEED, skills)
+    prefix = flight.next_states[0]
+    rest = fly_plan(LUNAR_LANDER, env, SEED, skills[1:], prefix)
+    start = replay(env, SEED, prefix)
+    execution = execute(LUNAR_LANDER, env, load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS), skills[1:], start)
+    realised = realised_gains(LUNAR_LANDER, env, SEED, execution.rewards, prefix)
+    assert realised.delta_r == pytest.approx(rest.plan.delta_r)
 
 
 def test_a_certificate_holds_when_realised_gains_meet_it(verdicts, start):
@@ -132,8 +145,8 @@ def test_the_runtime_skips_a_revoked_plan(env, book, table, verdicts, start):
     assert screened[0].reason == REVOKED_REASON and not screened[0].admitted
 
     run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, SAFETY_FIRST, feedback=log)
-    chosen = run.attempts[0].chosen
-    assert chosen.candidate.option != best.candidate.option
+    chosen = run.decisions[0].chosen
+    assert chosen.candidate.skills != best.candidate.skills
     assert run.status is GoalStatus.ACHIEVED
 
 

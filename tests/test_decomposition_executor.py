@@ -76,6 +76,7 @@ def test_the_end_of_the_episode_stops_the_plan(env, book, monkeypatch):
 
 def test_a_wrong_prediction_is_recorded_and_the_plan_goes_on(env):
     data = json.loads(LUNAR_LANDER_BOOK.read_text(encoding="utf-8"))
+    data["skills"]["stabilise"]["may_change"].remove("near_ground")
     data["skills"]["stabilise"]["effects"]["near_ground"] = True
     wrong_book = parse_recipe_book(data, FACT_NAMES, SUBSKILLS)
     execution = execute(LUNAR_LANDER, env, wrong_book, CAREFUL[:2], start(env, TILTED_START_SEED))
@@ -87,6 +88,12 @@ def test_a_plan_that_does_not_land_does_not_settle(env, book):
     execution = execute(LUNAR_LANDER, env, book, ["stabilise"], start(env, TILTED_START_SEED))
     assert execution.completed and execution.steps[0].facts_after["upright"]
     assert execution.settling_frames == 0 and not execution.episode_over
+
+
+def test_settling_can_be_left_to_a_later_skill(book):
+    env = ScriptedEnv(lander(left=1.0, right=1.0), ends=False)
+    execution = execute(LUNAR_LANDER, env, book, ["touch_down"], lander(left=1.0, right=1.0), settle=False)
+    assert execution.completed and execution.settling_frames == 0 and env.steps == 0
 
 
 def test_execution_is_reproducible(env, book):

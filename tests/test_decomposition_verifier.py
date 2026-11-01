@@ -27,7 +27,7 @@ from env.lunar_subskills import NO_ENGINE, SUBSKILLS
 
 # Level, over the pad and high up: x, y, vx, vy, angle, spin, left leg, right leg.
 OBSERVATION = np.array([0.0, 1.4, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0])
-GROUP = "upright=1,over_pad=1,near_ground=0"
+GROUP = "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0"
 TIMESTAMP = "2026-10-17T00:00:00+00:00"
 EVEN = Priorities(weights=(0.5, 0.5))
 

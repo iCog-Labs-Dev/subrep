@@ -5,14 +5,16 @@ Every controller flies one episode from the start of every seed:
 - idle, Gymnasium's heuristic and the PPO pilot, as in the baseline script;
 - the two fixed landing sequences, flown with the runtime checks but without
   certification or replanning;
-- the goal runtime for ``land_on_pad`` under several priority profiles. When it
-  ends without achieving the goal and the episode goes on, the lander does
-  nothing for the rest of the episode, as SubRep does without a certificate.
+- the goal runtime for ``land_on_pad`` under several priority profiles, which
+  re-certifies the rest of the plan after every skill. When it ends without
+  achieving the goal and the episode goes on, the lander does nothing for the
+  rest of the episode, as SubRep does without a certificate.
 
 The evaluation also checks the measurements behind the certificates:
 
-- feedback: for each plan the runtime certified at the start of an episode,
-  the gains it really achieved are compared with its certificate;
+- feedback: for every plan the runtime certified, at the start of an episode or
+  in mid-flight, and then flew to the end, the gains it really achieved from that
+  state are compared with its certificate;
 - the effect table: the plans are measured again on the unseen seeds and
   compared with the committed table;
 - ``recover_stability`` is pursued from every tilted start.
@@ -40,7 +42,7 @@ from decomposition.executor import execute
 from decomposition.feedback import FeedbackLog, realised_gains
 from decomposition.planner import plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, RecipeBook, load_recipe_book
-from decomposition.runtime import GoalStatus, pursue
+from decomposition.runtime import GoalRun, GoalStatus, pursue
 from decomposition.verifier import MdnRegion, Priorities
 from demo.run_lunar_baseline import CONTROLLERS, EpisodeResult, run_episode, summarise
 from demo.run_lunar_subskill_reliability import SEQUENCES
@@ -123,20 +125,22 @@ def evaluate_profile(
     statuses: Counter = Counter()
     first_plans: Counter = Counter()
     stops: Counter = Counter()
-    replanned = predictions_checked = predictions_held = 0
+    replanned = rechecks = recertified = switches = predictions_checked = predictions_held = 0
     feedback = FeedbackLog(LUNAR_LANDER)
 
     records: List[Dict[str, Any]] = []
     for seed in seeds:
         observation, _ = env.reset(seed=seed)
-        facts = lander_facts(observation)
         run = pursue(LUNAR_LANDER, env, observation, GOAL, book, table, priorities, timestamp=TIMESTAMP)
         episode = finish_episode(env, seed, run.rewards, run.observation, run.info, run.episode_over)
         episodes.append(episode)
 
         statuses[run.status.value] += 1
         replanned += run.replans > 0
-        first = run.attempts[0].chosen if run.attempts else None
+        rechecks += run.rechecks
+        recertified += run.recertified_rechecks
+        switches += run.switches
+        first = run.decisions[0].chosen if run.decisions else None
         first_plans[first.entry.skill_id if first else "none"] += 1
         records.append(
             {
@@ -146,28 +150,50 @@ def evaluate_profile(
                 "replans": run.replans,
             }
         )
-        for attempt in run.attempts:
-            if attempt.execution is None:
-                continue
-            stopped = attempt.execution.stopped_at
+        for decision in run.flown:
+            stopped = decision.execution.stopped_at
             if stopped is not None:
                 stops[f"{stopped.skill}: {stopped.status.value}"] += 1
-            checked = [step.prediction_held for step in attempt.execution.steps if step.prediction_held is not None]
+            checked = [step.prediction_held for step in decision.execution.steps if step.prediction_held is not None]
             predictions_checked += len(checked)
             predictions_held += sum(checked)
-        if first is not None:
-            feedback.record(first, facts, realised_gains(LUNAR_LANDER, env, seed, run.rewards))
+        record_followed_plans(feedback, env, seed, run)
 
     return {
         "summary": summarise(episodes),
         "statuses": dict(statuses),
         "first_plans": dict(first_plans),
         "episodes_with_replans": replanned,
+        "rechecks": rechecks,
+        "recertified_rechecks": recertified,
+        "switches": switches,
         "plan_stops": dict(stops),
         "predictions": {"checked": predictions_checked, "held": predictions_held},
         "feedback": feedback.report(),
         "episodes": records,
     }
+
+
+def record_followed_plans(feedback: FeedbackLog, env: SubRepEnv, seed: int, run: GoalRun) -> None:
+    """Record what each certified plan really achieved, for those flown to the end from where they were certified."""
+    frames = 0
+    followed_from = _last_change(run)
+    for index, decision in enumerate(run.flown):
+        if decision.recertified and index >= followed_from:
+            start = run.actions[:frames]
+            feedback.record(
+                decision.chosen, decision.facts, realised_gains(LUNAR_LANDER, env, seed, run.rewards[frames:], start)
+            )
+        frames += decision.execution.frames
+
+
+def _last_change(run: GoalRun) -> int:
+    """The index of the first flown decision from which the run followed one plan to its end."""
+    flown = run.flown
+    index = len(flown) - 1
+    while index > 0 and flown[index - 1].execution.completed and flown[index].skills == flown[index - 1].skills[1:]:
+        index -= 1
+    return index
 
 
 # ---------------------------------------------------------------------------
@@ -312,13 +338,15 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         "## Goal runtime",
         "",
-        "| Profile | Statuses | First plan | Episodes with replans | Predictions held | Plan stops |",
-        "|---|---|---|---|---|---|",
+        "| Profile | Statuses | First plan | Mid-flight re-checks | Re-certified | Switches | "
+        "Episodes with replans | Predictions held | Plan stops |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for name, run in report["goal_runs"].items():
         predictions = run["predictions"]
         lines.append(
             f"| {name} | {_counts(run['statuses'])} | {_counts(run['first_plans'])} | "
+            f"{run['rechecks']} | {run['recertified_rechecks']} | {run['switches']} | "
             f"{run['episodes_with_replans']} | {predictions['held']}/{predictions['checked']} | "
             f"{_counts(run['plan_stops']) or '-'} |"
         )

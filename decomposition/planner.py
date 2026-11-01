@@ -150,9 +150,9 @@ def _not_known_true(subgoal: _Subgoal, facts: Facts) -> Tuple[Tuple[str, bool], 
     return tuple((name, value) for name, value in subgoal if facts.get(name) is not value)
 
 
-def _possible(subgoal: _Subgoal, facts: Facts) -> bool:
-    """Whether no condition is known to be false, so the subgoal may hold once confirmed."""
-    return all(facts.get(name, value) == value for name, value in subgoal)
+def _may_hold_after(skill: Skill, subgoal: _Subgoal, after: Facts) -> bool:
+    """Whether the subgoal may hold once ``skill`` has run: each condition is known true, or the skill may have made it so."""
+    return all(after.get(name) is value or (name not in after and name in skill.may_change) for name, value in subgoal)
 
 
 def _contributes(skill: Skill, subgoal: _Subgoal, facts: Facts) -> bool:
@@ -226,7 +226,7 @@ class _Search:
         whole = [skill for skill in usable if all(skill.effects.get(name) is value for name, value in unmet)]
         for skill in whole if whole or whole_only else usable:
             after = skill.apply(facts)
-            if _possible(head, after):
+            if _may_hold_after(skill, head, after):
                 remaining = rest
             elif len(_not_known_true(head, after)) < len(unmet):
                 remaining = (head,) + rest
@@ -247,7 +247,7 @@ class _Search:
                     if not holds(skill.requires, known):
                         continue
                     after = skill.apply(known)
-                    if _contributes(skill, head, known) and _possible(head, after):
+                    if _contributes(skill, head, known) and _may_hold_after(skill, head, after):
                         reached = True
                         yield from self._after_skills(skills + (skill.name,), head, rest, after, active, searched=True)
                     elif _key(after) not in visited:

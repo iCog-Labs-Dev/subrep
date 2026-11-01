@@ -43,7 +43,7 @@
     "stabilise": {
       "requires": {},
       "effects": {"upright": true},
-      "may_change": ["slow", "falling_fast", "descent_underway"]
+      "may_change": ["over_pad", "near_ground", "slow", "falling_fast", "landed", "descent_underway"]
     },
     "move_over_pad": {
       "requires": {"upright": true},

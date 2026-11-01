@@ -49,10 +49,16 @@ def test_the_runtime_flies_the_plan_it_certifies(report):
     assert run["predictions"]["held"] == run["predictions"]["checked"] > 0
 
 
-def test_feedback_covers_every_certified_start(report):
+def test_feedback_covers_certified_plans_flown_to_the_end(report):
     feedback = report["goal_runs"]["safety_first"]["feedback"]
-    assert sum(entry["samples"] for entry in feedback) == len(SEEDS)
+    assert sum(entry["samples"] for entry in feedback) >= len(SEEDS)
     assert {entry["status"] for entry in feedback} == {"too_few_samples"}
+
+
+def test_the_runtime_rechecks_in_mid_flight(report):
+    run = report["goal_runs"]["safety_first"]
+    assert run["rechecks"] > 0
+    assert run["recertified_rechecks"] > 0
 
 
 def test_the_table_is_checked_on_the_evaluation_seeds(report):

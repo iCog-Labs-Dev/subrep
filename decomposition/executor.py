@@ -11,7 +11,8 @@ the plan: the next step's requirement check decides whether the plan can go on.
 A plan that leaves the lander standing on its legs keeps running its last
 sub-skill until the episode ends, as in the effect measurement, so the landing
 reward is collected. Settling stops after ``MAX_SETTLING_FRAMES`` in case the
-environment has no time limit of its own.
+environment has no time limit of its own. A caller flying a plan one skill at a
+time asks for settling only on the plan's last skill.
 """
 
 from __future__ import annotations
@@ -78,7 +79,9 @@ class Execution:
         return len(self.actions)
 
 
-def execute(domain: Domain, env: Any, book: RecipeBook, skills: Sequence[str], observation: np.ndarray) -> Execution:
+def execute(
+    domain: Domain, env: Any, book: RecipeBook, skills: Sequence[str], observation: np.ndarray, settle: bool = True
+) -> Execution:
     """Fly ``skills`` in order from ``observation``, which ``env`` must have just produced."""
     if not skills:
         raise ValueError("a plan needs at least one sub-skill")
@@ -121,7 +124,7 @@ def execute(domain: Domain, env: Any, book: RecipeBook, skills: Sequence[str], o
 
     settling_frames = 0
     plan_completed = len(steps) == len(skills) and steps[-1].status is StepStatus.COMPLETED
-    if plan_completed and not episode_over and domain.facts(obs)[domain.settling_fact]:
+    if settle and plan_completed and not episode_over and domain.facts(obs)[domain.settling_fact]:
         last = domain.skills[skills[-1]]
         while not episode_over and settling_frames < MAX_SETTLING_FRAMES:
             action = int(last.policy(obs))

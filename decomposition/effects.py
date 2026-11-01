@@ -10,15 +10,27 @@ Totals follow ``env.skill_executor.SkillExecutor`` (discount 0.99, payoff is
 the sum of the reward vector) and the gains come from
 ``baseline.improvement_calculator.ImprovementCalculator``.
 
-A plan is an ordered list of sub-skills flown from the start of an episode. If
-the plan leaves the lander standing on its legs, its last sub-skill keeps
-running until the episode ends, so the plan's effect includes the landing
-reward. Each step of the flight is also measured from the state where it
-started; a plan's interaction is its effect minus the sum of its steps'
-effects. Every plan flight also records how the episode really ended (on the
-pad, off the pad, crashed, timed out, or still in flight), because a step that
-completes, such as legs touching down, is not a landing until the final result
-confirms it.
+A plan is an ordered list of sub-skills flown from a state reached by replaying
+actions from the start of an episode. If the plan leaves the lander standing on
+its legs, its last sub-skill keeps running until the episode ends, so the plan's
+effect includes the landing reward. If a step of the plan fails, the lander does
+nothing for the rest of the episode, as it would without a plan, so a failed
+flight is charged for what follows. Each step of the flight is also measured from
+the state where it started; a plan's interaction is its effect minus the sum of
+its steps' effects. Every plan flight also records how the episode really ended
+(on the pad, off the pad, crashed, timed out, or still in flight), because a step
+that completes, such as legs touching down, is not a landing until the final
+result confirms it.
+
+The table measures every plan the planner proposes at the states where the
+runtime decides: the start of the episode and the state after each skill of each
+plan flown from it. The rest of a plan can therefore be certified from the real
+state in mid-flight, from measurements on other seeds. Replaying the seed being
+flown would answer more exactly, but it would show the lander its own future,
+which nothing outside a simulator can do. A plan the lander could switch to in
+mid-flight is measured too, but the states along it are not visited in turn: the
+number of such paths grows with every skill, and a plan flown past the measured
+states goes on under the certificate it already holds.
 
 Samples are grouped by the facts of the state they start from and summarised
 by their mean, spread, count and a one-sided bootstrap lower confidence bound.
@@ -34,7 +46,7 @@ from __future__ import annotations
 
 import json
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TypeVar, Union
 
@@ -49,6 +61,7 @@ GAMMA = 0.99
 CONFIDENCE = 0.95
 BOOTSTRAP_RESAMPLES = 2000
 MIN_SAMPLES = 30
+MAX_STATES_PER_SEED = 60  # bounds the states measured per seed when plans keep branching
 # Fraction of each observation range added on both sides of a group's support.
 SUPPORT_MARGIN = 0.05
 DEFAULT_TABLE_PATH = Path(__file__).resolve().parent / "data" / "lunar_effects.json"
@@ -138,13 +151,15 @@ class Sample:
 
 @dataclass(frozen=True)
 class PlanFlight:
-    """One plan flown from the start of one episode, with each step measured too."""
+    """One plan flown from one state of one episode, with each step measured too."""
 
     seed: int
     skills: Tuple[str, ...]
     plan: Sample
     steps: Tuple[Sample, ...]  # the steps that ran; fewer than ``skills`` if one failed
     outcome: str  # how the episode ended, from its final result, or IN_FLIGHT
+    prefix: Tuple[int, ...] = ()  # the actions replayed from the start of the episode to reach the state
+    next_states: Tuple[Tuple[int, ...], ...] = ()  # replayable action lists of the states after each step
 
     @property
     def interaction(self) -> np.ndarray:
@@ -166,22 +181,28 @@ def _sample(
     return Sample(name, group, delta_r, delta_n, frames, completed, observation)
 
 
-def fly_plan(domain: Domain, env: Any, seed: int, skills: Sequence[str]) -> PlanFlight:
-    """Fly ``skills`` in order from the start of episode ``seed`` and measure the plan and each step.
+def fly_plan(
+    domain: Domain, env: Any, seed: int, skills: Sequence[str], prefix: Sequence[int] = ()
+) -> PlanFlight:
+    """Fly ``skills`` in order from the state ``prefix`` reaches in episode ``seed``, and measure the plan.
 
-    The flight stops at the first step that does not complete or when the
-    episode ends.
+    The steps stop at the first one that does not complete or when the episode
+    ends. Each step is measured too when the flight starts at the start of the
+    episode, which is enough to estimate what a step alone gains and costs far
+    less than doing it from every state.
     """
     if not skills:
         raise ValueError("a plan needs at least one sub-skill")
 
-    obs = replay(env, seed, ())
+    prefix = tuple(prefix)
+    obs = replay(env, seed, prefix)
     plan_start = obs
     actions: List[int] = []
     rewards: List[np.ndarray] = []
     runs = []  # (frames flown before the step, observation the step started from, its run)
     info: Mapping[str, object] = {}
     ended = False
+    next_states: List[Tuple[int, ...]] = []
     for name in skills:
         run = domain.run_skill(env, domain.skills[name], obs)
         runs.append((len(actions), obs, run))
@@ -190,10 +211,17 @@ def fly_plan(domain: Domain, env: Any, seed: int, skills: Sequence[str]) -> Plan
         obs = run.observation
         info = run.info if run.info is not None else info
         ended = run.terminated or run.truncated
+        if not ended:
+            next_states.append(prefix + tuple(actions))
         if ended or not run.completed:
             break
 
     completed = len(runs) == len(skills) and runs[-1][2].completed
+    if not completed and not ended:
+        while not ended:
+            obs, reward, terminated, truncated, info = env.step(domain.idle_action)
+            rewards.append(np.asarray(reward, dtype=np.float64))
+            ended = terminated or truncated
     if completed and not ended and domain.facts(obs)[domain.settling_fact]:
         last = domain.skills[skills[-1]]
         while not ended:
@@ -203,17 +231,47 @@ def fly_plan(domain: Domain, env: Any, seed: int, skills: Sequence[str]) -> Plan
     outcome = domain.outcome(info, obs) if ended else IN_FLIGHT
 
     plan_rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives)
-    replay(env, seed, ())
+    replay(env, seed, prefix)
     delta_r, delta_n = improvement(plan_rewards, idle_rewards(domain, env, len(plan_rewards)))
     plan = _sample(domain, plan_key(skills), plan_start, delta_r, delta_n, len(plan_rewards), completed)
 
     steps = []
-    for frames_before, start, run in runs:
-        replay(env, seed, actions[:frames_before])
+    for frames_before, start, run in runs if not prefix else ():
+        replay(env, seed, tuple(actions[:frames_before]))
         delta_r, delta_n = improvement(run.rewards, idle_rewards(domain, env, run.frames))
         steps.append(_sample(domain, run.skill, start, delta_r, delta_n, run.frames, run.completed))
 
-    return PlanFlight(seed=seed, skills=tuple(skills), plan=plan, steps=tuple(steps), outcome=outcome)
+    return PlanFlight(
+        seed=seed,
+        skills=tuple(skills),
+        plan=plan,
+        steps=tuple(steps),
+        outcome=outcome,
+        prefix=prefix,
+        next_states=tuple(next_states),
+    )
+
+
+def measure_seed(
+    domain: Domain,
+    env: Any,
+    seed: int,
+    plans_at: Callable[[Mapping[str, bool]], Sequence[Sequence[str]]],
+    max_states: int = MAX_STATES_PER_SEED,
+) -> List[PlanFlight]:
+    """Fly every plan proposed at the start of episode ``seed`` and at the states after each of their skills."""
+    flights = [
+        fly_plan(domain, env, seed, skills) for skills in plans_at(domain.facts(replay(env, seed, ())))
+    ]
+    seen = {()}
+    for flight in tuple(flights):
+        for state in flight.next_states:
+            if state in seen or len(seen) >= max_states:
+                continue
+            seen.add(state)
+            for skills in plans_at(domain.facts(replay(env, seed, state))):
+                flights.append(fly_plan(domain, env, seed, skills, state))
+    return flights
 
 
 # ---------------------------------------------------------------------------
@@ -281,46 +339,84 @@ def _by_name_and_group(items: Iterable[T], sample_of: Callable[[T], Sample]) -> 
     return [grouped[key] for key in sorted(grouped)]
 
 
+@dataclass(frozen=True)
+class SeedMeasurement:
+    """What one seed contributes to a table: small enough to pass between processes."""
+
+    flights: Tuple[PlanFlight, ...]  # without their action lists, which only served to find the states
+    steps: Tuple[Sample, ...]  # each step counted once
+
+
+def measure_seeds(
+    domain: Domain,
+    seeds: Iterable[int],
+    plans_at: Callable[[Mapping[str, bool]], Sequence[Sequence[str]]],
+    max_states: int = MAX_STATES_PER_SEED,
+) -> List[SeedMeasurement]:
+    """Measure every plan at every decision state of ``seeds``.
+
+    A step that starts after the same sub-skills in two plans is flown from the
+    same state, so it is counted once per seed.
+    """
+    measurements: List[SeedMeasurement] = []
+    env = domain.make_env(0)
+    try:
+        for seed in seeds:
+            flights = measure_seed(domain, env, seed, plans_at, max_states)
+            steps: Dict[Tuple[Tuple[int, ...], Tuple[str, ...]], Sample] = {}
+            for flight in flights:
+                for index, step in enumerate(flight.steps):
+                    steps.setdefault((flight.prefix, flight.skills[: index + 1]), step)
+            compact = tuple(replace(flight, prefix=(), next_states=()) for flight in flights)
+            measurements.append(SeedMeasurement(compact, tuple(steps.values())))
+    finally:
+        env.close()
+    return measurements
+
+
 def build_table(
     domain: Domain,
     seeds: range,
     plans_at: Callable[[Mapping[str, bool]], Sequence[Sequence[str]]],
     min_samples: int = MIN_SAMPLES,
+    max_states: int = MAX_STATES_PER_SEED,
 ) -> "EffectTable":
-    """Fly the plans ``plans_at`` gives for the start of every seed and summarise the measured effects.
+    """Fly the plans ``plans_at`` gives at every decision state of every seed and summarise the measured effects."""
+    return table_from_measurements(domain, seeds, measure_seeds(domain, seeds, plans_at, max_states), min_samples)
 
-    A step that starts after the same sub-skills in two plans is flown from the
-    same state, so it is counted once per seed.
+
+def table_from_measurements(
+    domain: Domain, seeds: range, measurements: Sequence[SeedMeasurement], min_samples: int = MIN_SAMPLES
+) -> "EffectTable":
+    """Summarise measurements of ``seeds``.
+
+    Entries with fewer than ``min_samples`` samples could never answer a lookup,
+    so they are left out.
     """
-    env = domain.make_env(seeds.start)
-    try:
-        flights = [
-            fly_plan(domain, env, seed, skills)
-            for seed in seeds
-            for skills in plans_at(domain.facts(replay(env, seed, ())))
-        ]
-    finally:
-        env.close()
-
-    step_samples: Dict[Tuple[int, Tuple[str, ...]], Sample] = {}
-    for flight in flights:
-        for index, step in enumerate(flight.steps):
-            step_samples.setdefault((flight.seed, flight.skills[: index + 1]), step)
+    flights = [flight for measurement in measurements for flight in measurement.flights]
+    step_samples = [step for measurement in measurements for step in measurement.steps]
 
     objectives = domain.objectives
-    steps = [summarise(group, objectives) for group in _by_name_and_group(step_samples.values(), lambda s: s)]
+    steps = [
+        summarise(group, objectives)
+        for group in _by_name_and_group(step_samples, lambda s: s)
+        if len(group) >= min_samples
+    ]
     plans_summary = []
     for group in _by_name_and_group(flights, lambda f: f.plan):
+        if len(group) < min_samples:
+            continue
         entry = summarise([flight.plan for flight in group], objectives)
         entry["skills"] = list(group[0].skills)
         entry["outcomes"] = {
             name: round(sum(flight.outcome == name for flight in group) / len(group), _DECIMALS)
             for name in (*domain.outcomes, IN_FLIGHT)
         }
-        interaction = np.stack([flight.interaction for flight in group])
-        entry["interaction"] = summarise_gains(
-            interaction, objectives, _bootstrap_seed(entry["name"], entry["group"], "interaction")
-        )
+        interactions = [flight.interaction for flight in group if flight.steps]
+        if interactions:
+            entry["interaction"] = summarise_gains(
+                np.stack(interactions), objectives, _bootstrap_seed(entry["name"], entry["group"], "interaction")
+            )
         plans_summary.append(entry)
 
     return EffectTable(
@@ -365,7 +461,7 @@ class Estimate:
     mean_frames: float
     mean: Gains
     lower: Gains  # one-sided lower confidence bounds
-    interaction: Optional[Gains] = None  # mean interaction; plans only
+    interaction: Optional[Gains] = None  # mean interaction; plans flown from the start of an episode only
     outcomes: Optional[Dict[str, float]] = None  # how plan flights really ended; plans only
 
 
