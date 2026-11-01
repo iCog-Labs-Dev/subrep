@@ -135,9 +135,19 @@ def test_a_plan_can_be_measured_from_a_state_in_mid_flight(env):
 
 
 def test_a_flight_lists_the_states_the_runtime_would_decide_at(env):
-    flight = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL[:2])
+    flight = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL[:3])
     assert len(flight.next_states) == 2
     assert flight.next_states[0] == flight.next_states[1][: len(flight.next_states[0])]
+
+
+def test_nothing_is_decided_after_the_last_skill_of_a_plan(env):
+    assert fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL[:1]).next_states == ()
+
+
+def test_the_state_after_a_failed_skill_is_decided_at(env, monkeypatch):
+    monkeypatch.setitem(SUBSKILLS, "stabilise", dataclasses.replace(SUBSKILLS["stabilise"], max_frames=1))
+    flight = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL[:1])
+    assert not flight.steps[0].completed and len(flight.next_states) == 1
 
 
 def test_measuring_a_seed_visits_the_states_along_each_plan(env):

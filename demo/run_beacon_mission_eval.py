@@ -51,7 +51,7 @@ TIMESTAMP = "2026-01-01T00:00:00+00:00"
 FIXED_MISSION = ("go_to_beacon", "cruise_to_pad", "slow_descent", "touch_down")
 MOVED_BEACONS = ((0.5, 0.7), (0.3, 0.5))
 MOVED_TABLE_SEEDS = range(0, 1000)
-MEASURING_LIMIT = 4
+MEASURING_LIMIT = 5
 
 # Written before the evaluation seeds were flown.
 MIN_COMPLETION = 0.90

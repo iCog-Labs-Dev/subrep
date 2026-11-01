@@ -2182,234 +2182,6 @@
   ],
   "plans": [
     {
-      "name": "brake>stabilise>brake>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=1,slow=0,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.577519,
-      "mean_frames": 108.422481,
-      "support": {
-        "low": [
-          -0.516944,
-          -0.165112,
-          -0.964146,
-          -0.395573,
-          -0.516317,
-          -1.774379,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.389296,
-          0.180643,
-          0.971058,
-          -0.200062,
-          0.461141,
-          1.705591,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 89.260766,
-        "std": 79.436153,
-        "lower": 81.241238
-      },
-      "delta_safety": {
-        "mean": 102.58616,
-        "std": 75.814251,
-        "lower": 94.810762
-      },
-      "delta_fuel": {
-        "mean": -13.325394,
-        "std": 14.530472,
-        "lower": -14.789111
-      },
-      "skills": [
-        "brake",
-        "stabilise",
-        "brake",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.658915,
-        "landed_off_pad": 0.120155,
-        "crashed": 0.205426,
-        "timeout": 0.015504,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "brake>stabilise>brake>touch_down",
-      "group": "upright=0,over_pad=1,near_ground=1,slow=0,falling_fast=0",
-      "samples": 57,
-      "completion_rate": 0.842105,
-      "mean_frames": 72.754386,
-      "support": {
-        "low": [
-          -0.198714,
-          -0.03297,
-          -0.198711,
-          -0.246613,
-          -0.202944,
-          -0.868536,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.193287,
-          -0.001151,
-          0.199132,
-          -0.200025,
-          0.205222,
-          0.828832,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 114.246978,
-        "std": 57.447508,
-        "lower": 101.11359
-      },
-      "delta_safety": {
-        "mean": 117.0853,
-        "std": 56.98511,
-        "lower": 103.93347
-      },
-      "delta_fuel": {
-        "mean": -2.838323,
-        "std": 1.957033,
-        "lower": -3.294854
-      },
-      "skills": [
-        "brake",
-        "stabilise",
-        "brake",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.877193,
-        "landed_off_pad": 0.087719,
-        "crashed": 0.035088,
-        "timeout": 0.0,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "brake>stabilise>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=1,slow=0,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.577519,
-      "mean_frames": 108.627907,
-      "support": {
-        "low": [
-          -0.516944,
-          -0.165112,
-          -0.964146,
-          -0.395573,
-          -0.516317,
-          -1.774379,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.389296,
-          0.180643,
-          0.971058,
-          -0.200062,
-          0.461141,
-          1.705591,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 89.330969,
-        "std": 79.343314,
-        "lower": 80.827832
-      },
-      "delta_safety": {
-        "mean": 102.68189,
-        "std": 75.730412,
-        "lower": 94.365599
-      },
-      "delta_fuel": {
-        "mean": -13.350921,
-        "std": 14.598173,
-        "lower": -14.931257
-      },
-      "skills": [
-        "brake",
-        "stabilise",
-        "slow_descent",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.658915,
-        "landed_off_pad": 0.120155,
-        "crashed": 0.205426,
-        "timeout": 0.015504,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "brake>stabilise>slow_descent>touch_down",
-      "group": "upright=0,over_pad=1,near_ground=1,slow=0,falling_fast=0",
-      "samples": 57,
-      "completion_rate": 0.842105,
-      "mean_frames": 72.754386,
-      "support": {
-        "low": [
-          -0.198714,
-          -0.03297,
-          -0.198711,
-          -0.246613,
-          -0.202944,
-          -0.868536,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.193287,
-          -0.001151,
-          0.199132,
-          -0.200025,
-          0.205222,
-          0.828832,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 114.246978,
-        "std": 57.447508,
-        "lower": 102.049953
-      },
-      "delta_safety": {
-        "mean": 117.0853,
-        "std": 56.98511,
-        "lower": 104.868461
-      },
-      "delta_fuel": {
-        "mean": -2.838323,
-        "std": 1.957033,
-        "lower": -3.30756
-      },
-      "skills": [
-        "brake",
-        "stabilise",
-        "slow_descent",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.877193,
-        "landed_off_pad": 0.087719,
-        "crashed": 0.035088,
-        "timeout": 0.0,
-        "in_flight": 0.0
-      }
-    },
-    {
       "name": "brake>touch_down",
       "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1",
       "samples": 654,
@@ -3413,230 +3185,6 @@
       }
     },
     {
-      "name": "move_over_pad",
-      "group": "upright=1,over_pad=0,near_ground=1,slow=1,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.72093,
-      "mean_frames": 88.94186,
-      "support": {
-        "low": [
-          -0.294479,
-          -0.024936,
-          -0.977118,
-          -0.19968,
-          -0.093587,
-          -0.099204,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.192311,
-          0.008494,
-          0.786599,
-          0.025079,
-          0.090553,
-          0.099899,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": -3.389859,
-        "std": 24.947067,
-        "lower": -6.036508
-      },
-      "delta_safety": {
-        "mean": 3.155969,
-        "std": 22.052853,
-        "lower": 0.865166
-      },
-      "delta_fuel": {
-        "mean": -6.545828,
-        "std": 11.125097,
-        "lower": -7.733008
-      },
-      "skills": [
-        "move_over_pad"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.344961,
-        "landed_off_pad": 0.217054,
-        "crashed": 0.096899,
-        "timeout": 0.0,
-        "in_flight": 0.341085
-      }
-    },
-    {
-      "name": "move_over_pad",
-      "group": "upright=1,over_pad=1,near_ground=1,slow=1,falling_fast=0",
-      "samples": 1597,
-      "completion_rate": 1.0,
-      "mean_frames": 45.208516,
-      "support": {
-        "low": [
-          -0.191168,
-          -0.014199,
-          -0.199299,
-          -0.192791,
-          -0.082893,
-          -0.099868,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.181958,
-          0.010215,
-          0.196866,
-          0.057451,
-          0.091127,
-          0.099612,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 6.483843,
-        "std": 19.976212,
-        "lower": 5.655657
-      },
-      "delta_safety": {
-        "mean": 6.766592,
-        "std": 20.217373,
-        "lower": 5.938689
-      },
-      "delta_fuel": {
-        "mean": -0.282749,
-        "std": 1.609956,
-        "lower": -0.351858
-      },
-      "skills": [
-        "move_over_pad"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.982467,
-        "landed_off_pad": 0.015028,
-        "crashed": 0.002505,
-        "timeout": 0.0,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "move_over_pad>brake>stabilise>brake>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=1,slow=1,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.422481,
-      "mean_frames": 125.569767,
-      "support": {
-        "low": [
-          -0.294479,
-          -0.024936,
-          -0.977118,
-          -0.19968,
-          -0.093587,
-          -0.099204,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.192311,
-          0.008494,
-          0.786599,
-          0.025079,
-          0.090553,
-          0.099899,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 2.031524,
-        "std": 33.230397,
-        "lower": -1.272408
-      },
-      "delta_safety": {
-        "mean": 10.931188,
-        "std": 29.276708,
-        "lower": 8.025673
-      },
-      "delta_fuel": {
-        "mean": -8.899664,
-        "std": 14.409565,
-        "lower": -10.351114
-      },
-      "skills": [
-        "move_over_pad",
-        "brake",
-        "stabilise",
-        "brake",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.624031,
-        "landed_off_pad": 0.267442,
-        "crashed": 0.104651,
-        "timeout": 0.003876,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "move_over_pad>brake>stabilise>slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=1,slow=1,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.422481,
-      "mean_frames": 125.569767,
-      "support": {
-        "low": [
-          -0.294479,
-          -0.024936,
-          -0.977118,
-          -0.19968,
-          -0.093587,
-          -0.099204,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.192311,
-          0.008494,
-          0.786599,
-          0.025079,
-          0.090553,
-          0.099899,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 2.031524,
-        "std": 33.230397,
-        "lower": -1.519618
-      },
-      "delta_safety": {
-        "mean": 10.931188,
-        "std": 29.276708,
-        "lower": 7.883193
-      },
-      "delta_fuel": {
-        "mean": -8.899664,
-        "std": 14.409565,
-        "lower": -10.418316
-      },
-      "skills": [
-        "move_over_pad",
-        "brake",
-        "stabilise",
-        "slow_descent",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.624031,
-        "landed_off_pad": 0.267442,
-        "crashed": 0.104651,
-        "timeout": 0.003876,
-        "in_flight": 0.0
-      }
-    },
-    {
       "name": "move_over_pad>brake>touch_down",
       "group": "upright=1,over_pad=0,near_ground=1,slow=1,falling_fast=0",
       "samples": 38,
@@ -4134,122 +3682,6 @@
           "std": 5.211747,
           "lower": 32.11659
         }
-      }
-    },
-    {
-      "name": "move_over_pad>slow_descent>stabilise>brake>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=1,slow=1,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.422481,
-      "mean_frames": 125.569767,
-      "support": {
-        "low": [
-          -0.294479,
-          -0.024936,
-          -0.977118,
-          -0.19968,
-          -0.093587,
-          -0.099204,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.192311,
-          0.008494,
-          0.786599,
-          0.025079,
-          0.090553,
-          0.099899,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 2.031524,
-        "std": 33.230397,
-        "lower": -1.528759
-      },
-      "delta_safety": {
-        "mean": 10.931188,
-        "std": 29.276708,
-        "lower": 7.863456
-      },
-      "delta_fuel": {
-        "mean": -8.899664,
-        "std": 14.409565,
-        "lower": -10.421259
-      },
-      "skills": [
-        "move_over_pad",
-        "slow_descent",
-        "stabilise",
-        "brake",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.624031,
-        "landed_off_pad": 0.267442,
-        "crashed": 0.104651,
-        "timeout": 0.003876,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "move_over_pad>slow_descent>stabilise>slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=1,slow=1,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.422481,
-      "mean_frames": 125.569767,
-      "support": {
-        "low": [
-          -0.294479,
-          -0.024936,
-          -0.977118,
-          -0.19968,
-          -0.093587,
-          -0.099204,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.192311,
-          0.008494,
-          0.786599,
-          0.025079,
-          0.090553,
-          0.099899,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 2.031524,
-        "std": 33.230397,
-        "lower": -1.29247
-      },
-      "delta_safety": {
-        "mean": 10.931188,
-        "std": 29.276708,
-        "lower": 7.964738
-      },
-      "delta_fuel": {
-        "mean": -8.899664,
-        "std": 14.409565,
-        "lower": -10.346134
-      },
-      "skills": [
-        "move_over_pad",
-        "slow_descent",
-        "stabilise",
-        "slow_descent",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.624031,
-        "landed_off_pad": 0.267442,
-        "crashed": 0.104651,
-        "timeout": 0.003876,
-        "in_flight": 0.0
       }
     },
     {
@@ -5164,234 +4596,6 @@
           "std": 1.127545,
           "lower": -0.354471
         }
-      }
-    },
-    {
-      "name": "slow_descent>stabilise>brake>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=1,slow=0,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.577519,
-      "mean_frames": 108.422481,
-      "support": {
-        "low": [
-          -0.516944,
-          -0.165112,
-          -0.964146,
-          -0.395573,
-          -0.516317,
-          -1.774379,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.389296,
-          0.180643,
-          0.971058,
-          -0.200062,
-          0.461141,
-          1.705591,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 89.260766,
-        "std": 79.436153,
-        "lower": 81.071197
-      },
-      "delta_safety": {
-        "mean": 102.58616,
-        "std": 75.814251,
-        "lower": 94.910921
-      },
-      "delta_fuel": {
-        "mean": -13.325394,
-        "std": 14.530472,
-        "lower": -14.831367
-      },
-      "skills": [
-        "slow_descent",
-        "stabilise",
-        "brake",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.658915,
-        "landed_off_pad": 0.120155,
-        "crashed": 0.205426,
-        "timeout": 0.015504,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "slow_descent>stabilise>brake>touch_down",
-      "group": "upright=0,over_pad=1,near_ground=1,slow=0,falling_fast=0",
-      "samples": 57,
-      "completion_rate": 0.842105,
-      "mean_frames": 72.754386,
-      "support": {
-        "low": [
-          -0.198714,
-          -0.03297,
-          -0.198711,
-          -0.246613,
-          -0.202944,
-          -0.868536,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.193287,
-          -0.001151,
-          0.199132,
-          -0.200025,
-          0.205222,
-          0.828832,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 114.246978,
-        "std": 57.447508,
-        "lower": 101.748547
-      },
-      "delta_safety": {
-        "mean": 117.0853,
-        "std": 56.98511,
-        "lower": 104.753689
-      },
-      "delta_fuel": {
-        "mean": -2.838323,
-        "std": 1.957033,
-        "lower": -3.309474
-      },
-      "skills": [
-        "slow_descent",
-        "stabilise",
-        "brake",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.877193,
-        "landed_off_pad": 0.087719,
-        "crashed": 0.035088,
-        "timeout": 0.0,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "slow_descent>stabilise>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=1,slow=0,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.577519,
-      "mean_frames": 108.627907,
-      "support": {
-        "low": [
-          -0.516944,
-          -0.165112,
-          -0.964146,
-          -0.395573,
-          -0.516317,
-          -1.774379,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.389296,
-          0.180643,
-          0.971058,
-          -0.200062,
-          0.461141,
-          1.705591,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 89.330969,
-        "std": 79.343314,
-        "lower": 81.096048
-      },
-      "delta_safety": {
-        "mean": 102.68189,
-        "std": 75.730412,
-        "lower": 94.841486
-      },
-      "delta_fuel": {
-        "mean": -13.350921,
-        "std": 14.598173,
-        "lower": -14.861968
-      },
-      "skills": [
-        "slow_descent",
-        "stabilise",
-        "slow_descent",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.658915,
-        "landed_off_pad": 0.120155,
-        "crashed": 0.205426,
-        "timeout": 0.015504,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "slow_descent>stabilise>slow_descent>touch_down",
-      "group": "upright=0,over_pad=1,near_ground=1,slow=0,falling_fast=0",
-      "samples": 57,
-      "completion_rate": 0.842105,
-      "mean_frames": 72.754386,
-      "support": {
-        "low": [
-          -0.198714,
-          -0.03297,
-          -0.198711,
-          -0.246613,
-          -0.202944,
-          -0.868536,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.193287,
-          -0.001151,
-          0.199132,
-          -0.200025,
-          0.205222,
-          0.828832,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 114.246978,
-        "std": 57.447508,
-        "lower": 102.138851
-      },
-      "delta_safety": {
-        "mean": 117.0853,
-        "std": 56.98511,
-        "lower": 105.095257
-      },
-      "delta_fuel": {
-        "mean": -2.838323,
-        "std": 1.957033,
-        "lower": -3.309115
-      },
-      "skills": [
-        "slow_descent",
-        "stabilise",
-        "slow_descent",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.877193,
-        "landed_off_pad": 0.087719,
-        "crashed": 0.035088,
-        "timeout": 0.0,
-        "in_flight": 0.0
       }
     },
     {
@@ -6367,110 +5571,56 @@
     },
     {
       "name": "stabilise",
-      "group": "upright=0,over_pad=0,near_ground=1,slow=0,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.833333,
-      "mean_frames": 77.453488,
-      "support": {
-        "low": [
-          -0.516944,
-          -0.165112,
-          -0.964146,
-          -0.395573,
-          -0.516317,
-          -1.774379,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.389296,
-          0.180643,
-          0.971058,
-          -0.200062,
-          0.461141,
-          1.705591,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 70.271757,
-        "std": 76.010421,
-        "lower": 62.362157
-      },
-      "delta_safety": {
-        "mean": 78.589272,
-        "std": 74.018571,
-        "lower": 70.958788
-      },
-      "delta_fuel": {
-        "mean": -8.317515,
-        "std": 10.78032,
-        "lower": -9.430077
-      },
-      "skills": [
-        "stabilise"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.395349,
-        "landed_off_pad": 0.096899,
-        "crashed": 0.193798,
-        "timeout": 0.003876,
-        "in_flight": 0.310078
-      }
-    },
-    {
-      "name": "stabilise",
       "group": "upright=0,over_pad=0,near_ground=1,slow=1,falling_fast=0",
-      "samples": 2566,
-      "completion_rate": 0.957911,
-      "mean_frames": 93.382697,
+      "samples": 322,
+      "completion_rate": 0.993789,
+      "mean_frames": 35.503106,
       "support": {
         "low": [
           -0.8585,
-          -0.143876,
-          -1.04824,
+          -0.098652,
+          -0.537779,
           -0.199971,
-          -0.438905,
-          -1.5068,
+          -0.365358,
+          -0.641608,
           0.0,
           0.0
         ],
         "high": [
-          0.539562,
+          0.393601,
           0.156629,
-          1.030827,
-          0.086363,
-          0.53161,
-          1.309706,
+          0.502172,
+          0.000355,
+          0.273544,
+          0.480216,
           1.0,
           1.0
         ]
       },
       "delta_r": {
-        "mean": 4.741958,
-        "std": 43.490572,
-        "lower": 3.334229
+        "mean": 57.819759,
+        "std": 54.261334,
+        "lower": 52.903519
       },
       "delta_safety": {
-        "mean": 12.984441,
-        "std": 42.317062,
-        "lower": 11.645061
+        "mean": 72.372007,
+        "std": 61.681527,
+        "lower": 66.843103
       },
       "delta_fuel": {
-        "mean": -8.242482,
-        "std": 13.160335,
-        "lower": -8.684295
+        "mean": -14.552248,
+        "std": 9.273376,
+        "lower": -15.403969
       },
       "skills": [
         "stabilise"
       ],
       "outcomes": {
-        "landed_on_pad": 0.449727,
-        "landed_off_pad": 0.215511,
-        "crashed": 0.062744,
-        "timeout": 0.006625,
-        "in_flight": 0.265394
+        "landed_on_pad": 0.26087,
+        "landed_off_pad": 0.003106,
+        "crashed": 0.003106,
+        "timeout": 0.0,
+        "in_flight": 0.732919
       }
     },
     {
@@ -6583,166 +5733,56 @@
     },
     {
       "name": "stabilise",
-      "group": "upright=0,over_pad=1,near_ground=1,slow=0,falling_fast=0",
-      "samples": 57,
-      "completion_rate": 0.894737,
-      "mean_frames": 67.859649,
-      "support": {
-        "low": [
-          -0.198714,
-          -0.03297,
-          -0.198711,
-          -0.246613,
-          -0.202944,
-          -0.868536,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.193287,
-          -0.001151,
-          0.199132,
-          -0.200025,
-          0.205222,
-          0.828832,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 108.283183,
-        "std": 61.80202,
-        "lower": 94.874283
-      },
-      "delta_safety": {
-        "mean": 111.080084,
-        "std": 61.298711,
-        "lower": 97.72285
-      },
-      "delta_fuel": {
-        "mean": -2.796902,
-        "std": 1.911305,
-        "lower": -3.253707
-      },
-      "skills": [
-        "stabilise"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.824561,
-        "landed_off_pad": 0.070175,
-        "crashed": 0.052632,
-        "timeout": 0.0,
-        "in_flight": 0.052632
-      }
-    },
-    {
-      "name": "stabilise",
       "group": "upright=0,over_pad=1,near_ground=1,slow=1,falling_fast=0",
-      "samples": 10056,
-      "completion_rate": 0.997116,
-      "mean_frames": 39.890811,
+      "samples": 2666,
+      "completion_rate": 1.0,
+      "mean_frames": 21.860465,
       "support": {
         "low": [
-          -0.196593,
-          -0.030478,
-          -0.199895,
+          -0.196215,
+          0.065657,
+          -0.199756,
           -0.2,
           -0.273726,
-          -0.972657,
+          -0.156751,
           0.0,
           0.0
         ],
         "high": [
-          0.196041,
+          0.193005,
           0.135428,
-          0.199999,
-          0.042642,
+          0.199648,
+          -0.156995,
           0.270814,
-          0.860485,
-          1.0,
-          1.0
+          0.157925,
+          0.0,
+          0.0
         ]
       },
       "delta_r": {
-        "mean": 21.385048,
-        "std": 31.15836,
-        "lower": 20.895644
+        "mean": 35.136862,
+        "std": 32.625025,
+        "lower": 34.106619
       },
       "delta_safety": {
-        "mean": 24.906014,
-        "std": 34.429848,
-        "lower": 24.346214
+        "mean": 47.009725,
+        "std": 37.584545,
+        "lower": 45.799049
       },
       "delta_fuel": {
-        "mean": -3.520966,
-        "std": 6.117581,
-        "lower": -3.623553
+        "mean": -11.872863,
+        "std": 6.304288,
+        "lower": -12.072569
       },
       "skills": [
         "stabilise"
       ],
       "outcomes": {
-        "landed_on_pad": 0.702864,
-        "landed_off_pad": 0.012629,
-        "crashed": 0.002884,
-        "timeout": 0.000398,
-        "in_flight": 0.281225
-      }
-    },
-    {
-      "name": "stabilise>brake>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=1,slow=1,falling_fast=0",
-      "samples": 2244,
-      "completion_rate": 0.865419,
-      "mean_frames": 139.246435,
-      "support": {
-        "low": [
-          -0.548352,
-          -0.143876,
-          -1.04824,
-          -0.199401,
-          -0.438905,
-          -1.5068,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.539562,
-          0.100711,
-          1.030827,
-          0.086363,
-          0.53161,
-          1.309706,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 6.109296,
-        "std": 39.860902,
-        "lower": 4.758423
-      },
-      "delta_safety": {
-        "mean": 15.487775,
-        "std": 37.263375,
-        "lower": 14.209645
-      },
-      "delta_fuel": {
-        "mean": -9.378478,
-        "std": 15.426517,
-        "lower": -9.945813
-      },
-      "skills": [
-        "stabilise",
-        "brake",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.63057,
-        "landed_off_pad": 0.256239,
-        "crashed": 0.08467,
-        "timeout": 0.02852,
-        "in_flight": 0.0
+        "landed_on_pad": 0.064141,
+        "landed_off_pad": 0.003001,
+        "crashed": 0.00075,
+        "timeout": 0.0,
+        "in_flight": 0.932108
       }
     },
     {
@@ -7651,103 +6691,46 @@
     },
     {
       "name": "stabilise>move_over_pad>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=1,slow=0,falling_fast=0",
-      "samples": 258,
-      "completion_rate": 0.294574,
-      "mean_frames": 102.821705,
-      "support": {
-        "low": [
-          -0.516944,
-          -0.165112,
-          -0.964146,
-          -0.395573,
-          -0.516317,
-          -1.774379,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.389296,
-          0.180643,
-          0.971058,
-          -0.200062,
-          0.461141,
-          1.705591,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 89.57171,
-        "std": 79.028398,
-        "lower": 81.566254
-      },
-      "delta_safety": {
-        "mean": 102.891602,
-        "std": 75.459265,
-        "lower": 95.27318
-      },
-      "delta_fuel": {
-        "mean": -13.319892,
-        "std": 14.56192,
-        "lower": -14.834973
-      },
-      "skills": [
-        "stabilise",
-        "move_over_pad",
-        "slow_descent",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.670543,
-        "landed_off_pad": 0.120155,
-        "crashed": 0.205426,
-        "timeout": 0.003876,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "stabilise>move_over_pad>slow_descent>touch_down",
       "group": "upright=0,over_pad=0,near_ground=1,slow=1,falling_fast=0",
-      "samples": 2566,
-      "completion_rate": 0.493375,
-      "mean_frames": 122.030787,
+      "samples": 322,
+      "completion_rate": 0.937888,
+      "mean_frames": 97.003106,
       "support": {
         "low": [
           -0.8585,
-          -0.143876,
-          -1.04824,
+          -0.098652,
+          -0.537779,
           -0.199971,
-          -0.438905,
-          -1.5068,
+          -0.365358,
+          -0.641608,
           0.0,
           0.0
         ],
         "high": [
-          0.539562,
+          0.393601,
           0.156629,
-          1.030827,
-          0.086363,
-          0.53161,
-          1.309706,
+          0.502172,
+          0.000355,
+          0.273544,
+          0.480216,
           1.0,
           1.0
         ]
       },
       "delta_r": {
-        "mean": 21.266646,
-        "std": 53.875463,
-        "lower": 19.561115
+        "mean": 122.539409,
+        "std": 28.503089,
+        "lower": 119.879456
       },
       "delta_safety": {
-        "mean": 32.359191,
-        "std": 55.890522,
-        "lower": 30.559166
+        "mean": 145.818755,
+        "std": 27.445744,
+        "lower": 143.234343
       },
       "delta_fuel": {
-        "mean": -11.092545,
-        "std": 15.059482,
-        "lower": -11.601624
+        "mean": -23.279346,
+        "std": 4.074456,
+        "lower": -23.662687
       },
       "skills": [
         "stabilise",
@@ -7756,10 +6739,10 @@
         "touch_down"
       ],
       "outcomes": {
-        "landed_on_pad": 0.687451,
-        "landed_off_pad": 0.242011,
-        "crashed": 0.068589,
-        "timeout": 0.001949,
+        "landed_on_pad": 0.944099,
+        "landed_off_pad": 0.049689,
+        "crashed": 0.006211,
+        "timeout": 0.0,
         "in_flight": 0.0
       }
     },
@@ -7879,103 +6862,46 @@
     },
     {
       "name": "stabilise>move_over_pad>slow_descent>touch_down",
-      "group": "upright=0,over_pad=1,near_ground=1,slow=0,falling_fast=0",
-      "samples": 57,
-      "completion_rate": 0.824561,
-      "mean_frames": 70.807018,
-      "support": {
-        "low": [
-          -0.198714,
-          -0.03297,
-          -0.198711,
-          -0.246613,
-          -0.202944,
-          -0.868536,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.193287,
-          -0.001151,
-          0.199132,
-          -0.200025,
-          0.205222,
-          0.828832,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 113.395231,
-        "std": 59.122664,
-        "lower": 99.813987
-      },
-      "delta_safety": {
-        "mean": 116.223049,
-        "std": 58.539749,
-        "lower": 102.649856
-      },
-      "delta_fuel": {
-        "mean": -2.827818,
-        "std": 1.905178,
-        "lower": -3.285759
-      },
-      "skills": [
-        "stabilise",
-        "move_over_pad",
-        "slow_descent",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.877193,
-        "landed_off_pad": 0.070175,
-        "crashed": 0.052632,
-        "timeout": 0.0,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "stabilise>move_over_pad>slow_descent>touch_down",
       "group": "upright=0,over_pad=1,near_ground=1,slow=1,falling_fast=0",
-      "samples": 10056,
-      "completion_rate": 0.983592,
-      "mean_frames": 60.6428,
+      "samples": 2666,
+      "completion_rate": 0.986497,
+      "mean_frames": 92.4985,
       "support": {
         "low": [
-          -0.196593,
-          -0.030478,
-          -0.199895,
+          -0.196215,
+          0.065657,
+          -0.199756,
           -0.2,
           -0.273726,
-          -0.972657,
+          -0.156751,
           0.0,
           0.0
         ],
         "high": [
-          0.196041,
+          0.193005,
           0.135428,
-          0.199999,
-          0.042642,
+          0.199648,
+          -0.156995,
           0.270814,
-          0.860485,
-          1.0,
-          1.0
+          0.157925,
+          0.0,
+          0.0
         ]
       },
       "delta_r": {
-        "mean": 43.971714,
-        "std": 50.933384,
-        "lower": 43.121487
+        "mean": 115.301003,
+        "std": 19.800619,
+        "lower": 114.680698
       },
       "delta_safety": {
-        "mean": 50.050005,
-        "std": 58.865313,
-        "lower": 49.07541
+        "mean": 136.698634,
+        "std": 18.150826,
+        "lower": 136.117458
       },
       "delta_fuel": {
-        "mean": -6.078291,
-        "std": 9.454136,
-        "lower": -6.234318
+        "mean": -21.397631,
+        "std": 3.073785,
+        "lower": -21.494915
       },
       "skills": [
         "stabilise",
@@ -7984,66 +6910,10 @@
         "touch_down"
       ],
       "outcomes": {
-        "landed_on_pad": 0.97504,
-        "landed_off_pad": 0.019391,
-        "crashed": 0.004773,
-        "timeout": 0.000796,
-        "in_flight": 0.0
-      }
-    },
-    {
-      "name": "stabilise>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=1,slow=1,falling_fast=0",
-      "samples": 2244,
-      "completion_rate": 0.865419,
-      "mean_frames": 139.246435,
-      "support": {
-        "low": [
-          -0.548352,
-          -0.143876,
-          -1.04824,
-          -0.199401,
-          -0.438905,
-          -1.5068,
-          1.0,
-          1.0
-        ],
-        "high": [
-          0.539562,
-          0.100711,
-          1.030827,
-          0.086363,
-          0.53161,
-          1.309706,
-          1.0,
-          1.0
-        ]
-      },
-      "delta_r": {
-        "mean": 6.109296,
-        "std": 39.860902,
-        "lower": 4.725917
-      },
-      "delta_safety": {
-        "mean": 15.487775,
-        "std": 37.263375,
-        "lower": 14.21673
-      },
-      "delta_fuel": {
-        "mean": -9.378478,
-        "std": 15.426517,
-        "lower": -9.918878
-      },
-      "skills": [
-        "stabilise",
-        "slow_descent",
-        "touch_down"
-      ],
-      "outcomes": {
-        "landed_on_pad": 0.63057,
-        "landed_off_pad": 0.256239,
-        "crashed": 0.08467,
-        "timeout": 0.02852,
+        "landed_on_pad": 0.969617,
+        "landed_off_pad": 0.022881,
+        "crashed": 0.005626,
+        "timeout": 0.001875,
         "in_flight": 0.0
       }
     },
@@ -8229,54 +7099,54 @@
     {
       "name": "touch_down",
       "group": "upright=0,over_pad=1,near_ground=1,slow=1,falling_fast=0",
-      "samples": 10056,
-      "completion_rate": 0.997713,
-      "mean_frames": 58.435163,
+      "samples": 2666,
+      "completion_rate": 0.991373,
+      "mean_frames": 83.849962,
       "support": {
         "low": [
-          -0.196593,
-          -0.030478,
-          -0.199895,
+          -0.196215,
+          0.065657,
+          -0.199756,
           -0.2,
           -0.273726,
-          -0.972657,
+          -0.156751,
           0.0,
           0.0
         ],
         "high": [
-          0.196041,
+          0.193005,
           0.135428,
-          0.199999,
-          0.042642,
+          0.199648,
+          -0.156995,
           0.270814,
-          0.860485,
-          1.0,
-          1.0
+          0.157925,
+          0.0,
+          0.0
         ]
       },
       "delta_r": {
-        "mean": 46.199931,
-        "std": 53.945316,
-        "lower": 45.340741
+        "mean": 123.803311,
+        "std": 17.451902,
+        "lower": 123.238721
       },
       "delta_safety": {
-        "mean": 51.539203,
-        "std": 60.952229,
-        "lower": 50.562435
+        "mean": 142.34566,
+        "std": 16.315404,
+        "lower": 141.815914
       },
       "delta_fuel": {
-        "mean": -5.339272,
-        "std": 8.177633,
-        "lower": -5.47251
+        "mean": -18.542349,
+        "std": 2.216948,
+        "lower": -18.611339
       },
       "skills": [
         "touch_down"
       ],
       "outcomes": {
-        "landed_on_pad": 0.97673,
-        "landed_off_pad": 0.018198,
-        "crashed": 0.004574,
-        "timeout": 0.000497,
+        "landed_on_pad": 0.975994,
+        "landed_off_pad": 0.01988,
+        "crashed": 0.003751,
+        "timeout": 0.000375,
         "in_flight": 0.0
       }
     },
@@ -8479,14 +7349,14 @@
     {
       "name": "touch_down",
       "group": "upright=1,over_pad=1,near_ground=1,slow=1,falling_fast=0",
-      "samples": 3906,
-      "completion_rate": 0.996416,
-      "mean_frames": 64.936508,
+      "samples": 2309,
+      "completion_rate": 0.993937,
+      "mean_frames": 78.284972,
       "support": {
         "low": [
           -0.196395,
-          -0.014199,
-          -0.199299,
+          -0.006156,
+          -0.198923,
           -0.199996,
           -0.099993,
           -0.099875,
@@ -8496,37 +7366,37 @@
         "high": [
           0.1941,
           0.133884,
-          0.196866,
-          0.057451,
+          0.196643,
+          0.000598,
           0.099908,
-          0.099612,
-          1.0,
-          1.0
+          0.099209,
+          0.0,
+          0.0
         ]
       },
       "delta_r": {
-        "mean": 74.648133,
-        "std": 59.628074,
-        "lower": 73.081142
+        "mean": 121.874352,
+        "std": 16.760356,
+        "lower": 121.291236
       },
       "delta_safety": {
-        "mean": 85.458446,
-        "std": 67.844121,
-        "lower": 83.704463
+        "mean": 139.970398,
+        "std": 15.318902,
+        "lower": 139.435007
       },
       "delta_fuel": {
-        "mean": -10.810313,
-        "std": 9.006491,
-        "lower": -11.056521
+        "mean": -18.096045,
+        "std": 2.414114,
+        "lower": -18.179314
       },
       "skills": [
         "touch_down"
       ],
       "outcomes": {
-        "landed_on_pad": 0.983103,
-        "landed_off_pad": 0.011777,
-        "crashed": 0.004864,
-        "timeout": 0.000256,
+        "landed_on_pad": 0.983543,
+        "landed_off_pad": 0.012126,
+        "crashed": 0.004331,
+        "timeout": 0.0,
         "in_flight": 0.0
       }
     }

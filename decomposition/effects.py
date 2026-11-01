@@ -207,7 +207,7 @@ def fly_plan(
     info: Mapping[str, object] = {}
     ended = False
     next_states: List[Tuple[int, ...]] = []
-    for name in skills:
+    for position, name in enumerate(skills, start=1):
         run = domain.run_skill(env, domain.skills[name], obs)
         runs.append((len(actions), obs, run))
         actions.extend(run.actions)
@@ -215,7 +215,7 @@ def fly_plan(
         obs = run.observation
         info = run.info if run.info is not None else info
         ended = run.terminated or run.truncated
-        if not ended:
+        if not ended and (position < len(skills) or not run.completed):  # nothing is decided once a plan has finished
             next_states.append(prefix + tuple(actions))
         if ended or not run.completed:
             break
@@ -263,7 +263,7 @@ def measure_seed(
     plans_at: PlansAt,
     max_states: int = MAX_STATES_PER_SEED,
 ) -> List[PlanFlight]:
-    """Fly every plan proposed at the start of episode ``seed`` and at the states after each of their skills."""
+    """Fly every plan proposed at the start of episode ``seed`` and at the states where the runtime decides along them."""
     flights = [
         fly_plan(domain, env, seed, skills) for skills in plans_at(domain.facts(replay(env, seed, ())), True)
     ]
