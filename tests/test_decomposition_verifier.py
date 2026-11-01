@@ -10,9 +10,7 @@ from certification.certificate_schema import Certificate
 from decomposition.effects import (
     BASELINE_ID,
     DEFAULT_TABLE_PATH,
-    ENVIRONMENT,
     GAMMA,
-    GROUP_FACTS,
     SCHEMA_VERSION,
     EffectTable,
     group_key,
@@ -22,6 +20,7 @@ from decomposition.effects import (
 from decomposition.planner import CandidatePlan, propose
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
 from decomposition.verifier import CERTIFICATE_VERSION, NOT_MEASURED, MdnRegion, Priorities, best_plan, verify
+from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import NO_ENGINE, SUBSKILLS
@@ -46,7 +45,7 @@ def gains(delta_r, delta_n):
 
 def table_of(plans, min_samples=30):
     """A table measuring each (skills, Δr, Δn) from states around OBSERVATION; the gains are lower bounds."""
-    assert group_key(lander_facts(OBSERVATION)) == GROUP
+    assert group_key(LUNAR_LANDER, lander_facts(OBSERVATION)) == GROUP
     entries = [
         {
             "name": plan_key(skills),
@@ -71,18 +70,20 @@ def table_of(plans, min_samples=30):
     return EffectTable(
         {
             "schema_version": SCHEMA_VERSION,
-            "environment": ENVIRONMENT,
+            "environment": LUNAR_LANDER.environment,
+            "objectives": list(LUNAR_LANDER.objectives),
             "baseline_id": BASELINE_ID,
             "gamma": GAMMA,
             "confidence": 0.95,
             "bootstrap_resamples": 10,
             "min_samples": min_samples,
             "support_margin": 0.05,
-            "group_facts": list(GROUP_FACTS),
+            "group_facts": list(LUNAR_LANDER.group_facts),
             "seeds": {"start": 7, "stop": 107},
             "steps": [],
             "plans": entries,
-        }
+        },
+        LUNAR_LANDER,
     )
 
 
@@ -113,7 +114,7 @@ def test_cds_admits_a_plan_that_gains_under_every_weighting():
     assert certificate.gate_type == "CDS" and certificate.epsilon == 0.0
     assert certificate.delta_r == 10.0 and certificate.delta_n == (5.0, -3.0)
     assert certificate.admission_margin == pytest.approx(7.0)
-    assert (certificate.baseline_id, certificate.environment, certificate.gamma) == (BASELINE_ID, ENVIRONMENT, GAMMA)
+    assert (certificate.baseline_id, certificate.environment, certificate.gamma) == (BASELINE_ID, LUNAR_LANDER.environment, GAMMA)
     assert (certificate.seed, certificate.episode_length, certificate.timestamp) == (7, 250, TIMESTAMP)
     assert certificate.version == CERTIFICATE_VERSION
     assert certificate.weight_region_type == "FULL_SIMPLEX"
@@ -311,7 +312,7 @@ def lunar_book():
 
 @pytest.fixture(scope="module")
 def lunar_table():
-    return EffectTable.load(DEFAULT_TABLE_PATH)
+    return EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
 
 
 def test_a_safety_first_region_certifies_a_landing_plan_from_the_air(lunar_book, lunar_table):

@@ -1,6 +1,10 @@
 {
-  "schema_version": "subrep.lunar_effects.v2",
+  "schema_version": "subrep.effects.v3",
   "environment": "mo-lunar-lander-v3",
+  "objectives": [
+    "safety",
+    "fuel"
+  ],
   "baseline_id": "idle_policy_v1",
   "gamma": 0.99,
   "confidence": 0.95,

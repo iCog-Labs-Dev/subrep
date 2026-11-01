@@ -100,7 +100,7 @@ class MdnRegion:
 class Priorities:
     """How much each objective matters and how much risk is allowed."""
 
-    weights: Tuple[float, ...]  # on the simplex over (Safety, Fuel); used for ranking
+    weights: Tuple[float, ...]  # on the simplex over the domain's objectives; used for ranking
     pds_epsilon: float = 0.0
     cvar_tail_level: Optional[float] = None
     region: Optional[MdnRegion] = None

@@ -6,10 +6,10 @@ the gains a plan really achieved when it was flown later, paired against doing
 nothing from the same start, and compares them with what was certified.
 
 A certificate is revoked when the realised gains are significantly below it:
-for Δr, ΔSafety or ΔFuel, the one-sided upper confidence bound of the realised
+for Δr or any motive gain, the one-sided upper confidence bound of the realised
 mean falls below the certified value. The runtime skips plans whose
-certificates are revoked until the table is rebuilt. The three checks are not
-corrected for being three, which errs towards revoking: a plan is skipped a
+certificates are revoked until the table is rebuilt. These checks are not
+corrected for being several, which errs towards revoking: a plan is skipped a
 little more often than the confidence level alone would say, never less.
 """
 
@@ -21,13 +21,21 @@ from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tupl
 
 import numpy as np
 
-from decomposition.effects import CONFIDENCE, Gains, group_key, idle_rewards, improvement, lower_bound, replay
+from decomposition.domain import Domain
+from decomposition.effects import (
+    CONFIDENCE,
+    Gains,
+    gain_names,
+    group_key,
+    idle_rewards,
+    improvement,
+    lower_bound,
+    replay,
+)
 from decomposition.verifier import PlanVerdict, plan_skill_id
 
 MIN_SAMPLES = 30
 REVOKED_REASON = "certificate revoked: realised gains fall short of it"
-
-_COMPONENTS = ("delta_r", "delta_safety", "delta_fuel")
 
 
 class CertificateStatus(str, Enum):
@@ -36,14 +44,14 @@ class CertificateStatus(str, Enum):
     TOO_FEW_SAMPLES = "too_few_samples"
 
 
-def realised_gains(env: Any, seed: int, rewards: np.ndarray) -> Gains:
+def realised_gains(domain: Domain, env: Any, seed: int, rewards: np.ndarray) -> Gains:
     """Gains of a run flown from the start of episode ``seed`` over doing nothing from that start.
 
     Replaying the seed resets ``env``.
     """
-    rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, 2)
+    rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives)
     replay(env, seed, ())
-    delta_r, delta_n = improvement(rewards, idle_rewards(env, len(rewards)))
+    delta_r, delta_n = improvement(rewards, idle_rewards(domain, env, len(rewards)))
     return Gains(delta_r, delta_n)
 
 
@@ -68,9 +76,10 @@ def _upper_bound(values: np.ndarray, seed: int) -> float:
 class FeedbackLog:
     """Realised outcomes of certified plans, grouped by plan and start state."""
 
-    def __init__(self, min_samples: int = MIN_SAMPLES) -> None:
+    def __init__(self, domain: Domain, min_samples: int = MIN_SAMPLES) -> None:
         if min_samples < 2:
             raise ValueError(f"min_samples must be at least 2, got {min_samples}")
+        self.domain = domain
         self.min_samples = min_samples
         self._outcomes: Dict[Tuple[str, str], List[Outcome]] = {}
         self._report: Optional[List[Dict[str, object]]] = None  # cleared whenever an outcome is recorded
@@ -82,8 +91,8 @@ class FeedbackLog:
         certificate = verdict.entry.certificate
         outcome = Outcome(
             plan=plan_skill_id(verdict.candidate),
-            group=group_key(facts),
-            certified=Gains(certificate.delta_r, (certificate.delta_n[0], certificate.delta_n[1])),
+            group=group_key(self.domain, facts),
+            certified=Gains(certificate.delta_r, tuple(certificate.delta_n)),
             realised=realised,
         )
         self._outcomes.setdefault((outcome.plan, outcome.group), []).append(outcome)
@@ -106,7 +115,7 @@ class FeedbackLog:
 
     def screen(self, verdicts: Sequence[PlanVerdict], facts: Mapping[str, bool]) -> Tuple[PlanVerdict, ...]:
         """The verdicts with revoked plans turned into rejections, order kept."""
-        revoked, group = self.revoked(), group_key(facts)
+        revoked, group = self.revoked(), group_key(self.domain, facts)
         return tuple(
             replace(verdict, reason=REVOKED_REASON, entry=None, score=None)
             if verdict.admitted and (plan_skill_id(verdict.candidate), group) in revoked
@@ -121,7 +130,7 @@ class FeedbackLog:
         enough = len(outcomes) >= self.min_samples
         components = {}
         short = False
-        for index, name in enumerate(_COMPONENTS):
+        for index, name in enumerate(gain_names(self.domain.objectives)):
             column = realised[:, index]
             upper = _upper_bound(column, seed=index) if enough else None
             short = short or (upper is not None and upper < certified[index])

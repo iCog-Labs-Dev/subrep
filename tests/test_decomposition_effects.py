@@ -7,7 +7,6 @@ from decomposition.effects import (
     DEFAULT_TABLE_PATH,
     GAMMA,
     IN_FLIGHT,
-    PLAN_OUTCOMES,
     EffectTable,
     Sample,
     build_table,
@@ -21,7 +20,8 @@ from decomposition.effects import (
 )
 from demo.build_lunar_effect_table import PLANS
 from demo.run_lunar_subskill_reliability import SEQUENCES, fly
-from env.lunar_facts import lander_facts
+from env.lunar_domain import LUNAR_LANDER
+from env.lunar_facts import OUTCOMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import LEFT_ENGINE, MAIN_ENGINE, NO_ENGINE, RIGHT_ENGINE
 
@@ -29,6 +29,7 @@ CAREFUL = SEQUENCES["careful_landing"]
 FUEL_SAVING = SEQUENCES["fuel_saving_landing"]
 TILTED_START_SEED = 0  # starts tilted, so stabilise has work to do
 UPRIGHT_START_SEED = 1  # starts upright and not falling fast, so free_fall runs for some frames
+PLAN_OUTCOMES = OUTCOMES + (IN_FLIGHT,)
 
 
 def episode_start(group, seeds=range(1000)):
@@ -37,7 +38,7 @@ def episode_start(group, seeds=range(1000)):
     try:
         for seed in seeds:
             observation = replay(env, seed, ())
-            if group_key(lander_facts(observation)) == group:
+            if group_key(LUNAR_LANDER, lander_facts(observation)) == group:
                 return observation
     finally:
         env.close()
@@ -53,12 +54,12 @@ def env():
 
 @pytest.fixture(scope="module")
 def small_table():
-    return build_table(range(4), [CAREFUL, FUEL_SAVING], min_samples=1)
+    return build_table(LUNAR_LANDER, range(4), [CAREFUL, FUEL_SAVING], min_samples=1)
 
 
 @pytest.fixture(scope="module")
 def committed_table():
-    return EffectTable.load(DEFAULT_TABLE_PATH)
+    return EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
 
 
 # Paired measurement
@@ -87,35 +88,35 @@ def test_no_frames_gain_nothing():
 
 
 def test_doing_nothing_gains_nothing_over_doing_nothing(env):
-    flight = fly_plan(env, UPRIGHT_START_SEED, ["free_fall"])
+    flight = fly_plan(LUNAR_LANDER, env, UPRIGHT_START_SEED, ["free_fall"])
     assert flight.plan.frames > 0
     assert flight.plan.delta_r == 0.0
     assert flight.plan.delta_n == (0.0, 0.0)
 
 
 def test_firing_engines_costs_fuel(env):
-    flight = fly_plan(env, TILTED_START_SEED, ["stabilise"])
+    flight = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, ["stabilise"])
     assert flight.plan.frames > 0
     assert flight.plan.delta_n[1] < 0.0
 
 
 def test_a_finished_step_takes_no_frames_and_gains_nothing(env):
-    flight = fly_plan(env, UPRIGHT_START_SEED, ["stabilise"])
+    flight = fly_plan(LUNAR_LANDER, env, UPRIGHT_START_SEED, ["stabilise"])
     assert flight.plan.completed
     assert flight.plan.frames == 0
     assert flight.plan.delta_r == 0.0
 
 
 def test_a_step_inside_a_plan_matches_the_step_flown_alone(env):
-    in_plan = fly_plan(env, TILTED_START_SEED, CAREFUL).steps[0]
-    alone = fly_plan(env, TILTED_START_SEED, CAREFUL[:1])
+    in_plan = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL).steps[0]
+    alone = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL[:1])
     assert alone.outcome == IN_FLIGHT
     assert in_plan == alone.steps[0] == alone.plan
     np.testing.assert_array_equal(alone.interaction, np.zeros(3))
 
 
 def test_a_landing_plan_runs_until_the_episode_ends(env):
-    flight = fly_plan(env, TILTED_START_SEED, CAREFUL)
+    flight = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL)
     assert flight.plan.completed
     assert flight.outcome == "landed_on_pad"
     assert [step.name for step in flight.steps] == CAREFUL
@@ -124,14 +125,14 @@ def test_a_landing_plan_runs_until_the_episode_ends(env):
 
 
 def test_samples_are_grouped_by_their_start_facts(env):
-    flight = fly_plan(env, TILTED_START_SEED, CAREFUL)
+    flight = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL)
     start_facts = lander_facts(replay(env, TILTED_START_SEED, ()))
-    assert flight.plan.group == flight.steps[0].group == group_key(start_facts)
+    assert flight.plan.group == flight.steps[0].group == group_key(LUNAR_LANDER, start_facts)
 
 
 def test_a_plan_needs_sub_skills(env):
     with pytest.raises(ValueError, match="at least one"):
-        fly_plan(env, 0, [])
+        fly_plan(LUNAR_LANDER, env, 0, [])
 
 
 # Summaries
@@ -157,14 +158,14 @@ def test_summarise_rejects_samples_from_different_groups():
     first = Sample("brake", "upright=1,over_pad=1,near_ground=0", 1.0, (1.0, 0.0), 5, True, (0.0,) * 8)
     second = Sample("brake", "upright=0,over_pad=1,near_ground=0", 1.0, (1.0, 0.0), 5, True, (0.0,) * 8)
     with pytest.raises(ValueError, match="one group"):
-        summarise([first, second])
+        summarise([first, second], LUNAR_LANDER.objectives)
 
 
 # The table
 
 
 def test_the_table_is_reproducible_from_its_seeds(small_table):
-    assert build_table(range(4), [CAREFUL, FUEL_SAVING], min_samples=1).data == small_table.data
+    assert build_table(LUNAR_LANDER, range(4), [CAREFUL, FUEL_SAVING], min_samples=1).data == small_table.data
 
 
 def test_a_shared_first_step_is_counted_once_per_seed(small_table):
@@ -175,7 +176,7 @@ def test_a_shared_first_step_is_counted_once_per_seed(small_table):
 def test_the_table_round_trips_through_json(small_table, tmp_path):
     path = tmp_path / "effects.json"
     small_table.save(path)
-    assert EffectTable.load(path).data == small_table.data
+    assert EffectTable.load(path, LUNAR_LANDER).data == small_table.data
 
 
 def test_lookup_returns_the_entry_for_the_state(small_table):
@@ -200,7 +201,7 @@ def test_steps_have_no_interaction(small_table):
 def test_unmeasured_or_thin_groups_are_unknown(small_table):
     start = episode_start(small_table.data["plans"][0]["group"], range(4))
     assert small_table.step("hover", start) is None
-    strict = EffectTable({**small_table.data, "min_samples": 1000})
+    strict = EffectTable({**small_table.data, "min_samples": 1000}, LUNAR_LANDER)
     assert strict.plan(CAREFUL, start) is None
 
 
@@ -208,7 +209,7 @@ def test_the_support_holds_every_measured_start(small_table, env):
     for entry in small_table.data["plans"]:
         for seed in range(4):
             start = replay(env, seed, ())
-            if group_key(lander_facts(start)) == entry["group"]:
+            if group_key(LUNAR_LANDER, lander_facts(start)) == entry["group"]:
                 assert small_table.supports(entry, start)
 
 
@@ -217,18 +218,22 @@ def test_a_state_outside_the_support_is_not_measured(small_table):
     start = episode_start(entry["group"], range(4))
     lower = np.array(start, dtype=np.float64)
     lower[1] -= 0.5  # same facts, but half a unit lower than any measured start
-    assert group_key(lander_facts(lower)) == entry["group"]
+    assert group_key(LUNAR_LANDER, lander_facts(lower)) == entry["group"]
     assert small_table.plan(entry["skills"], start) is not None
     assert small_table.plan(entry["skills"], lower) is None
 
 
 def test_the_table_checks_its_format(small_table):
     with pytest.raises(ValueError, match="schema_version"):
-        EffectTable({**small_table.data, "schema_version": "other"})
+        EffectTable({**small_table.data, "schema_version": "other"}, LUNAR_LANDER)
+    with pytest.raises(ValueError, match="measures 'other'"):
+        EffectTable({**small_table.data, "environment": "other"}, LUNAR_LANDER)
     with pytest.raises(ValueError, match="groups by"):
-        EffectTable({**small_table.data, "group_facts": ["upright"]})
+        EffectTable({**small_table.data, "group_facts": ["upright"]}, LUNAR_LANDER)
+    with pytest.raises(ValueError, match="objectives"):
+        EffectTable({**small_table.data, "objectives": ["safety"]}, LUNAR_LANDER)
     with pytest.raises(KeyError):
-        EffectTable({key: value for key, value in small_table.data.items() if key != "support_margin"})
+        EffectTable({key: value for key, value in small_table.data.items() if key != "support_margin"}, LUNAR_LANDER)
 
 
 # The committed table
@@ -244,7 +249,7 @@ def test_committed_table_covers_every_plan_from_unseen_episode_starts(committed_
 
 def test_committed_table_refuses_a_mid_flight_state_with_the_same_facts(committed_table, env):
     falling = replay(env, 7, [NO_ENGINE] * 40)  # 40 frames of doing nothing: low and falling fast
-    group = group_key(lander_facts(falling))
+    group = group_key(LUNAR_LANDER, lander_facts(falling))
     entry = next(e for e in committed_table.data["plans"] if e["skills"] == FUEL_SAVING and e["group"] == group)
     assert entry["samples"] >= committed_table.min_samples
     assert falling[1] < entry["support"]["low"][1]

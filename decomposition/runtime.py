@@ -36,13 +36,13 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
+from decomposition.domain import Domain
 from decomposition.effects import EffectTable
 from decomposition.executor import Execution, execute
 from decomposition.feedback import FeedbackLog
 from decomposition.planner import propose
 from decomposition.recipe_book import Goal, RecipeBook, holds
 from decomposition.verifier import PlanVerdict, Priorities, best_plan, plan_skill_id, verify
-from env.lunar_facts import lander_facts
 
 DEFAULT_MAX_ATTEMPTS = 3
 
@@ -76,7 +76,7 @@ class GoalRun:
     goal: str
     status: GoalStatus
     attempts: Tuple[Attempt, ...]
-    rewards: np.ndarray  # (frames, 2) over every attempt
+    rewards: np.ndarray  # (frames, objectives) over every attempt
     observation: np.ndarray
     episode_over: bool
     info: Optional[Dict[str, Any]]
@@ -103,6 +103,7 @@ class GoalRun:
 
 
 def pursue(
+    domain: Domain,
     env: Any,
     observation: np.ndarray,
     goal: str,
@@ -125,12 +126,12 @@ def pursue(
     info: Optional[Dict[str, Any]] = None
     episode_over = False
 
-    if goal_achieved(target, obs, episode_over, info):
+    if goal_achieved(domain, target, obs, episode_over, info):
         status = GoalStatus.ALREADY_ACHIEVED
     else:
         status = GoalStatus.FAILED
         for _ in range(max_attempts):
-            facts = lander_facts(obs)
+            facts = domain.facts(obs)
             verdicts = tuple(verify(propose(book, goal, facts), obs, table, priorities, timestamp))
             if feedback is not None:
                 verdicts = feedback.screen(verdicts, facts)
@@ -140,13 +141,13 @@ def pursue(
                 status = GoalStatus.NO_CERTIFIED_PLAN
                 break
 
-            execution = execute(env, book, chosen.candidate.skills, obs)
+            execution = execute(domain, env, book, chosen.candidate.skills, obs)
             attempts.append(Attempt(facts, verdicts, execution))
             rewards.extend(execution.rewards)
             obs, episode_over = execution.observation, execution.episode_over
             if execution.info is not None:
                 info = execution.info
-            if goal_achieved(target, obs, episode_over, info):
+            if goal_achieved(domain, target, obs, episode_over, info):
                 status = GoalStatus.ACHIEVED
                 break
             if episode_over:
@@ -156,7 +157,7 @@ def pursue(
         goal=goal,
         status=status,
         attempts=tuple(attempts),
-        rewards=np.asarray(rewards, dtype=np.float64).reshape(-1, 2),
+        rewards=np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives),
         observation=obs,
         episode_over=episode_over,
         info=info,
@@ -164,15 +165,13 @@ def pursue(
 
 
 def goal_achieved(
-    target: Goal, observation: np.ndarray, episode_over: bool, info: Optional[Mapping[str, Any]]
+    domain: Domain, target: Goal, observation: np.ndarray, episode_over: bool, info: Optional[Mapping[str, Any]]
 ) -> bool:
     """Whether ``target`` is achieved in the state ``observation``, confirmed as the module describes."""
     if episode_over:
-        if not (info and info.get("landing_success")):
-            return False
-        final = {**lander_facts(observation), "landed": True}  # the environment confirmed the landing
-        return holds(target.achieved_when, final)
-    return not target.terminal and holds(target.achieved_when, lander_facts(observation))
+        final = domain.final_facts(info, observation)
+        return final is not None and holds(target.achieved_when, final)
+    return not target.terminal and holds(target.achieved_when, domain.facts(observation))
 
 
 def _attempt_record(attempt: Attempt) -> Dict[str, object]:

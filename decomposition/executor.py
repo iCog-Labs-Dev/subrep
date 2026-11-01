@@ -22,9 +22,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from decomposition.domain import Domain
 from decomposition.recipe_book import RecipeBook, holds
-from env.lunar_facts import lander_facts
-from env.lunar_subskills import SUBSKILLS, run_subskill
 
 # A LunarLander episode lasts at most 1000 frames, so settling never needs more.
 MAX_SETTLING_FRAMES = 1000
@@ -58,7 +57,7 @@ class Execution:
     skills: Tuple[str, ...]
     steps: Tuple[StepRecord, ...]
     actions: Tuple[int, ...]
-    rewards: np.ndarray  # (frames, 2): every frame flown, settling included
+    rewards: np.ndarray  # (frames, objectives): every frame flown, settling included
     settling_frames: int
     observation: np.ndarray
     episode_over: bool
@@ -79,7 +78,7 @@ class Execution:
         return len(self.actions)
 
 
-def execute(env: Any, book: RecipeBook, skills: Sequence[str], observation: np.ndarray) -> Execution:
+def execute(domain: Domain, env: Any, book: RecipeBook, skills: Sequence[str], observation: np.ndarray) -> Execution:
     """Fly ``skills`` in order from ``observation``, which ``env`` must have just produced."""
     if not skills:
         raise ValueError("a plan needs at least one sub-skill")
@@ -92,19 +91,19 @@ def execute(env: Any, book: RecipeBook, skills: Sequence[str], observation: np.n
 
     for index, name in enumerate(skills):
         primitive = book.primitives[name]
-        before = lander_facts(obs)
+        before = domain.facts(obs)
         if not holds(primitive.requires, before):
             steps.append(StepRecord(name, StepStatus.REQUIREMENTS_NOT_MET, 0, before, before, None))
             break
 
-        run = run_subskill(env, SUBSKILLS[name], obs)
+        run = domain.run_skill(env, domain.skills[name], obs)
         actions.extend(run.actions)
         rewards.extend(run.rewards)
         obs = run.observation
         if run.info is not None:
             info = run.info
         episode_over = run.terminated or run.truncated
-        after = lander_facts(obs)
+        after = domain.facts(obs)
 
         if run.completed:
             status = StepStatus.COMPLETED
@@ -122,8 +121,8 @@ def execute(env: Any, book: RecipeBook, skills: Sequence[str], observation: np.n
 
     settling_frames = 0
     plan_completed = len(steps) == len(skills) and steps[-1].status is StepStatus.COMPLETED
-    if plan_completed and not episode_over and lander_facts(obs)["landed"]:
-        last = SUBSKILLS[skills[-1]]
+    if plan_completed and not episode_over and domain.facts(obs)[domain.settling_fact]:
+        last = domain.skills[skills[-1]]
         while not episode_over and settling_frames < MAX_SETTLING_FRAMES:
             action = int(last.policy(obs))
             obs, reward, terminated, truncated, info = env.step(action)
@@ -136,7 +135,7 @@ def execute(env: Any, book: RecipeBook, skills: Sequence[str], observation: np.n
         skills=tuple(skills),
         steps=tuple(steps),
         actions=tuple(actions),
-        rewards=np.asarray(rewards, dtype=np.float64).reshape(-1, 2),
+        rewards=np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives),
         settling_frames=settling_frames,
         observation=np.asarray(obs, dtype=np.float32),
         episode_over=episode_over,

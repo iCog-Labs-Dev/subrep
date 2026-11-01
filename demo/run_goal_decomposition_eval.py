@@ -44,6 +44,7 @@ from decomposition.verifier import MdnRegion, Priorities
 from demo.build_lunar_effect_table import PLANS
 from demo.run_lunar_baseline import CONTROLLERS, EpisodeResult, run_episode, summarise
 from demo.run_lunar_subskill_reliability import SEQUENCES
+from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, OUTCOMES, landing_outcome, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import NO_ENGINE, SUBSKILLS
@@ -108,7 +109,7 @@ def finish_episode(
 def fixed_sequence_episode(env: SubRepEnv, book: RecipeBook, skills: Sequence[str], seed: int) -> EpisodeResult:
     """Fly a fixed sequence with the runtime checks but no certification or replanning."""
     observation, _ = env.reset(seed=seed)
-    execution = execute(env, book, skills, observation)
+    execution = execute(LUNAR_LANDER, env, book, skills, observation)
     return finish_episode(
         env, seed, execution.rewards, execution.observation, execution.info, execution.episode_over
     )
@@ -123,13 +124,13 @@ def evaluate_profile(
     first_plans: Counter = Counter()
     stops: Counter = Counter()
     replanned = predictions_checked = predictions_held = 0
-    feedback = FeedbackLog()
+    feedback = FeedbackLog(LUNAR_LANDER)
 
     records: List[Dict[str, Any]] = []
     for seed in seeds:
         observation, _ = env.reset(seed=seed)
         facts = lander_facts(observation)
-        run = pursue(env, observation, GOAL, book, table, priorities, timestamp=TIMESTAMP)
+        run = pursue(LUNAR_LANDER, env, observation, GOAL, book, table, priorities, timestamp=TIMESTAMP)
         episode = finish_episode(env, seed, run.rewards, run.observation, run.info, run.episode_over)
         episodes.append(episode)
 
@@ -155,7 +156,7 @@ def evaluate_profile(
             predictions_checked += len(checked)
             predictions_held += sum(checked)
         if first is not None:
-            feedback.record(first, facts, realised_gains(env, seed, run.rewards))
+            feedback.record(first, facts, realised_gains(LUNAR_LANDER, env, seed, run.rewards))
 
     return {
         "summary": summarise(episodes),
@@ -176,7 +177,7 @@ def evaluate_profile(
 
 def check_table(committed: EffectTable, seeds: range) -> List[Dict[str, Any]]:
     """Measure the plans again on ``seeds`` and compare each group with the committed table."""
-    unseen = build_table(seeds, PLANS, min_samples=1)
+    unseen = build_table(LUNAR_LANDER, seeds, PLANS, min_samples=1)
     fresh = {(entry["name"], entry["group"]): entry for entry in unseen.data["plans"]}
     rows = []
     for entry in committed.data["plans"]:
@@ -207,7 +208,7 @@ def check_recovery(
         observation, _ = env.reset(seed=seed)
         if lander_facts(observation)["upright"]:
             continue
-        run = pursue(env, observation, "recover_stability", book, table, priorities, timestamp=TIMESTAMP)
+        run = pursue(LUNAR_LANDER, env, observation, "recover_stability", book, table, priorities, timestamp=TIMESTAMP)
         statuses[run.status.value] += 1
         if run.status is GoalStatus.ACHIEVED:
             frames.append(run.frames)
@@ -231,7 +232,7 @@ def evaluate(
     baselines: Sequence[str] = tuple(CONTROLLERS),
 ) -> Dict[str, Any]:
     """Fly every controller from every seed and check the measurements behind the certificates."""
-    table = EffectTable.load(DEFAULT_TABLE_PATH)
+    table = EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
     measured = range(table.data["seeds"]["start"], table.data["seeds"]["stop"])
     if len(seeds) == 0:
         raise ValueError("the evaluation needs at least one seed")

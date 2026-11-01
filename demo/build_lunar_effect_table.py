@@ -15,6 +15,7 @@ from typing import List
 
 from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, build_table
 from demo.run_lunar_subskill_reliability import SEQUENCES
+from env.lunar_domain import LUNAR_LANDER
 
 PLANS: List[List[str]] = [*SEQUENCES.values(), ["stabilise"]]
 
@@ -46,7 +47,7 @@ def main() -> None:
     parser.add_argument("--output", default=str(DEFAULT_TABLE_PATH))
     args = parser.parse_args()
 
-    table = build_table(range(args.start_seed, args.start_seed + args.seeds), PLANS)
+    table = build_table(LUNAR_LANDER, range(args.start_seed, args.start_seed + args.seeds), PLANS)
     table.save(args.output)
     print(to_text(table))
     print(f"wrote {args.output}")

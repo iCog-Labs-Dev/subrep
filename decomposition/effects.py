@@ -1,10 +1,10 @@
-"""Measured effects of the LunarLander sub-skills and of plans built from them.
+"""Measured effects of a domain's skills and of plans built from them.
 
 The effect of running something from a state is its payoff gain Δr and its
-motive gains Δn = (ΔSafety, ΔFuel) over doing nothing for the same number of
-frames from the same state. Box2D state cannot be copied, but resetting the
-environment with a seed and replaying the same actions reproduces a state
-exactly, so both runs start from identical states (a paired comparison).
+motive gains Δn, one per objective of the domain, over doing nothing for the
+same number of frames from the same state. Box2D state cannot be copied, but
+resetting the environment with a seed and replaying the same actions reproduces
+a state exactly, so both runs start from identical states (a paired comparison).
 
 Totals follow ``env.skill_executor.SkillExecutor`` (discount 0.99, payoff is
 the sum of the reward vector) and the gains come from
@@ -36,20 +36,16 @@ import json
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TypeVar, Union
 
 import numpy as np
 
 from baseline.improvement_calculator import ImprovementCalculator
-from env.lunar_facts import OUTCOMES, landing_outcome, lander_facts
-from env.lunar_lander_wrapper import SubRepEnv
-from env.lunar_subskills import NO_ENGINE, SUBSKILLS, run_subskill
+from decomposition.domain import Domain
 
-SCHEMA_VERSION = "subrep.lunar_effects.v2"
-ENVIRONMENT = "mo-lunar-lander-v3"
+SCHEMA_VERSION = "subrep.effects.v3"
 BASELINE_ID = "idle_policy_v1"
 GAMMA = 0.99
-GROUP_FACTS = ("upright", "over_pad", "near_ground")
 CONFIDENCE = 0.95
 BOOTSTRAP_RESAMPLES = 2000
 MIN_SAMPLES = 30
@@ -58,9 +54,7 @@ SUPPORT_MARGIN = 0.05
 DEFAULT_TABLE_PATH = Path(__file__).resolve().parent / "data" / "lunar_effects.json"
 
 IN_FLIGHT = "in_flight"
-PLAN_OUTCOMES = OUTCOMES + (IN_FLIGHT,)
 
-_GAIN_NAMES = ("delta_r", "delta_safety", "delta_fuel")
 _DECIMALS = 6
 
 T = TypeVar("T")
@@ -71,7 +65,12 @@ T = TypeVar("T")
 # ---------------------------------------------------------------------------
 
 
-def replay(env: SubRepEnv, seed: int, actions: Sequence[int]) -> np.ndarray:
+def gain_names(objectives: Sequence[str]) -> Tuple[str, ...]:
+    """The names of a gains vector, for example ``("delta_r", "delta_safety", "delta_fuel")``."""
+    return ("delta_r", *(f"delta_{name}" for name in objectives))
+
+
+def replay(env: Any, seed: int, actions: Sequence[int]) -> np.ndarray:
     """Reset ``env`` with ``seed``, replay ``actions`` and return the observation reached."""
     obs, _ = env.reset(seed=seed)
     for action in actions:
@@ -81,37 +80,37 @@ def replay(env: SubRepEnv, seed: int, actions: Sequence[int]) -> np.ndarray:
     return np.asarray(obs, dtype=np.float32)
 
 
-def idle_rewards(env: SubRepEnv, frames: int) -> np.ndarray:
+def idle_rewards(domain: Domain, env: Any, frames: int) -> np.ndarray:
     """Rewards of doing nothing for ``frames`` frames, or until the episode ends."""
     rewards = []
     for _ in range(frames):
-        _, reward, terminated, truncated, _ = env.step(NO_ENGINE)
+        _, reward, terminated, truncated, _ = env.step(domain.idle_action)
         rewards.append(np.asarray(reward, dtype=np.float64))
         if terminated or truncated:
             break
-    return np.asarray(rewards, dtype=np.float64).reshape(-1, 2)
+    return np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives)
 
 
 def discounted_totals(rewards: np.ndarray, gamma: float = GAMMA) -> Tuple[float, np.ndarray]:
-    """Discounted payoff and motive totals of a ``(frames, 2)`` reward array."""
-    rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, 2)
+    """Discounted payoff and motive totals of a ``(frames, objectives)`` reward array."""
+    rewards = np.asarray(rewards, dtype=np.float64)
     discounts = gamma ** np.arange(len(rewards))
     motives = discounts @ rewards
     return float(motives.sum()), motives
 
 
-def improvement(rewards: np.ndarray, baseline_rewards: np.ndarray) -> Tuple[float, Tuple[float, float]]:
+def improvement(rewards: np.ndarray, baseline_rewards: np.ndarray) -> Tuple[float, Tuple[float, ...]]:
     """Payoff gain Δr and motive gains Δn of ``rewards`` over ``baseline_rewards``."""
     payoff, motives = discounted_totals(rewards)
     baseline_payoff, baseline_motives = discounted_totals(baseline_rewards)
     calculator = ImprovementCalculator({"baseline_payoff": baseline_payoff, "baseline_motives": baseline_motives})
     delta_r, delta_n = calculator.compute_improvements(payoff, motives)
-    return float(delta_r), (float(delta_n[0]), float(delta_n[1]))
+    return float(delta_r), tuple(float(value) for value in delta_n)
 
 
-def group_key(facts: Mapping[str, bool]) -> str:
+def group_key(domain: Domain, facts: Mapping[str, bool]) -> str:
     """The group of a state, for example ``"upright=1,over_pad=0,near_ground=0"``."""
-    return ",".join(f"{name}={int(facts[name])}" for name in GROUP_FACTS)
+    return ",".join(f"{name}={int(facts[name])}" for name in domain.group_facts)
 
 
 def plan_key(skills: Sequence[str]) -> str:
@@ -126,14 +125,14 @@ class Sample:
     name: str
     group: str
     delta_r: float
-    delta_n: Tuple[float, float]
+    delta_n: Tuple[float, ...]
     frames: int
     completed: bool
     start: Tuple[float, ...]  # the observation the measurement started from
 
     @property
     def gains(self) -> np.ndarray:
-        """(Δr, ΔSafety, ΔFuel) as one array."""
+        """Δr followed by Δn, as one array."""
         return np.array([self.delta_r, *self.delta_n])
 
 
@@ -149,18 +148,25 @@ class PlanFlight:
 
     @property
     def interaction(self) -> np.ndarray:
-        """The plan's (Δr, ΔSafety, ΔFuel) minus the sum over its steps."""
-        return self.plan.gains - sum((step.gains for step in self.steps), np.zeros(3))
+        """The plan's gains minus the sum over its steps."""
+        return self.plan.gains - sum((step.gains for step in self.steps), np.zeros_like(self.plan.gains))
 
 
 def _sample(
-    name: str, start: np.ndarray, delta_r: float, delta_n: Tuple[float, float], frames: int, completed: bool
+    domain: Domain,
+    name: str,
+    start: np.ndarray,
+    delta_r: float,
+    delta_n: Tuple[float, ...],
+    frames: int,
+    completed: bool,
 ) -> Sample:
+    group = group_key(domain, domain.facts(start))
     observation = tuple(float(value) for value in np.asarray(start, dtype=np.float64).reshape(-1))
-    return Sample(name, group_key(lander_facts(observation)), delta_r, delta_n, frames, completed, observation)
+    return Sample(name, group, delta_r, delta_n, frames, completed, observation)
 
 
-def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
+def fly_plan(domain: Domain, env: Any, seed: int, skills: Sequence[str]) -> PlanFlight:
     """Fly ``skills`` in order from the start of episode ``seed`` and measure the plan and each step.
 
     The flight stops at the first step that does not complete or when the
@@ -177,7 +183,7 @@ def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
     info: Mapping[str, object] = {}
     ended = False
     for name in skills:
-        run = run_subskill(env, SUBSKILLS[name], obs)
+        run = domain.run_skill(env, domain.skills[name], obs)
         runs.append((len(actions), obs, run))
         actions.extend(run.actions)
         rewards.extend(run.rewards)
@@ -188,24 +194,24 @@ def fly_plan(env: SubRepEnv, seed: int, skills: Sequence[str]) -> PlanFlight:
             break
 
     completed = len(runs) == len(skills) and runs[-1][2].completed
-    if completed and not ended and lander_facts(obs)["landed"]:
-        last = SUBSKILLS[skills[-1]]
+    if completed and not ended and domain.facts(obs)[domain.settling_fact]:
+        last = domain.skills[skills[-1]]
         while not ended:
             obs, reward, terminated, truncated, info = env.step(int(last.policy(obs)))
             rewards.append(np.asarray(reward, dtype=np.float64))
             ended = terminated or truncated
-    outcome = landing_outcome(info, obs) if ended else IN_FLIGHT
+    outcome = domain.outcome(info, obs) if ended else IN_FLIGHT
 
-    plan_rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, 2)
+    plan_rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives)
     replay(env, seed, ())
-    delta_r, delta_n = improvement(plan_rewards, idle_rewards(env, len(plan_rewards)))
-    plan = _sample(plan_key(skills), plan_start, delta_r, delta_n, len(plan_rewards), completed)
+    delta_r, delta_n = improvement(plan_rewards, idle_rewards(domain, env, len(plan_rewards)))
+    plan = _sample(domain, plan_key(skills), plan_start, delta_r, delta_n, len(plan_rewards), completed)
 
     steps = []
     for frames_before, start, run in runs:
         replay(env, seed, actions[:frames_before])
-        delta_r, delta_n = improvement(run.rewards, idle_rewards(env, run.frames))
-        steps.append(_sample(run.skill, start, delta_r, delta_n, run.frames, run.completed))
+        delta_r, delta_n = improvement(run.rewards, idle_rewards(domain, env, run.frames))
+        steps.append(_sample(domain, run.skill, start, delta_r, delta_n, run.frames, run.completed))
 
     return PlanFlight(seed=seed, skills=tuple(skills), plan=plan, steps=tuple(steps), outcome=outcome)
 
@@ -229,10 +235,10 @@ def _bootstrap_seed(*parts: str) -> int:
     return zlib.crc32("|".join(parts).encode("utf-8"))
 
 
-def summarise_gains(gains: np.ndarray, seed: int) -> Dict[str, Dict[str, float]]:
-    """Mean, spread and lower bound of each column of a ``(samples, 3)`` gains array."""
+def summarise_gains(gains: np.ndarray, objectives: Sequence[str], seed: int) -> Dict[str, Dict[str, float]]:
+    """Mean, spread and lower bound of each column of a ``(samples, 1 + objectives)`` gains array."""
     summary = {}
-    for name, column in zip(_GAIN_NAMES, np.asarray(gains, dtype=np.float64).T):
+    for name, column in zip(gain_names(objectives), np.asarray(gains, dtype=np.float64).T):
         summary[name] = {
             "mean": round(float(column.mean()), _DECIMALS),
             "std": round(float(column.std()), _DECIMALS),
@@ -241,7 +247,7 @@ def summarise_gains(gains: np.ndarray, seed: int) -> Dict[str, Dict[str, float]]
     return summary
 
 
-def summarise(samples: Sequence[Sample]) -> Dict[str, object]:
+def summarise(samples: Sequence[Sample], objectives: Sequence[str]) -> Dict[str, object]:
     """Summarise samples that share a name and a group."""
     name, group = samples[0].name, samples[0].group
     if any(s.name != name or s.group != group for s in samples):
@@ -253,7 +259,7 @@ def summarise(samples: Sequence[Sample]) -> Dict[str, object]:
         "completion_rate": round(float(np.mean([s.completed for s in samples])), _DECIMALS),
         "mean_frames": round(float(np.mean([s.frames for s in samples])), _DECIMALS),
         "support": _support([s.start for s in samples]),
-        **summarise_gains(np.stack([s.gains for s in samples]), _bootstrap_seed(name, group)),
+        **summarise_gains(np.stack([s.gains for s in samples]), objectives, _bootstrap_seed(name, group)),
     }
 
 
@@ -275,15 +281,17 @@ def _by_name_and_group(items: Iterable[T], sample_of: Callable[[T], Sample]) -> 
     return [grouped[key] for key in sorted(grouped)]
 
 
-def build_table(seeds: range, plans: Sequence[Sequence[str]], min_samples: int = MIN_SAMPLES) -> "EffectTable":
+def build_table(
+    domain: Domain, seeds: range, plans: Sequence[Sequence[str]], min_samples: int = MIN_SAMPLES
+) -> "EffectTable":
     """Fly every plan from every seed and summarise the measured effects.
 
     A step that starts after the same sub-skills in two plans is flown from the
     same state, so it is counted once per seed.
     """
-    env = SubRepEnv(seed=seeds.start)
+    env = domain.make_env(seeds.start)
     try:
-        flights = [fly_plan(env, seed, skills) for seed in seeds for skills in plans]
+        flights = [fly_plan(domain, env, seed, skills) for seed in seeds for skills in plans]
     finally:
         env.close()
 
@@ -292,34 +300,39 @@ def build_table(seeds: range, plans: Sequence[Sequence[str]], min_samples: int =
         for index, step in enumerate(flight.steps):
             step_samples.setdefault((flight.seed, flight.skills[: index + 1]), step)
 
-    steps = [summarise(group) for group in _by_name_and_group(step_samples.values(), lambda s: s)]
+    objectives = domain.objectives
+    steps = [summarise(group, objectives) for group in _by_name_and_group(step_samples.values(), lambda s: s)]
     plans_summary = []
     for group in _by_name_and_group(flights, lambda f: f.plan):
-        entry = summarise([flight.plan for flight in group])
+        entry = summarise([flight.plan for flight in group], objectives)
         entry["skills"] = list(group[0].skills)
         entry["outcomes"] = {
             name: round(sum(flight.outcome == name for flight in group) / len(group), _DECIMALS)
-            for name in PLAN_OUTCOMES
+            for name in (*domain.outcomes, IN_FLIGHT)
         }
         interaction = np.stack([flight.interaction for flight in group])
-        entry["interaction"] = summarise_gains(interaction, _bootstrap_seed(entry["name"], entry["group"], "interaction"))
+        entry["interaction"] = summarise_gains(
+            interaction, objectives, _bootstrap_seed(entry["name"], entry["group"], "interaction")
+        )
         plans_summary.append(entry)
 
     return EffectTable(
         {
             "schema_version": SCHEMA_VERSION,
-            "environment": ENVIRONMENT,
+            "environment": domain.environment,
+            "objectives": list(objectives),
             "baseline_id": BASELINE_ID,
             "gamma": GAMMA,
             "confidence": CONFIDENCE,
             "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
             "min_samples": min_samples,
             "support_margin": SUPPORT_MARGIN,
-            "group_facts": list(GROUP_FACTS),
+            "group_facts": list(domain.group_facts),
             "seeds": {"start": seeds.start, "stop": seeds.stop},
             "steps": steps,
             "plans": plans_summary,
-        }
+        },
+        domain,
     )
 
 
@@ -330,10 +343,10 @@ def build_table(seeds: range, plans: Sequence[Sequence[str]], min_samples: int =
 
 @dataclass(frozen=True)
 class Gains:
-    """A payoff gain Δr with motive gains Δn = (ΔSafety, ΔFuel)."""
+    """A payoff gain Δr with one motive gain per objective in Δn."""
 
     delta_r: float
-    delta_n: Tuple[float, float]
+    delta_n: Tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -349,14 +362,10 @@ class Estimate:
     outcomes: Optional[Dict[str, float]] = None  # how plan flights really ended; plans only
 
 
-def _group_of(observation: np.ndarray) -> str:
-    return group_key(lander_facts(observation))
-
-
-def _gains(stats: Mapping[str, Mapping[str, float]], field: str) -> Gains:
+def _gains(stats: Mapping[str, Mapping[str, float]], objectives: Sequence[str], field: str) -> Gains:
     return Gains(
         delta_r=float(stats["delta_r"][field]),
-        delta_n=(float(stats["delta_safety"][field]), float(stats["delta_fuel"][field])),
+        delta_n=tuple(float(stats[f"delta_{name}"][field]) for name in objectives),
     )
 
 
@@ -369,11 +378,16 @@ class EffectTable:
     times its range. Every other state is treated as unmeasured.
     """
 
-    def __init__(self, data: Mapping[str, object]) -> None:
+    def __init__(self, data: Mapping[str, object], domain: Domain) -> None:
         if data.get("schema_version") != SCHEMA_VERSION:
             raise ValueError(f"expected schema_version {SCHEMA_VERSION!r}, got {data.get('schema_version')!r}")
-        if tuple(data["group_facts"]) != GROUP_FACTS:
-            raise ValueError(f"table groups by {data['group_facts']}, expected {list(GROUP_FACTS)}")
+        if data["environment"] != domain.environment:
+            raise ValueError(f"table measures {data['environment']!r}, expected {domain.environment!r}")
+        if tuple(data["group_facts"]) != domain.group_facts:
+            raise ValueError(f"table groups by {data['group_facts']}, expected {list(domain.group_facts)}")
+        if tuple(data["objectives"]) != domain.objectives:
+            raise ValueError(f"table measures objectives {data['objectives']}, expected {list(domain.objectives)}")
+        self.domain = domain
         self.data = dict(data)
         self.min_samples = int(data["min_samples"])
         self.support_margin = float(data["support_margin"])
@@ -381,8 +395,8 @@ class EffectTable:
         self._plans = {(e["name"], e["group"]): e for e in data["plans"]}
 
     @classmethod
-    def load(cls, path: Union[str, Path]) -> "EffectTable":
-        return cls(json.loads(Path(path).read_text(encoding="utf-8")))
+    def load(cls, path: Union[str, Path], domain: Domain) -> "EffectTable":
+        return cls(json.loads(Path(path).read_text(encoding="utf-8")), domain)
 
     def save(self, path: Union[str, Path]) -> None:
         path = Path(path)
@@ -391,11 +405,11 @@ class EffectTable:
 
     def step(self, skill: str, observation: np.ndarray) -> Optional[Estimate]:
         """The effect of ``skill`` from ``observation``, or None if no measurement applies there."""
-        return self._estimate(self._steps.get((skill, _group_of(observation))), observation)
+        return self._estimate(self._steps.get((skill, self._group_of(observation))), observation)
 
     def plan(self, skills: Sequence[str], observation: np.ndarray) -> Optional[Estimate]:
         """The effect of the plan ``skills`` from ``observation``, or None if no measurement applies there."""
-        return self._estimate(self._plans.get((plan_key(skills), _group_of(observation))), observation)
+        return self._estimate(self._plans.get((plan_key(skills), self._group_of(observation))), observation)
 
     def supports(self, entry: Mapping[str, object], observation: np.ndarray) -> bool:
         """Whether ``observation`` lies inside the entry's support, widened by the margin."""
@@ -405,15 +419,19 @@ class EffectTable:
         values = np.asarray(observation, dtype=np.float64).reshape(-1)
         return bool(values.shape == low.shape and np.all((values >= low - widen) & (values <= high + widen)))
 
+    def _group_of(self, observation: np.ndarray) -> str:
+        return group_key(self.domain, self.domain.facts(observation))
+
     def _estimate(self, entry: Optional[Mapping[str, object]], observation: np.ndarray) -> Optional[Estimate]:
         if entry is None or int(entry["samples"]) < self.min_samples or not self.supports(entry, observation):
             return None
+        objectives = self.domain.objectives
         return Estimate(
             samples=int(entry["samples"]),
             completion_rate=float(entry["completion_rate"]),
             mean_frames=float(entry["mean_frames"]),
-            mean=_gains(entry, "mean"),
-            lower=_gains(entry, "lower"),
-            interaction=_gains(entry["interaction"], "mean") if "interaction" in entry else None,
+            mean=_gains(entry, objectives, "mean"),
+            lower=_gains(entry, objectives, "lower"),
+            interaction=_gains(entry["interaction"], objectives, "mean") if "interaction" in entry else None,
             outcomes=dict(entry["outcomes"]) if "outcomes" in entry else None,
         )

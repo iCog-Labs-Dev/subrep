@@ -10,6 +10,7 @@ from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
 from decomposition.runtime import GoalStatus, goal_achieved, pursue
 from decomposition.verifier import NOT_MEASURED, MdnRegion, Priorities
+from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, landing_outcome, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import NO_ENGINE, SUBSKILLS
@@ -43,12 +44,12 @@ def book():
 
 @pytest.fixture(scope="module")
 def table():
-    return EffectTable.load(DEFAULT_TABLE_PATH)
+    return EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
 
 
 def run_goal(env, book, table, seed, goal="land_on_pad", priorities=SAFETY_FIRST, **kwargs):
     observation, _ = env.reset(seed=seed)
-    return pursue(env, observation, goal, book, table, priorities, **kwargs)
+    return pursue(LUNAR_LANDER, env, observation, goal, book, table, priorities, **kwargs)
 
 
 def test_a_certified_landing_plan_is_flown_to_a_landing(env, book, table):
@@ -84,7 +85,7 @@ def test_recovering_stability_leaves_the_lander_upright_in_flight(env, book, tab
 
 def test_without_a_certified_plan_nothing_is_flown(env, book, table):
     observation, _ = env.reset(seed=TILTED_START_SEED)
-    run = pursue(env, observation, "land_on_pad", book, table, NO_REGION)
+    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, NO_REGION)
     assert run.status is GoalStatus.NO_CERTIFIED_PLAN
     [attempt] = run.attempts
     assert attempt.execution is None and attempt.chosen is None
@@ -96,7 +97,7 @@ def test_without_a_certified_plan_nothing_is_flown(env, book, table):
 @pytest.fixture(scope="module")
 def wide_table(table):
     """The measured table with its support widened to cover every state, to exercise replanning."""
-    return EffectTable({**table.data, "support_margin": 1000.0})
+    return EffectTable({**table.data, "support_margin": 1000.0}, LUNAR_LANDER)
 
 
 def test_after_a_failed_step_episode_start_measurements_do_not_certify_a_replan(env, book, table, monkeypatch):
@@ -145,9 +146,9 @@ def test_a_crash_is_a_failure(env, book, table, monkeypatch):
 def test_inputs_are_checked(env, book, table):
     observation, _ = env.reset(seed=0)
     with pytest.raises(ValueError, match="unknown goal"):
-        pursue(env, observation, "hover", book, table, SAFETY_FIRST)
+        pursue(LUNAR_LANDER, env, observation, "hover", book, table, SAFETY_FIRST)
     with pytest.raises(ValueError, match="max_attempts"):
-        pursue(env, observation, "land_on_pad", book, table, SAFETY_FIRST, max_attempts=0)
+        pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, SAFETY_FIRST, max_attempts=0)
 
 
 def test_the_record_is_json_ready(env, book, table):
@@ -176,11 +177,11 @@ def state(x=0.0, y=0.0, angle=0.0, left=1.0, right=1.0):
     ],
 )
 def test_landing_on_the_pad_is_confirmed_by_the_final_result(book, observation, episode_over, info, achieved):
-    assert goal_achieved(book.goals["land_on_pad"], observation, episode_over, info) is achieved
+    assert goal_achieved(LUNAR_LANDER, book.goals["land_on_pad"], observation, episode_over, info) is achieved
 
 
 def test_a_goal_that_is_not_terminal_is_achieved_while_flying(book):
     recover = book.goals["recover_stability"]
-    assert goal_achieved(recover, state(y=1.0, left=0.0, right=0.0), False, None)
-    assert not goal_achieved(recover, state(y=1.0, angle=0.5, left=0.0, right=0.0), False, None)
-    assert not goal_achieved(recover, state(), True, {"landing_success": False, "crashed": True})
+    assert goal_achieved(LUNAR_LANDER, recover, state(y=1.0, left=0.0, right=0.0), False, None)
+    assert not goal_achieved(LUNAR_LANDER, recover, state(y=1.0, angle=0.5, left=0.0, right=0.0), False, None)
+    assert not goal_achieved(LUNAR_LANDER, recover, state(), True, {"landing_success": False, "crashed": True})

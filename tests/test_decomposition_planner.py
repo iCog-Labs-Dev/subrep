@@ -12,6 +12,7 @@ from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, replay
 from decomposition.planner import propose
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, SCHEMA_VERSION, holds, load_recipe_book, parse_recipe_book
 from demo.build_lunar_effect_table import PLANS
+from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import SUBSKILLS
@@ -165,7 +166,7 @@ def test_random_facts_give_sound_deterministic_plans(lunar_book):
 
 
 def test_every_plan_proposed_at_an_episode_start_has_measured_effects(lunar_book):
-    table = EffectTable.load(DEFAULT_TABLE_PATH)
+    table = EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
     env = SubRepEnv(seed=0)
     try:
         for seed in range(table.data["seeds"]["stop"], table.data["seeds"]["stop"] + 30):
