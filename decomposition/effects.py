@@ -514,6 +514,32 @@ class EffectTable:
         """The effect of the plan ``skills`` from ``observation``, or None if no measurement applies there."""
         return self._estimate(self._plans.get((plan_key(skills), self._group_of(observation))), observation)
 
+    def rough_value(self, skills: Sequence[str], weights: Sequence[float]) -> float:
+        """A rough worth of a plan under ``weights``: its steps' mean gains, over all states, added up.
+
+        Adding steps up overstates a plan, so this can only order plans to measure.
+        It never certifies one. A step without measurements counts as nothing.
+        """
+        return float(sum(self._step_value(skill, weights) for skill in skills))
+
+    def _step_value(self, skill: str, weights: Sequence[float]) -> float:
+        entries = [entry for (name, _), entry in self._steps.items() if name == skill]
+        if not entries:
+            return 0.0
+        samples = sum(int(entry["samples"]) for entry in entries)
+        gains = sum(
+            int(entry["samples"])
+            * (
+                float(entry["delta_r"]["mean"])
+                + sum(
+                    weight * float(entry[f"delta_{name}"]["mean"])
+                    for weight, name in zip(weights, self.domain.objectives)
+                )
+            )
+            for entry in entries
+        )
+        return gains / samples
+
     def supports(self, entry: Mapping[str, object], observation: np.ndarray) -> bool:
         """Whether ``observation`` lies inside the entry's support, widened by the margin."""
         low = np.asarray(entry["support"]["low"], dtype=np.float64)

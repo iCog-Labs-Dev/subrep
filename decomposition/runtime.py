@@ -50,7 +50,7 @@ from decomposition.domain import Domain
 from decomposition.effects import EffectTable
 from decomposition.executor import Execution, execute
 from decomposition.feedback import FeedbackLog
-from decomposition.planner import goal_graph, propose
+from decomposition.planner import CandidatePlan, generate, goal_graph
 from decomposition.recipe_book import Goal, RecipeBook, holds
 from decomposition.verifier import (
     GOAL_TOO_RARE,
@@ -87,6 +87,7 @@ class Decision:
     skills: Tuple[str, ...]  # the part of the chosen plan still to fly, first skill included
     execution: Optional[Execution]
     recertified: bool  # whether the verifier admitted this plan from this very state
+    skipped: Tuple[CandidatePlan, ...] = ()  # candidates a measuring limit left out, kept for the record
 
 
 @dataclass(frozen=True)
@@ -163,8 +164,13 @@ def pursue(
     feedback: Optional[FeedbackLog] = None,
     timestamp: Optional[str] = None,
     min_goal_rate: float = DEFAULT_MIN_GOAL_RATE,
+    limit: Optional[int] = None,
 ) -> GoalRun:
-    """Pursue ``goal`` from ``observation``, which ``env`` must have just produced."""
+    """Pursue ``goal`` from ``observation``, which ``env`` must have just produced.
+
+    ``limit`` caps how many candidates are measured at each decision, most
+    promising first under the priorities. It is off by default.
+    """
     if goal not in book.goals:
         raise ValueError(f"unknown goal {goal!r}; the book has {sorted(book.goals)}")
     if max_attempts < 1:
@@ -185,8 +191,10 @@ def pursue(
         status = GoalStatus.FAILED
         for _ in range(MAX_DECISIONS):
             facts = domain.facts(obs)
-            candidates = propose(book, goal, facts)
-            verdicts = tuple(verify(candidates, obs, table, priorities, timestamp, min_goal_rate))
+            generation = generate(
+                book, (goal,), facts, lambda skills: table.rough_value(skills, priorities.weights), limit
+            )
+            verdicts = tuple(verify(generation.candidates, obs, table, priorities, timestamp, min_goal_rate))
             if feedback is not None:
                 verdicts = feedback.screen(verdicts, facts)
 
@@ -195,12 +203,14 @@ def pursue(
             if chosen is not None:
                 in_progress, remaining = chosen, chosen.candidate.skills
             elif not _may_go_on(verdicts, remaining):
-                decisions.append(Decision(facts, verdicts, None, (), None, False))
+                decisions.append(Decision(facts, verdicts, None, (), None, False, generation.skipped))
                 status = GoalStatus.NO_CERTIFIED_PLAN
                 break
 
             execution = execute(domain, env, book, remaining[:1], obs, settle=len(remaining) == 1)
-            decisions.append(Decision(facts, verdicts, in_progress, remaining, execution, recertified))
+            decisions.append(
+                Decision(facts, verdicts, in_progress, remaining, execution, recertified, generation.skipped)
+            )
             rewards.extend(execution.rewards)
             obs, episode_over = execution.observation, execution.episode_over
             if execution.info is not None:
@@ -273,6 +283,7 @@ def _decision_record(decision: Decision) -> Dict[str, object]:
         "rejected": [
             {"plan": plan_skill_id(v.candidate), "reason": v.reason} for v in decision.verdicts if not v.admitted
         ],
+        "not_measured_by_limit": [plan_skill_id(candidate) for candidate in decision.skipped],
         "steps": []
         if execution is None
         else [

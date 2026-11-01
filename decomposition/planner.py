@@ -24,12 +24,20 @@ example, that a touch-down ends on the pad, so whether a goal was really achieve
 is confirmed from the final result, not predicted here. The planner only
 proposes. Whether a candidate is worth running is decided against measured
 effects by the verifier.
+
+Priorities reach the planner in one way only. Measuring a plan can cost far more
+than listing it, so ``generate`` can order the candidates by a rough value under
+the priorities and keep the most promising ones, recording what it left out. It
+never drops a plan because of what the plan is called or which motive it seems to
+serve: the plan named fuel-saving can be the safest. Without a limit it returns
+every candidate in the book's order, so that experiments can hold the candidate
+set fixed. Only the verifier can admit a plan.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 from decomposition.recipe_book import Facts, Goal, RecipeBook, Skill, holds
 
@@ -116,6 +124,42 @@ def propose(book: RecipeBook, goal: str, facts: Facts) -> List[CandidatePlan]:
             )
         )
     return candidates
+
+
+@dataclass(frozen=True)
+class Generation:
+    """The candidates to measure, and those a limit left out."""
+
+    candidates: Tuple[CandidatePlan, ...]
+    skipped: Tuple[CandidatePlan, ...] = ()
+
+
+def generate(
+    book: RecipeBook,
+    goals: Sequence[str],
+    facts: Facts,
+    rough_value: Optional[Callable[[Tuple[str, ...]], float]] = None,
+    limit: Optional[int] = None,
+) -> Generation:
+    """The distinct candidate plans for ``goals``, the first goal's plan winning when two share their skills.
+
+    ``rough_value`` estimates a plan's worth under the current priorities. With a
+    ``limit``, only that many candidates are kept, best first; ties keep the
+    book's order. Without one, every candidate is kept in the book's order.
+    """
+    if limit is not None and limit < 1:
+        raise ValueError(f"limit must be at least 1, got {limit}")
+    candidates: Dict[Tuple[str, ...], CandidatePlan] = {}
+    for goal in goals:
+        for candidate in propose(book, goal, facts):
+            candidates.setdefault(candidate.skills, candidate)
+    plans = list(candidates.values())
+    if limit is None or len(plans) <= limit:
+        return Generation(tuple(plans))
+    if rough_value is None:
+        raise ValueError("a limit needs a rough value to choose which plans to measure")
+    ranked = sorted(plans, key=lambda plan: -rough_value(plan.skills))
+    return Generation(tuple(ranked[:limit]), tuple(ranked[limit:]))
 
 
 def plans_for(book: RecipeBook, goals: Optional[Sequence[str]] = None):

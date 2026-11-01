@@ -265,6 +265,14 @@ def test_the_support_holds_every_measured_start(small_table, env):
                 assert small_table.supports(entry, start)
 
 
+def test_a_rough_value_adds_up_the_steps_and_follows_the_weights(committed_table):
+    skills = ["brake", "touch_down"]
+    safety = committed_table.rough_value(skills, (1.0, 0.0))
+    fuel = committed_table.rough_value(skills, (0.0, 1.0))
+    assert safety > fuel
+    assert committed_table.rough_value(["no_such_step"], (0.5, 0.5)) == 0.0
+
+
 def test_a_state_outside_the_support_is_not_measured(small_table):
     entry = small_table.data["plans"][0]
     start = episode_start(entry["group"], range(4))

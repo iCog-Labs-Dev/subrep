@@ -174,6 +174,14 @@ def test_a_plan_that_ends_quickly_but_misses_the_pad_is_not_chosen(env, book, ta
     assert chosen.goal_rate >= 0.9
 
 
+def test_a_measuring_limit_is_recorded_and_still_needs_a_certificate(env, book, table):
+    run = run_goal(env, book, table, UPRIGHT_START_SEED, limit=1)
+    assert len(run.decisions[0].verdicts) == 1
+    assert run.decisions[0].skipped
+    record = run.record()["decisions"][0]
+    assert record["not_measured_by_limit"]
+
+
 def test_inputs_are_checked(env, book, table):
     observation, _ = env.reset(seed=0)
     with pytest.raises(ValueError, match="unknown goal"):

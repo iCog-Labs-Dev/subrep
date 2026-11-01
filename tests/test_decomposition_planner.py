@@ -10,7 +10,7 @@ import pytest
 import decomposition.planner as planner_module
 import decomposition.recipe_book as recipe_book_module
 from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, replay
-from decomposition.planner import ALREADY_TRUE, DIRECT, SEARCH, TO_ACHIEVE, goal_graph, plans_for, propose
+from decomposition.planner import ALREADY_TRUE, DIRECT, SEARCH, TO_ACHIEVE, generate, goal_graph, plans_for, propose
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, SCHEMA_VERSION, holds, load_recipe_book, parse_recipe_book
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
@@ -133,6 +133,45 @@ def test_the_planner_does_not_depend_on_any_environment():
         imported |= {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
         roots = {name.split(".")[0] for name in imported}
         assert not roots & {"env", "demo", "gymnasium", "mo_gymnasium", "numpy"}, module.__name__
+
+
+# Generating candidates under priorities
+
+
+def test_without_a_limit_every_candidate_is_kept_in_the_books_order():
+    generation = generate(toy_book(), ("g",), {})
+    assert [c.skills for c in generation.candidates] == [c.skills for c in propose(toy_book(), "g", {})]
+    assert generation.skipped == ()
+
+
+def test_a_limit_keeps_the_most_promising_plans_and_records_the_rest():
+    values = {("warm", "finish"): 1.0, ("cool", "finish"): 2.0}
+    generation = generate(toy_book(), ("g",), {}, rough_value=values.get, limit=1)
+    assert [c.skills for c in generation.candidates] == [("cool", "finish")]
+    assert [c.skills for c in generation.skipped] == [("warm", "finish")]
+
+
+def test_priorities_change_which_plans_a_limit_keeps():
+    weights_to_values = {
+        "warm_first": {("warm", "finish"): 2.0, ("cool", "finish"): 1.0},
+        "cool_first": {("warm", "finish"): 1.0, ("cool", "finish"): 2.0},
+    }
+    kept = {
+        name: generate(toy_book(), ("g",), {}, rough_value=values.get, limit=1).candidates[0].skills[0]
+        for name, values in weights_to_values.items()
+    }
+    assert kept == {"warm_first": "warm", "cool_first": "cool"}
+
+
+def test_a_limit_above_the_number_of_plans_changes_nothing():
+    assert generate(toy_book(), ("g",), {}, limit=10) == generate(toy_book(), ("g",), {})
+
+
+def test_a_limit_is_checked_and_needs_a_rough_value():
+    with pytest.raises(ValueError, match="at least 1"):
+        generate(toy_book(), ("g",), {}, limit=0)
+    with pytest.raises(ValueError, match="rough value"):
+        generate(toy_book(), ("g",), {}, limit=1)
 
 
 # The search that fills gaps
