@@ -34,7 +34,7 @@ from decomposition.verifier import (
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
-from env.lunar_subskills import NO_ENGINE, SUBSKILLS
+from env.lunar_subskills import NO_ENGINE
 
 # Level, over the pad and high up: x, y, vx, vy, angle, spin, left leg, right leg.
 OBSERVATION = np.array([0.0, 1.4, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0])
@@ -342,7 +342,7 @@ def episode_start(seed, actions=()):
 
 @pytest.fixture(scope="module")
 def lunar_book():
-    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
 
 
 @pytest.fixture(scope="module")

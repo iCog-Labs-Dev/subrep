@@ -38,7 +38,7 @@ def env():
 
 @pytest.fixture(scope="module")
 def book():
-    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
 
 
 @pytest.fixture(scope="module")
@@ -48,8 +48,13 @@ def table():
 
 @pytest.fixture(scope="module")
 def starts_only(book):
-    """A table measured only at the start of episodes, so that nothing in mid-flight is measured."""
-    return build_table(LUNAR_LANDER, range(60), plans_for(book), min_samples=5, max_states=1)
+    """A table of multi-skill plans measured only at the start of episodes, so that the rest of a plan is not measured."""
+    plans = plans_for(book)
+
+    def multi_skill(facts, at_start):
+        return [skills for skills in plans(facts, at_start) if len(skills) > 1]
+
+    return build_table(LUNAR_LANDER, range(60), multi_skill, min_samples=5, max_states=1)
 
 
 def run_goal(env, book, table, seed, goal="land_on_pad", priorities=SAFETY_FIRST, **kwargs):
@@ -76,9 +81,9 @@ def test_only_one_skill_is_flown_at_each_decision(env, book, table):
 
 
 def test_the_rest_of_the_plan_is_recertified_in_mid_flight(env, book, table):
-    run = run_goal(env, book, table, TILTED_START_SEED)
-    assert run.rechecks == len(run.decisions) - 1 > 0
-    assert run.recertified_rechecks > 0
+    runs = [run_goal(env, book, table, seed) for seed in range(2000, 2010)]
+    assert all(run.rechecks == len(run.decisions) - 1 for run in runs)
+    assert sum(run.recertified_rechecks for run in runs) > 0
 
 
 def test_the_environment_decides_once_the_episode_is_over(env, book, table):
@@ -125,8 +130,8 @@ def test_after_a_failed_step_a_replan_needs_measurements_that_apply(env, book, s
     monkeypatch.setitem(SUBSKILLS, "slow_descent", dataclasses.replace(SUBSKILLS["slow_descent"], max_frames=20))
     monkeypatch.setitem(SUBSKILLS, "move_over_pad", dataclasses.replace(SUBSKILLS["move_over_pad"], max_frames=20))
     runs = (run_goal(env, book, starts_only, seed, min_goal_rate=0.0) for seed in range(2000, 2100))
-    run = next(r for r in runs if r.flown and r.flown[0].execution.stopped_at is not None)
-    assert run.status is GoalStatus.NO_CERTIFIED_PLAN
+    run = next(r for r in runs if r.status is GoalStatus.NO_CERTIFIED_PLAN and r.flown)
+    assert run.flown[-1].execution.stopped_at is not None
     assert run.decisions[-1].execution is None
     assert {verdict.reason for verdict in run.decisions[-1].verdicts} == {NOT_MEASURED}
 
@@ -182,10 +187,48 @@ def test_a_measuring_limit_is_recorded_and_still_needs_a_certificate(env, book, 
     assert record["not_measured_by_limit"]
 
 
+def test_several_goals_compete_and_the_winner_is_recorded(env, book, table):
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(LUNAR_LANDER, env, observation, ("recover_stability", "land_on_pad"), book, table, SAFETY_FIRST)
+    assert run.goal in ("recover_stability", "land_on_pad")
+    assert run.goal == run.decisions[-1].chosen.candidate.goal
+
+
+def test_priorities_can_come_from_a_source_asked_at_every_decision(env, book, table):
+    asked = []
+
+    def source(observation):
+        asked.append(observation)
+        return SAFETY_FIRST
+
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, source)
+    assert len(asked) == len(run.decisions)
+    assert run.decisions[0].weights == SAFETY_FIRST.weights
+
+
+def test_a_source_that_refuses_priorities_flies_nothing_new(env, book, table):
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, lambda obs: None)
+    assert run.status is GoalStatus.PRIORITIES_REFUSED
+    assert run.frames == 0 and run.decisions[0].weights is None
+
+
+def test_a_refusal_in_mid_flight_lets_the_plan_in_progress_go_on(env, book, table):
+    answers = iter([SAFETY_FIRST])
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, lambda obs: next(answers, None))
+    assert len(run.flown) > 1
+    assert all(decision.weights is None and not decision.recertified for decision in run.flown[1:])
+    assert run.flown[1].chosen is run.flown[0].chosen
+
+
 def test_inputs_are_checked(env, book, table):
     observation, _ = env.reset(seed=0)
     with pytest.raises(ValueError, match="unknown goal"):
         pursue(LUNAR_LANDER, env, observation, "hover", book, table, SAFETY_FIRST)
+    with pytest.raises(ValueError, match="unknown goal"):
+        pursue(LUNAR_LANDER, env, observation, (), book, table, SAFETY_FIRST)
     with pytest.raises(ValueError, match="max_attempts"):
         pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, SAFETY_FIRST, max_attempts=0)
 

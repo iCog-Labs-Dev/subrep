@@ -14,6 +14,7 @@ from decomposition.recipe_book import (
     parse_recipe_book,
 )
 from demo.run_lunar_subskill_reliability import SEQUENCES
+from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import SUBSKILLS, run_subskill
@@ -38,7 +39,7 @@ def minimal_book():
 
 @pytest.fixture(scope="module")
 def lunar_book():
-    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
 
 
 @pytest.fixture(scope="module")
@@ -108,6 +109,7 @@ def _set(path, value):
         (_set(["skills", "step", "effects"], {"there": 1}), "true or false"),
         (_set(["skills", "step", "may_change"], ["there"]), "both an effect"),
         (_set(["skills", "step", "require"], {}), "unexpected keys"),
+        (_set(["skills", "step", "whole_episode"], "yes"), "whole_episode must be true or false"),
         (_set(["skills", "jump"], {"requires": {}, "effects": {}, "may_change": []}), "not skills"),
         (_set(["methods"], {}), "must be a list"),
         (_set(["methods", 0, "subgoals"], []), "at least one subgoal"),
@@ -133,7 +135,7 @@ def test_malformed_books_are_rejected(change, message):
 
 
 def test_lunar_book_covers_every_sub_skill(lunar_book):
-    assert set(lunar_book.skills) == set(SUBSKILLS)
+    assert set(lunar_book.skills) == set(LUNAR_LANDER.skills)
     assert set(lunar_book.goals) == {"land_on_pad", "recover_stability"}
 
 
@@ -172,7 +174,8 @@ def possible_facts():
 
 
 def test_lunar_book_effects_follow_from_how_each_sub_skill_stops(lunar_book):
-    for name, skill in lunar_book.skills.items():
+    for name in SUBSKILLS:
+        skill = lunar_book.skills[name]
         stops = [facts for facts in possible_facts() if SUBSKILLS[name].is_done(facts)]
         assert stops, name
         for facts in stops:

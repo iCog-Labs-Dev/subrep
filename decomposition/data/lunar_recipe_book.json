@@ -70,6 +70,18 @@
       "requires": {"slow": true},
       "effects": {"landed": true},
       "may_change": ["upright", "over_pad", "near_ground", "slow", "descent_underway"]
+    },
+    "heuristic_pilot": {
+      "whole_episode": true,
+      "requires": {},
+      "effects": {"landed": true, "over_pad": true},
+      "may_change": ["upright", "near_ground", "slow", "falling_fast", "descent_underway"]
+    },
+    "ppo_pilot": {
+      "whole_episode": true,
+      "requires": {},
+      "effects": {"landed": true, "over_pad": true},
+      "may_change": ["upright", "near_ground", "slow", "falling_fast", "descent_underway"]
     }
   }
 }

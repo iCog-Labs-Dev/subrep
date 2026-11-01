@@ -7,6 +7,7 @@ JSON. The seeds are shared out between processes, and the table does not depend
 on how many there are.
 
     python -m demo.build_lunar_effect_table
+    python -m demo.build_lunar_effect_table --mission
     python -m demo.build_lunar_effect_table --seeds 50 --output demo/artifacts/lunar_effects.json
 """
 
@@ -15,10 +16,14 @@ from __future__ import annotations
 import argparse
 import os
 from concurrent.futures import ProcessPoolExecutor
-from typing import List, Sequence
+from typing import List, Optional, Sequence, Tuple
 
+import torch
+
+from decomposition.domain import Domain
 from decomposition.effects import (
     DEFAULT_TABLE_PATH,
+    LUNAR_BEACON_TABLE,
     MAX_STATES_PER_SEED,
     EffectTable,
     SeedMeasurement,
@@ -26,26 +31,53 @@ from decomposition.effects import (
     table_from_measurements,
 )
 from decomposition.planner import plans_for
-from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
+from decomposition.recipe_book import LUNAR_BEACON_BOOK, LUNAR_LANDER_BOOK, RecipeBook, load_recipe_book
+from env.lunar_beacon import BEACON_FACT_NAMES, BEACON_MISSION, DEFAULT_BEACON, beacon_domain
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES
-from env.lunar_subskills import SUBSKILLS
+from env.lunar_pilots import mission_pilots
 
 DEFAULT_WORKERS = max(1, (os.cpu_count() or 2) // 2)
 _CHUNK = 20  # seeds handed to a process at a time
 
 
-def _measure(seeds: Sequence[int]) -> List[SeedMeasurement]:
-    book = load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
-    return measure_seeds(LUNAR_LANDER, seeds, plans_for(book), MAX_STATES_PER_SEED)
+def landing_book() -> RecipeBook:
+    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
 
 
-def build(seeds: range, workers: int = DEFAULT_WORKERS) -> EffectTable:
-    """Build the table for ``seeds``, in order whatever the number of processes."""
-    chunks = [list(seeds[start : start + _CHUNK]) for start in range(0, len(seeds), _CHUNK)]
+def mission_book() -> RecipeBook:
+    return load_recipe_book(LUNAR_BEACON_BOOK, BEACON_FACT_NAMES, BEACON_MISSION.skills)
+
+
+def _setup(beacon: Optional[Tuple[float, float]]) -> Tuple[Domain, RecipeBook]:
+    if beacon is None:
+        return LUNAR_LANDER, landing_book()
+    return beacon_domain(beacon, mission_pilots()), mission_book()
+
+
+def _measure(job: Tuple[Sequence[int], Optional[Tuple[float, float]]]) -> List[SeedMeasurement]:
+    seeds, beacon = job
+    torch.set_num_threads(1)  # each process runs one small network at a time
+    domain, book = _setup(beacon)
+    return measure_seeds(domain, seeds, plans_for(book), MAX_STATES_PER_SEED)
+
+
+def build(
+    seeds: range, beacon: Optional[Tuple[float, float]] = None, workers: int = DEFAULT_WORKERS
+) -> EffectTable:
+    """Build the table for ``seeds``, in order whatever the number of processes.
+
+    With a ``beacon``, the table is for the scan-then-land mission with the beacon there.
+    """
+    jobs = [(list(seeds[start : start + _CHUNK]), beacon) for start in range(0, len(seeds), _CHUNK)]
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        measured = [measurement for chunk in pool.map(_measure, chunks) for measurement in chunk]
-    return table_from_measurements(LUNAR_LANDER, seeds, measured)
+        measured = [measurement for chunk in pool.map(_measure, jobs) for measurement in chunk]
+    domain, _ = _setup(beacon)
+    return table_from_measurements(domain, seeds, measured)
+
+
+def build_mission_table(seeds: range, beacon: Tuple[float, float] = DEFAULT_BEACON) -> EffectTable:
+    return build(seeds, beacon)
 
 
 def to_text(table: EffectTable) -> str:
@@ -70,16 +102,18 @@ def to_text(table: EffectTable) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build the LunarLander effect table.")
-    parser.add_argument("--seeds", type=int, default=1000)
+    parser.add_argument("--seeds", type=int, default=2000)
     parser.add_argument("--start-seed", type=int, default=0)
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
-    parser.add_argument("--output", default=str(DEFAULT_TABLE_PATH))
+    parser.add_argument("--mission", action="store_true", help="build the table for the scan-then-land mission")
+    parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
-    table = build(range(args.start_seed, args.start_seed + args.seeds), args.workers)
-    table.save(args.output)
+    seeds = range(args.start_seed, args.start_seed + args.seeds)
+    table = build(seeds, DEFAULT_BEACON if args.mission else None, args.workers)
+    table.save(args.output or (LUNAR_BEACON_TABLE if args.mission else DEFAULT_TABLE_PATH))
     print(to_text(table))
-    print(f"wrote {args.output}")
+    print("wrote the table")
 
 
 if __name__ == "__main__":

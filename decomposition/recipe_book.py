@@ -11,7 +11,9 @@ network (HGN):
   subgoal is what it achieves;
 - a skill has the facts it requires, the facts it makes true or false
   (``effects``), and the facts it may change unpredictably (``may_change``).
-  Facts a skill does not mention keep their value.
+  Facts a skill does not mention keep their value. A ``whole_episode`` skill is a
+  controller that flies from the start of an episode to its end, so it can only
+  be a whole plan by itself.
 
 The book is checked against the fact and skill names the caller provides, so this
 module does not depend on any environment.
@@ -26,6 +28,7 @@ from typing import AbstractSet, Collection, Dict, Mapping, Set, Tuple, Union
 
 SCHEMA_VERSION = "subrep.recipe_book.v2"
 LUNAR_LANDER_BOOK = Path(__file__).resolve().parent / "data" / "lunar_recipe_book.json"
+LUNAR_BEACON_BOOK = Path(__file__).resolve().parent / "data" / "lunar_beacon_recipe_book.json"
 
 Facts = Mapping[str, bool]
 
@@ -47,6 +50,7 @@ class Skill:
     requires: Dict[str, bool]
     effects: Dict[str, bool]
     may_change: Tuple[str, ...]
+    whole_episode: bool = False
 
     def apply(self, facts: Facts) -> Dict[str, bool]:
         """The facts known after this skill completes from a state with ``facts``."""
@@ -147,13 +151,16 @@ def _conditions(spec: object, facts: Set[str], where: str) -> Dict[str, bool]:
 
 def _skill(name: str, spec: Mapping, facts: Set[str]) -> Skill:
     where = f"skill {name}"
-    _check_keys(spec, where, required={"requires", "effects", "may_change"})
+    _check_keys(spec, where, required={"requires", "effects", "may_change"}, optional={"whole_episode"})
     effects = _conditions(spec["effects"], facts, f"{where} effects")
     may_change = _fact_names(spec["may_change"], facts, f"{where} may_change")
     both = sorted(set(effects) & set(may_change))
     if both:
         raise RecipeBookError(f"{where} lists {both} as both an effect and a fact it may change")
-    return Skill(name, _conditions(spec["requires"], facts, f"{where} requires"), effects, may_change)
+    whole_episode = spec.get("whole_episode", False)
+    if not isinstance(whole_episode, bool):
+        raise RecipeBookError(f"{where} whole_episode must be true or false")
+    return Skill(name, _conditions(spec["requires"], facts, f"{where} requires"), effects, may_change, whole_episode)
 
 
 def _method(spec: Mapping, facts: Set[str]) -> Method:

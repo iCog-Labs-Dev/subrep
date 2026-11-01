@@ -10,12 +10,11 @@ from decomposition.executor import execute
 from decomposition.feedback import REVOKED_REASON, CertificateStatus, FeedbackLog, realised_gains
 from decomposition.planner import propose
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
-from decomposition.runtime import pursue
+from decomposition.runtime import DEFAULT_MIN_GOAL_RATE, pursue
 from decomposition.verifier import MdnRegion, Priorities, best_plan, plan_skill_id, verify
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
-from env.lunar_subskills import SUBSKILLS
 
 SEED = 0
 SAFETY_FIRST = Priorities(
@@ -38,7 +37,7 @@ def env():
 
 @pytest.fixture(scope="module")
 def book():
-    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
 
 
 @pytest.fixture(scope="module")
@@ -55,7 +54,7 @@ def start(env):
 @pytest.fixture
 def verdicts(book, table, start):
     observation, facts = start
-    return verify(propose(book, "land_on_pad", facts), observation, table, SAFETY_FIRST)
+    return verify(propose(book, "land_on_pad", facts), observation, table, SAFETY_FIRST, min_goal_rate=DEFAULT_MIN_GOAL_RATE)
 
 
 def shifted(gains, by, count, spread=1.0):
@@ -74,7 +73,7 @@ def certified_gains(verdict):
 def test_realised_gains_match_the_paired_measurement_of_the_same_flight(env):
     skills = ["stabilise", "move_over_pad", "slow_descent", "touch_down"]
     observation, _ = env.reset(seed=SEED)
-    execution = execute(LUNAR_LANDER, env, load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS), skills, observation)
+    execution = execute(LUNAR_LANDER, env, load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills), skills, observation)
     realised = realised_gains(LUNAR_LANDER, env, SEED, execution.rewards)
     measured = fly_plan(LUNAR_LANDER, env, SEED, skills).plan
     assert realised.delta_r == pytest.approx(measured.delta_r)
@@ -87,7 +86,7 @@ def test_realised_gains_from_mid_flight_start_at_that_state(env):
     prefix = flight.next_states[0]
     rest = fly_plan(LUNAR_LANDER, env, SEED, skills[1:], prefix)
     start = replay(env, SEED, prefix)
-    execution = execute(LUNAR_LANDER, env, load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS), skills[1:], start)
+    execution = execute(LUNAR_LANDER, env, load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills), skills[1:], start)
     realised = realised_gains(LUNAR_LANDER, env, SEED, execution.rewards, prefix)
     assert realised.delta_r == pytest.approx(rest.plan.delta_r)
 
@@ -129,7 +128,8 @@ def test_a_few_bad_outcomes_do_not_revoke_a_certificate(verdicts, start):
 
 def test_only_admitted_plans_can_be_recorded(book, table, start):
     observation, facts = start
-    rejected = verify(propose(book, "land_on_pad", facts), observation, table, Priorities(weights=(0.5, 0.5)))[0]
+    rejected = verify(propose(book, "land_on_pad", facts), observation, table, SAFETY_FIRST, min_goal_rate=1.0)[0]
+    assert not rejected.admitted
     with pytest.raises(ValueError, match="admitted"):
         FeedbackLog(LUNAR_LANDER).record(rejected, facts, Gains(0.0, (0.0, 0.0)))
 

@@ -20,7 +20,9 @@ The evaluation also checks the measurements behind the certificates:
 - ``recover_stability`` is pursued from every tilted start.
 
 The seeds must not overlap those the effect table was built from, and every
-episode's result is kept so that any failure can be traced to its seed.
+episode's result is kept so that any failure can be traced to its seed. The
+criteria at the top of this file were written before the evaluation seeds were
+flown, and the report says which of them were met.
 
     python -m demo.run_goal_decomposition_eval
     python -m demo.run_goal_decomposition_eval --seeds 50 --start-seed 5000
@@ -37,42 +39,40 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 
+from decomposition.domain import Domain
 from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, build_table
 from decomposition.executor import execute
 from decomposition.feedback import FeedbackLog, realised_gains
+from decomposition.mdn_priorities import priorities_from_weights
 from decomposition.planner import plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, RecipeBook, load_recipe_book
 from decomposition.runtime import GoalRun, GoalStatus, pursue
-from decomposition.verifier import MdnRegion, Priorities
+from decomposition.verifier import Priorities
 from demo.run_lunar_baseline import CONTROLLERS, EpisodeResult, run_episode, summarise
 from demo.run_lunar_subskill_reliability import SEQUENCES
+from demo.train_lunar_mdn import load_landing_mdn
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, OUTCOMES, landing_outcome, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
-from env.lunar_subskills import NO_ENGINE, SUBSKILLS
+from env.lunar_subskills import NO_ENGINE
 
 GOAL = "land_on_pad"
 _GAINS = ("delta_r", "delta_safety", "delta_fuel")
-# The effect table was built from seeds 0-999, so the evaluation starts after them.
-DEFAULT_START_SEED = 2000
+# The table was built from seeds 0-999. Seeds 2000-2499 and 6000-6499 were looked at
+# while reviewing the plans, and 3000-3199 while tuning skills, so these are fresh.
+DEFAULT_START_SEED = 8000
 DEFAULT_SEEDS = 500
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 
-
-def _region(fuel_cap: float, alpha: Sequence[float]) -> MdnRegion:
-    """An MDN region over (Safety, Fuel) that caps the Fuel weight."""
-    return MdnRegion(
-        context=(0.0,),
-        alpha=tuple(alpha),
-        support_directions=((1.0, 0.0), (0.0, 1.0)),
-        support_values=(1.0, fuel_cap),
-    )
-
+# Written before the evaluation seeds were flown.
+MIN_ON_PAD = 0.95
+MAX_CRASHES = 0.02
+MIN_RECERTIFIED = 0.90
 
 PROFILES: Dict[str, Priorities] = {
-    "safety_first": Priorities(weights=(0.7, 0.3), cvar_tail_level=0.1, region=_region(0.3, (4.0, 1.0))),
-    "balanced": Priorities(weights=(0.5, 0.5), region=_region(0.5, (2.0, 2.0))),
-    "fuel_first": Priorities(weights=(0.3, 0.7), cvar_tail_level=0.1, region=_region(0.7, (1.0, 4.0))),
+    "safety_first": priorities_from_weights((0.7, 0.3), cvar_tail_level=0.1),
+    "balanced": priorities_from_weights((0.5, 0.5)),
+    "fuel_first": priorities_from_weights((0.3, 0.7), cvar_tail_level=0.1),
     "no_region": Priorities(weights=(0.5, 0.5)),
 }
 
@@ -118,9 +118,9 @@ def fixed_sequence_episode(env: SubRepEnv, book: RecipeBook, skills: Sequence[st
 
 
 def evaluate_profile(
-    env: SubRepEnv, book: RecipeBook, table: EffectTable, priorities: Priorities, seeds: Sequence[int]
+    env: SubRepEnv, book: RecipeBook, table: EffectTable, priorities: Any, seeds: Sequence[int]
 ) -> Dict[str, Any]:
-    """Pursue the goal from every seed under one priority profile."""
+    """Pursue the goal from every seed under one source of priorities."""
     episodes: List[EpisodeResult] = []
     statuses: Counter = Counter()
     first_plans: Counter = Counter()
@@ -157,7 +157,7 @@ def evaluate_profile(
             checked = [step.prediction_held for step in decision.execution.steps if step.prediction_held is not None]
             predictions_checked += len(checked)
             predictions_held += sum(checked)
-        record_followed_plans(feedback, env, seed, run)
+        record_followed_plans(LUNAR_LANDER, feedback, env, seed, run)
 
     return {
         "summary": summarise(episodes),
@@ -174,7 +174,7 @@ def evaluate_profile(
     }
 
 
-def record_followed_plans(feedback: FeedbackLog, env: SubRepEnv, seed: int, run: GoalRun) -> None:
+def record_followed_plans(domain: Domain, feedback: FeedbackLog, env: Any, seed: int, run: GoalRun) -> None:
     """Record what each certified plan really achieved, for those flown to the end from where they were certified."""
     frames = 0
     followed_from = _last_change(run)
@@ -182,7 +182,7 @@ def record_followed_plans(feedback: FeedbackLog, env: SubRepEnv, seed: int, run:
         if decision.recertified and index >= followed_from:
             start = run.actions[:frames]
             feedback.record(
-                decision.chosen, decision.facts, realised_gains(LUNAR_LANDER, env, seed, run.rewards[frames:], start)
+                decision.chosen, decision.facts, realised_gains(domain, env, seed, run.rewards[frames:], start)
             )
         frames += decision.execution.frames
 
@@ -256,6 +256,7 @@ def evaluate(
     seeds: range,
     profiles: Mapping[str, Priorities] = PROFILES,
     baselines: Sequence[str] = tuple(CONTROLLERS),
+    use_mdn: bool = True,
 ) -> Dict[str, Any]:
     """Fly every controller from every seed and check the measurements behind the certificates."""
     table = EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
@@ -267,7 +268,7 @@ def evaluate(
             f"evaluation seeds {seeds.start}-{seeds.stop - 1} overlap seeds {measured.start}-{measured.stop - 1}, "
             "which the effect table was built from"
         )
-    book = load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    book = load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
     env = SubRepEnv(seed=int(seeds[0]))
     controllers: Dict[str, Dict[str, Any]] = {}
     goal_runs: Dict[str, Dict[str, Any]] = {}
@@ -281,11 +282,14 @@ def evaluate(
         for name, priorities in profiles.items():
             goal_runs[name] = evaluate_profile(env, book, table, priorities, [int(seed) for seed in seeds])
             controllers[f"runtime_{name}"] = {"summary": goal_runs[name]["summary"]}
+        if use_mdn:
+            goal_runs["mdn"] = evaluate_profile(env, book, table, load_landing_mdn(), [int(seed) for seed in seeds])
+            controllers["runtime_mdn"] = {"summary": goal_runs["mdn"]["summary"]}
         recovery = check_recovery(env, book, table, PROFILES["safety_first"], [int(seed) for seed in seeds])
     finally:
         env.close()
 
-    return {
+    report = {
         "seeds": {"start": int(seeds[0]), "count": len(seeds)},
         "goal": GOAL,
         "profiles": {name: _profile_record(p) for name, p in profiles.items()},
@@ -294,6 +298,33 @@ def evaluate(
         "table_check": check_table(table, book, seeds),
         "recover_stability": recovery,
     }
+    report["criteria"] = check_criteria(report)
+    return report
+
+
+def check_criteria(report: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """Each criterion written before the evaluation, with its result."""
+    if "safety_first" not in report["goal_runs"]:
+        return []
+    run = report["goal_runs"]["safety_first"]
+    summary = run["summary"]
+    revoked = [e for each in report["goal_runs"].values() for e in each["feedback"] if e["status"] == "revoked"]
+    below = [row for row in report["table_check"] if row["below_committed_lower"]]
+    recertified = run["recertified_rechecks"] / max(1, run["rechecks"])
+    predictions = run["predictions"]
+    held = predictions["held"] / max(1, predictions["checked"])
+    return [
+        _criterion("On the pad under safety-first priorities", summary["landed_on_pad_rate"], f">= {MIN_ON_PAD}", summary["landed_on_pad_rate"] >= MIN_ON_PAD),
+        _criterion("Crashes under safety-first priorities", summary["crashed_rate"], f"<= {MAX_CRASHES}", summary["crashed_rate"] <= MAX_CRASHES),
+        _criterion("Mid-flight re-checks admitted from the real state", recertified, f">= {MIN_RECERTIFIED}", recertified >= MIN_RECERTIFIED),
+        _criterion("Book predictions that held", held, ">= 0.99", held >= 0.99),
+        _criterion("Certificates revoked by what really happened", len(revoked), "== 0", not revoked),
+        _criterion("Table entries whose unseen mean fell below the committed bound", len(below), "report only", True),
+    ]
+
+
+def _criterion(name: str, value: float, needed: str, met: bool) -> Dict[str, Any]:
+    return {"criterion": name, "value": float(value), "needed": needed, "met": bool(met)}
 
 
 def _results(episodes: Sequence[EpisodeResult]) -> Dict[str, Any]:
@@ -323,6 +354,15 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         f"Goal `{report['goal']}`, seeds {seeds['start']}-{seeds['start'] + seeds['count'] - 1} "
         f"({seeds['count']} episodes per controller).",
+        "",
+        "## Criteria written before the evaluation",
+        "",
+        "| Criterion | Value | Needed | Met |",
+        "|---|---|---|---|",
+        *(
+            f"| {row['criterion']} | {row['value']:.3f} | {row['needed']} | {'yes' if row['met'] else 'NO'} |"
+            for row in report["criteria"]
+        ),
         "",
         "## Controllers",
         "",

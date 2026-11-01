@@ -53,7 +53,7 @@ def realised_gains(
     """
     rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives)
     replay(env, seed, start)
-    delta_r, delta_n = improvement(rewards, idle_rewards(domain, env, len(rewards)))
+    delta_r, delta_n = improvement(rewards, idle_rewards(domain, env, len(rewards)), domain.gamma)
     return Gains(delta_r, delta_n)
 
 

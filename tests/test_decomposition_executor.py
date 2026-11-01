@@ -28,7 +28,7 @@ def env():
 
 @pytest.fixture(scope="module")
 def book():
-    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
 
 
 def start(env, seed):
@@ -78,7 +78,7 @@ def test_a_wrong_prediction_is_recorded_and_the_plan_goes_on(env):
     data = json.loads(LUNAR_LANDER_BOOK.read_text(encoding="utf-8"))
     data["skills"]["stabilise"]["may_change"].remove("near_ground")
     data["skills"]["stabilise"]["effects"]["near_ground"] = True
-    wrong_book = parse_recipe_book(data, FACT_NAMES, SUBSKILLS)
+    wrong_book = parse_recipe_book(data, FACT_NAMES, LUNAR_LANDER.skills)
     execution = execute(LUNAR_LANDER, env, wrong_book, CAREFUL[:2], start(env, TILTED_START_SEED))
     assert execution.steps[0].prediction_held is False
     assert execution.completed

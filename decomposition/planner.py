@@ -7,9 +7,12 @@ of conditions on facts, while tracking which facts are known:
 - a subgoal that already holds is skipped;
 - a method applies to a subgoal when its last subgoal is that subgoal and its
   requirements are known to hold, and its subgoals are then pursued in order;
-- a skill applies when its requirements are known to hold and its effects make
-  all of the subgoal true. One that makes only part of it true, without
-  contradicting the rest, applies only when no method or whole skill does;
+- a skill applies when its requirements are known to hold and it finishes the
+  subgoal: each condition is then known true or may have been made true by the
+  skill. One that makes only part of it true, without contradicting the rest,
+  applies only when no method or finishing skill does;
+- a whole-episode skill is only ever a whole plan by itself, offered from the
+  start of an episode;
 - when nothing applies, a short search over the skills chains from the known
   facts to the subgoal. This is GoDeL's action chaining; its landmark inference
   is not implemented.
@@ -90,8 +93,11 @@ class _Partial:
     searched: bool
 
 
-def propose(book: RecipeBook, goal: str, facts: Facts) -> List[CandidatePlan]:
+def propose(book: RecipeBook, goal: str, facts: Facts, at_start: bool = True) -> List[CandidatePlan]:
     """Every distinct plan that may achieve ``goal`` from ``facts``.
+
+    ``at_start`` says whether this is the start of an episode, the only place a
+    whole-episode skill can begin.
 
     Returns an empty list when nothing applies, or when a goal that is not
     terminal already holds; a terminal goal is achieved only by how the episode
@@ -107,7 +113,7 @@ def propose(book: RecipeBook, goal: str, facts: Facts) -> List[CandidatePlan]:
     subgoal = _key(target.achieved_when)
     candidates: List[CandidatePlan] = []
     seen = set()
-    for partial in _Search(book, target).solve((subgoal,), dict(facts), frozenset()):
+    for partial in _Search(book, target, at_start).solve((subgoal,), dict(facts), frozenset()):
         if not partial.skills or partial.skills in seen:
             continue
         seen.add(partial.skills)
@@ -140,6 +146,7 @@ def generate(
     facts: Facts,
     rough_value: Optional[Callable[[Tuple[str, ...]], float]] = None,
     limit: Optional[int] = None,
+    at_start: bool = True,
 ) -> Generation:
     """The distinct candidate plans for ``goals``, the first goal's plan winning when two share their skills.
 
@@ -151,7 +158,7 @@ def generate(
         raise ValueError(f"limit must be at least 1, got {limit}")
     candidates: Dict[Tuple[str, ...], CandidatePlan] = {}
     for goal in goals:
-        for candidate in propose(book, goal, facts):
+        for candidate in propose(book, goal, facts, at_start):
             candidates.setdefault(candidate.skills, candidate)
     plans = list(candidates.values())
     if limit is None or len(plans) <= limit:
@@ -163,11 +170,11 @@ def generate(
 
 
 def plans_for(book: RecipeBook, goals: Optional[Sequence[str]] = None):
-    """A function from facts to the distinct skill lists the planner proposes for ``goals``."""
+    """A function from a state's facts, and whether it starts an episode, to the distinct skill lists proposed."""
     names = list(book.goals) if goals is None else list(goals)
 
-    def plans(facts: Facts) -> List[Tuple[str, ...]]:
-        found = (candidate.skills for goal in names for candidate in propose(book, goal, facts))
+    def plans(facts: Facts, at_start: bool = True) -> List[Tuple[str, ...]]:
+        found = (candidate.skills for goal in names for candidate in propose(book, goal, facts, at_start))
         return list(dict.fromkeys(found))
 
     return plans
@@ -217,9 +224,10 @@ def _contributes(skill: Skill, subgoal: _Subgoal, facts: Facts) -> bool:
 class _Search:
     """Works through an agenda of subgoals for one goal of one book."""
 
-    def __init__(self, book: RecipeBook, target: Goal) -> None:
+    def __init__(self, book: RecipeBook, target: Goal, at_start: bool) -> None:
         self.book = book
         self.terminal = _key(target.achieved_when) if target.terminal else None
+        self.at_start = at_start
 
     def solve(
         self, agenda: Tuple[Union[_Subgoal, _MethodEnd], ...], facts: Dict[str, bool], active: FrozenSet[_Subgoal]
@@ -243,7 +251,7 @@ class _Search:
         for partial in self._by_method(head, rest, facts, active):
             found = True
             yield partial
-        for partial in self._by_skill(head, rest, facts, active, whole_only=found):
+        for partial in self._by_skill(head, rest, facts, active, finishing_only=found):
             found = True
             yield partial
         if not found:
@@ -261,16 +269,17 @@ class _Search:
                     yield replace(partial, methods=(method.name,) + partial.methods)
 
     def _by_skill(
-        self, head: _Subgoal, rest: tuple, facts: Dict[str, bool], active: FrozenSet[_Subgoal], whole_only: bool
+        self, head: _Subgoal, rest: tuple, facts: Dict[str, bool], active: FrozenSet[_Subgoal], finishing_only: bool
     ) -> Iterator[_Partial]:
         unmet = _not_known_true(head, facts)
+        alone = self.at_start and not active and not rest  # nothing has been flown, and nothing would follow
         usable = [
             skill
             for skill in self.book.skills.values()
-            if holds(skill.requires, facts) and _contributes(skill, head, facts)
+            if (alone or not skill.whole_episode) and holds(skill.requires, facts) and _contributes(skill, head, facts)
         ]
-        whole = [skill for skill in usable if all(skill.effects.get(name) is value for name, value in unmet)]
-        for skill in whole if whole or whole_only else usable:
+        finishing = [skill for skill in usable if _may_hold_after(skill, head, skill.apply(facts))]
+        for skill in finishing if finishing or finishing_only else usable:
             after = skill.apply(facts)
             if _may_hold_after(skill, head, after):
                 remaining = rest
@@ -290,7 +299,7 @@ class _Search:
             next_frontier = []
             for skills, known in frontier:
                 for skill in self.book.skills.values():
-                    if not holds(skill.requires, known):
+                    if skill.whole_episode or not holds(skill.requires, known):
                         continue
                     after = skill.apply(known)
                     if _contributes(skill, head, known) and _may_hold_after(skill, head, after):

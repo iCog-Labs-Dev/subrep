@@ -50,7 +50,7 @@ def episode_start(group, seeds=range(1000)):
     raise AssertionError(f"no episode start in group {group}")
 
 
-def both_plans(facts):
+def both_plans(facts, at_start):
     return [CAREFUL, FUEL_SAVING]
 
 
@@ -141,9 +141,10 @@ def test_a_flight_lists_the_states_the_runtime_would_decide_at(env):
 
 
 def test_measuring_a_seed_visits_the_states_along_each_plan(env):
-    flights = measure_seed(LUNAR_LANDER, env, TILTED_START_SEED, lambda facts: [CAREFUL[-2:]])
+    flights = measure_seed(LUNAR_LANDER, env, TILTED_START_SEED, lambda facts, at_start: [CAREFUL[-2:]])
     assert flights[0].prefix == () and flights[0].skills == tuple(CAREFUL[-2:])
-    assert {flight.prefix for flight in flights} == {(), *flights[0].next_states[:2]} or len(flights) > 1
+    assert flights[0].next_states
+    assert {flight.prefix for flight in flights} == {(), *flights[0].next_states}
     assert all(flight.steps == () for flight in flights if flight.prefix)
 
 
@@ -155,7 +156,7 @@ def test_a_flight_from_mid_flight_measures_only_the_whole_plan(env):
 
 
 def test_measuring_a_seed_stops_at_its_state_limit(env):
-    flights = measure_seed(LUNAR_LANDER, env, TILTED_START_SEED, lambda facts: [CAREFUL[-2:]], max_states=1)
+    flights = measure_seed(LUNAR_LANDER, env, TILTED_START_SEED, lambda facts, at_start: [CAREFUL[-2:]], max_states=1)
     assert {flight.prefix for flight in flights} == {()}
 
 
@@ -265,12 +266,22 @@ def test_the_support_holds_every_measured_start(small_table, env):
                 assert small_table.supports(entry, start)
 
 
-def test_a_rough_value_adds_up_the_steps_and_follows_the_weights(committed_table):
+def test_a_rough_value_follows_the_weights(committed_table):
     skills = ["brake", "touch_down"]
-    safety = committed_table.rough_value(skills, (1.0, 0.0))
-    fuel = committed_table.rough_value(skills, (0.0, 1.0))
-    assert safety > fuel
+    assert committed_table.rough_value(skills, (1.0, 0.0)) > committed_table.rough_value(skills, (0.0, 1.0))
     assert committed_table.rough_value(["no_such_step"], (0.5, 0.5)) == 0.0
+
+
+def test_a_rough_value_uses_the_whole_plan_and_adds_up_steps_only_if_it_was_never_measured(committed_table):
+    weights = (0.5, 0.5)
+    measured = [entry for entry in committed_table.data["plans"] if entry["name"] == "slow_descent>touch_down"]
+    assert committed_table.rough_value(["slow_descent", "touch_down"], weights) == pytest.approx(
+        committed_table._mean_value(measured, weights)
+    )
+    never_flown = ["heuristic_pilot", "heuristic_pilot"]
+    assert committed_table.rough_value(never_flown, weights) == pytest.approx(
+        2 * committed_table.rough_value(["no_such_plan", "heuristic_pilot"], weights)
+    )
 
 
 def test_a_state_outside_the_support_is_not_measured(small_table):
@@ -292,6 +303,8 @@ def test_the_table_checks_its_format(small_table):
         EffectTable({**small_table.data, "group_facts": ["upright"]}, LUNAR_LANDER)
     with pytest.raises(ValueError, match="objectives"):
         EffectTable({**small_table.data, "objectives": ["safety"]}, LUNAR_LANDER)
+    with pytest.raises(ValueError, match="discounts by"):
+        EffectTable({**small_table.data, "gamma": 0.5}, LUNAR_LANDER)
     with pytest.raises(KeyError):
         EffectTable({key: value for key, value in small_table.data.items() if key != "support_margin"}, LUNAR_LANDER)
 
@@ -300,7 +313,7 @@ def test_the_table_checks_its_format(small_table):
 
 
 def test_committed_table_covers_every_plan_from_unseen_episode_starts(committed_table, env):
-    plans = plans_for(load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS))
+    plans = plans_for(load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills))
     unseen = range(committed_table.data["seeds"]["stop"], committed_table.data["seeds"]["stop"] + 30)
     for seed in unseen:
         start = replay(env, seed, ())
@@ -310,7 +323,7 @@ def test_committed_table_covers_every_plan_from_unseen_episode_starts(committed_
 
 def test_committed_table_answers_from_states_reached_in_mid_flight(committed_table, env):
     unseen = committed_table.data["seeds"]["stop"]
-    plans = plans_for(load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS))
+    plans = plans_for(load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills))
     answered = 0
     for seed in range(unseen, unseen + 30):
         flight = fly_plan(LUNAR_LANDER, env, seed, CAREFUL)

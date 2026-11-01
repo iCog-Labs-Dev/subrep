@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 import numpy as np
 
 Facts = Dict[str, bool]
+GAMMA = 0.99
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class Domain:
     outcome: Callable[[Mapping[str, Any], np.ndarray], str]  # (final info, final observation) -> outcome
     final_facts: Callable[[Optional[Mapping[str, Any]], np.ndarray], Optional[Facts]]  # None unless confirmed
     make_env: Callable[[int], Any]
+    gamma: float = GAMMA  # the discount of every measurement; its horizon should span the plans it compares
 
     @property
     def num_objectives(self) -> int:

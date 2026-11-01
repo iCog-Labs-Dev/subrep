@@ -53,11 +53,10 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 import numpy as np
 
 from baseline.improvement_calculator import ImprovementCalculator
-from decomposition.domain import Domain
+from decomposition.domain import GAMMA, Domain
 
 SCHEMA_VERSION = "subrep.effects.v3"
 BASELINE_ID = "idle_policy_v1"
-GAMMA = 0.99
 CONFIDENCE = 0.95
 BOOTSTRAP_RESAMPLES = 2000
 MIN_SAMPLES = 30
@@ -65,12 +64,15 @@ MAX_STATES_PER_SEED = 60  # bounds the states measured per seed when plans keep 
 # Fraction of each observation range added on both sides of a group's support.
 SUPPORT_MARGIN = 0.05
 DEFAULT_TABLE_PATH = Path(__file__).resolve().parent / "data" / "lunar_effects.json"
+LUNAR_BEACON_TABLE = Path(__file__).resolve().parent / "data" / "lunar_beacon_effects.json"
 
 IN_FLIGHT = "in_flight"
 
 _DECIMALS = 6
 
 T = TypeVar("T")
+# (facts of a state, whether it is the start of an episode) -> the skill lists to measure from it
+PlansAt = Callable[[Mapping[str, bool], bool], Sequence[Sequence[str]]]
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +114,12 @@ def discounted_totals(rewards: np.ndarray, gamma: float = GAMMA) -> Tuple[float,
     return float(motives.sum()), motives
 
 
-def improvement(rewards: np.ndarray, baseline_rewards: np.ndarray) -> Tuple[float, Tuple[float, ...]]:
+def improvement(
+    rewards: np.ndarray, baseline_rewards: np.ndarray, gamma: float = GAMMA
+) -> Tuple[float, Tuple[float, ...]]:
     """Payoff gain Δr and motive gains Δn of ``rewards`` over ``baseline_rewards``."""
-    payoff, motives = discounted_totals(rewards)
-    baseline_payoff, baseline_motives = discounted_totals(baseline_rewards)
+    payoff, motives = discounted_totals(rewards, gamma)
+    baseline_payoff, baseline_motives = discounted_totals(baseline_rewards, gamma)
     calculator = ImprovementCalculator({"baseline_payoff": baseline_payoff, "baseline_motives": baseline_motives})
     delta_r, delta_n = calculator.compute_improvements(payoff, motives)
     return float(delta_r), tuple(float(value) for value in delta_n)
@@ -232,13 +236,13 @@ def fly_plan(
 
     plan_rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives)
     replay(env, seed, prefix)
-    delta_r, delta_n = improvement(plan_rewards, idle_rewards(domain, env, len(plan_rewards)))
+    delta_r, delta_n = improvement(plan_rewards, idle_rewards(domain, env, len(plan_rewards)), domain.gamma)
     plan = _sample(domain, plan_key(skills), plan_start, delta_r, delta_n, len(plan_rewards), completed)
 
     steps = []
     for frames_before, start, run in runs if not prefix else ():
         replay(env, seed, tuple(actions[:frames_before]))
-        delta_r, delta_n = improvement(run.rewards, idle_rewards(domain, env, run.frames))
+        delta_r, delta_n = improvement(run.rewards, idle_rewards(domain, env, run.frames), domain.gamma)
         steps.append(_sample(domain, run.skill, start, delta_r, delta_n, run.frames, run.completed))
 
     return PlanFlight(
@@ -256,12 +260,12 @@ def measure_seed(
     domain: Domain,
     env: Any,
     seed: int,
-    plans_at: Callable[[Mapping[str, bool]], Sequence[Sequence[str]]],
+    plans_at: PlansAt,
     max_states: int = MAX_STATES_PER_SEED,
 ) -> List[PlanFlight]:
     """Fly every plan proposed at the start of episode ``seed`` and at the states after each of their skills."""
     flights = [
-        fly_plan(domain, env, seed, skills) for skills in plans_at(domain.facts(replay(env, seed, ())))
+        fly_plan(domain, env, seed, skills) for skills in plans_at(domain.facts(replay(env, seed, ())), True)
     ]
     seen = {()}
     for flight in tuple(flights):
@@ -269,7 +273,7 @@ def measure_seed(
             if state in seen or len(seen) >= max_states:
                 continue
             seen.add(state)
-            for skills in plans_at(domain.facts(replay(env, seed, state))):
+            for skills in plans_at(domain.facts(replay(env, seed, state)), False):
                 flights.append(fly_plan(domain, env, seed, skills, state))
     return flights
 
@@ -350,7 +354,7 @@ class SeedMeasurement:
 def measure_seeds(
     domain: Domain,
     seeds: Iterable[int],
-    plans_at: Callable[[Mapping[str, bool]], Sequence[Sequence[str]]],
+    plans_at: PlansAt,
     max_states: int = MAX_STATES_PER_SEED,
 ) -> List[SeedMeasurement]:
     """Measure every plan at every decision state of ``seeds``.
@@ -377,7 +381,7 @@ def measure_seeds(
 def build_table(
     domain: Domain,
     seeds: range,
-    plans_at: Callable[[Mapping[str, bool]], Sequence[Sequence[str]]],
+    plans_at: PlansAt,
     min_samples: int = MIN_SAMPLES,
     max_states: int = MAX_STATES_PER_SEED,
 ) -> "EffectTable":
@@ -425,7 +429,7 @@ def table_from_measurements(
             "environment": domain.environment,
             "objectives": list(objectives),
             "baseline_id": BASELINE_ID,
-            "gamma": GAMMA,
+            "gamma": domain.gamma,
             "confidence": CONFIDENCE,
             "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
             "min_samples": min_samples,
@@ -490,6 +494,8 @@ class EffectTable:
             raise ValueError(f"table groups by {data['group_facts']}, expected {list(domain.group_facts)}")
         if tuple(data["objectives"]) != domain.objectives:
             raise ValueError(f"table measures objectives {data['objectives']}, expected {list(domain.objectives)}")
+        if data["gamma"] != domain.gamma:
+            raise ValueError(f"table discounts by {data['gamma']}, expected {domain.gamma}")
         self.domain = domain
         self.data = dict(data)
         self.min_samples = int(data["min_samples"])
@@ -515,15 +521,23 @@ class EffectTable:
         return self._estimate(self._plans.get((plan_key(skills), self._group_of(observation))), observation)
 
     def rough_value(self, skills: Sequence[str], weights: Sequence[float]) -> float:
-        """A rough worth of a plan under ``weights``: its steps' mean gains, over all states, added up.
+        """A rough worth of a plan under ``weights``: its mean gains over all states it was measured from.
 
-        Adding steps up overstates a plan, so this can only order plans to measure.
-        It never certifies one. A step without measurements counts as nothing.
+        A plan never measured counts as its steps added up, and a step never measured
+        as nothing. This can only order plans to measure. It never certifies one.
         """
-        return float(sum(self._step_value(skill, weights) for skill in skills))
+        name = plan_key(skills)
+        measured = [entry for (plan, _), entry in self._plans.items() if plan == name]
+        if measured:
+            return self._mean_value(measured, weights)
+        return float(
+            sum(
+                self._mean_value([entry for (step, _), entry in self._steps.items() if step == skill], weights)
+                for skill in skills
+            )
+        )
 
-    def _step_value(self, skill: str, weights: Sequence[float]) -> float:
-        entries = [entry for (name, _), entry in self._steps.items() if name == skill]
+    def _mean_value(self, entries: Sequence[Mapping[str, Any]], weights: Sequence[float]) -> float:
         if not entries:
             return 0.0
         samples = sum(int(entry["samples"]) for entry in entries)

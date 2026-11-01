@@ -15,7 +15,6 @@ from decomposition.recipe_book import LUNAR_LANDER_BOOK, SCHEMA_VERSION, holds, 
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
-from env.lunar_subskills import SUBSKILLS
 
 START = {
     "upright": False,
@@ -55,7 +54,7 @@ def toy_book(methods=None, finish_requires=None, finish_effects=None, terminal=F
 
 @pytest.fixture(scope="module")
 def lunar_book():
-    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
 
 
 # Working through subgoals
@@ -197,7 +196,8 @@ def test_the_search_gives_up_when_no_skill_chain_reaches_the_subgoal():
 def test_the_search_lands_with_no_recipes_at_all(lunar_book):
     data = json.loads(LUNAR_LANDER_BOOK.read_text(encoding="utf-8"))
     data["methods"] = []
-    no_recipes = parse_recipe_book(data, FACT_NAMES, SUBSKILLS)
+    data["skills"] = {name: skill for name, skill in data["skills"].items() if "pilot" not in name}
+    no_recipes = parse_recipe_book(data, FACT_NAMES, LUNAR_LANDER.skills)
     candidates = propose(no_recipes, "land_on_pad", {**START, "over_pad": True})
     assert candidates and all(c.searched and c.skills[-1] == "touch_down" for c in candidates)
 
@@ -212,6 +212,8 @@ def test_landing_from_the_air_offers_every_recipe(lunar_book):
         ("fuel_saving_landing", ("stabilise", "move_over_pad", "free_fall", "slow_descent", "touch_down")),
         ("fuel_saving_landing", ("stabilise", "move_over_pad", "free_fall", "brake", "touch_down")),
         ("direct_descent", ("slow_descent", "touch_down")),
+        (DIRECT, ("heuristic_pilot",)),
+        (DIRECT, ("ppo_pilot",)),
     ]
     assert all(c.predicted_facts["landed"] for c in candidates)
 
@@ -262,6 +264,14 @@ def test_the_goal_graph_shows_goal_subgoals_and_skills(lunar_book):
     assert [node["status"] for node in graph["nodes"]] == [ALREADY_TRUE, TO_ACHIEVE, TO_ACHIEVE, TO_ACHIEVE]
     assert [node["skills"] for node in graph["nodes"]] == [[], ["move_over_pad"], ["slow_descent"], ["touch_down"]]
     assert graph["edges"] == [[0, 1], [1, 2], [2, 3]]
+
+
+def test_a_whole_episode_skill_is_only_ever_a_whole_plan_from_the_start(lunar_book):
+    plans = [c.skills for c in propose(lunar_book, "land_on_pad", START)]
+    pilots = [skills for skills in plans if any(lunar_book.skills[s].whole_episode for s in skills)]
+    assert pilots == [("heuristic_pilot",), ("ppo_pilot",)]
+    later = [c.skills for c in propose(lunar_book, "land_on_pad", START, at_start=False)]
+    assert not any(lunar_book.skills[s].whole_episode for skills in later for s in skills)
 
 
 def test_plans_for_lists_each_distinct_plan_once(lunar_book):

@@ -9,13 +9,13 @@ from demo.run_goal_decomposition_eval import PROFILES, evaluate, finish_episode,
 from env.lunar_facts import OUTCOMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 
-SEEDS = range(2000, 2004)
+SEEDS = range(8000, 8004)
 
 
 @pytest.fixture(scope="module")
 def report():
     profiles = {name: PROFILES[name] for name in ("safety_first", "no_region")}
-    return evaluate(SEEDS, profiles=profiles, baselines=("idle",))
+    return evaluate(SEEDS, profiles=profiles, baselines=("idle",), use_mdn=False)
 
 
 def test_every_controller_flies_every_seed(report):
@@ -75,6 +75,12 @@ def test_recovery_is_tried_from_every_tilted_start(report):
     assert report["recover_stability"]["tilted_starts"] == tilted
 
 
+def test_the_report_says_which_criteria_were_met(report):
+    assert {row["criterion"] for row in report["criteria"]} >= {"On the pad under safety-first priorities"}
+    assert all(isinstance(row["met"], bool) for row in report["criteria"])
+    assert "## Criteria written before the evaluation" in to_markdown(report)
+
+
 def test_the_report_is_json_and_markdown_ready(report):
     assert json.loads(json.dumps(report))["seeds"] == {"start": SEEDS.start, "count": len(SEEDS)}
     markdown = to_markdown(report)
@@ -104,4 +110,4 @@ def test_every_episode_is_kept_and_traceable_to_its_seed(report):
 @pytest.mark.parametrize("seeds, message", [(range(990, 1010), "overlap"), (range(5, 5), "at least one seed")])
 def test_the_evaluation_refuses_seeds_it_cannot_use(seeds, message):
     with pytest.raises(ValueError, match=message):
-        evaluate(seeds, profiles={}, baselines=())
+        evaluate(seeds, profiles={}, baselines=(), use_mdn=False)
