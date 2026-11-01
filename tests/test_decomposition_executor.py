@@ -76,7 +76,7 @@ def test_the_end_of_the_episode_stops_the_plan(env, book, monkeypatch):
 
 def test_a_wrong_prediction_is_recorded_and_the_plan_goes_on(env):
     data = json.loads(LUNAR_LANDER_BOOK.read_text(encoding="utf-8"))
-    data["primitives"]["stabilise"]["effects"]["near_ground"] = True
+    data["skills"]["stabilise"]["effects"]["near_ground"] = True
     wrong_book = parse_recipe_book(data, FACT_NAMES, SUBSKILLS)
     execution = execute(LUNAR_LANDER, env, wrong_book, CAREFUL[:2], start(env, TILTED_START_SEED))
     assert execution.steps[0].prediction_held is False

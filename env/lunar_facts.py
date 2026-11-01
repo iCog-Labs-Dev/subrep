@@ -22,7 +22,7 @@ NEAR_GROUND_HEIGHT = 0.3
 SLOW_DESCENT_SPEED = 0.2
 FAST_FALL_SPEED = 0.4
 
-FACT_NAMES = ("upright", "over_pad", "near_ground", "slow", "falling_fast", "landed")
+FACT_NAMES = ("upright", "over_pad", "near_ground", "slow", "falling_fast", "landed", "descent_underway")
 OUTCOMES = ("landed_on_pad", "landed_off_pad", "crashed", "timeout")
 
 
@@ -35,18 +35,22 @@ def lander_facts(observation) -> Dict[str, bool]:
     - ``slow``: descending (or rising) slowly.
     - ``falling_fast``: falling at or beyond the fast-fall speed.
     - ``landed``: both legs touch the ground.
+    - ``descent_underway``: falling fast or already low, so it is time to brake.
     """
     obs = np.asarray(observation, dtype=np.float64).reshape(-1)
     if obs.shape != (8,):
         raise ValueError(f"expected an 8-value LunarLander observation, got shape {obs.shape}")
     x, y, vx, vy, angle, spin, left_leg, right_leg = obs
+    near_ground = bool(y < NEAR_GROUND_HEIGHT)
+    falling_fast = bool(vy <= -FAST_FALL_SPEED)
     return {
         "upright": bool(abs(angle) < UPRIGHT_MAX_ANGLE and abs(spin) < UPRIGHT_MAX_SPIN),
         "over_pad": bool(abs(x) <= PAD_HALF_WIDTH and abs(vx) <= MAX_DRIFT_SPEED),
-        "near_ground": bool(y < NEAR_GROUND_HEIGHT),
+        "near_ground": near_ground,
         "slow": bool(abs(vy) <= SLOW_DESCENT_SPEED),
-        "falling_fast": bool(vy <= -FAST_FALL_SPEED),
+        "falling_fast": falling_fast,
         "landed": bool(left_leg > 0 and right_leg > 0),
+        "descent_underway": falling_fast or near_ground,
     }
 
 

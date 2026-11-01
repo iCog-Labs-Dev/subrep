@@ -282,16 +282,23 @@ def _by_name_and_group(items: Iterable[T], sample_of: Callable[[T], Sample]) -> 
 
 
 def build_table(
-    domain: Domain, seeds: range, plans: Sequence[Sequence[str]], min_samples: int = MIN_SAMPLES
+    domain: Domain,
+    seeds: range,
+    plans_at: Callable[[Mapping[str, bool]], Sequence[Sequence[str]]],
+    min_samples: int = MIN_SAMPLES,
 ) -> "EffectTable":
-    """Fly every plan from every seed and summarise the measured effects.
+    """Fly the plans ``plans_at`` gives for the start of every seed and summarise the measured effects.
 
     A step that starts after the same sub-skills in two plans is flown from the
     same state, so it is counted once per seed.
     """
     env = domain.make_env(seeds.start)
     try:
-        flights = [fly_plan(domain, env, seed, skills) for seed in seeds for skills in plans]
+        flights = [
+            fly_plan(domain, env, seed, skills)
+            for seed in seeds
+            for skills in plans_at(domain.facts(replay(env, seed, ())))
+        ]
     finally:
         env.close()
 

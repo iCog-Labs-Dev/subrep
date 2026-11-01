@@ -90,9 +90,9 @@ def execute(domain: Domain, env: Any, book: RecipeBook, skills: Sequence[str], o
     episode_over = False
 
     for index, name in enumerate(skills):
-        primitive = book.primitives[name]
+        skill = book.skills[name]
         before = domain.facts(obs)
-        if not holds(primitive.requires, before):
+        if not holds(skill.requires, before):
             steps.append(StepRecord(name, StepStatus.REQUIREMENTS_NOT_MET, 0, before, before, None))
             break
 
@@ -107,7 +107,7 @@ def execute(domain: Domain, env: Any, book: RecipeBook, skills: Sequence[str], o
 
         if run.completed:
             status = StepStatus.COMPLETED
-            prediction_held: Optional[bool] = holds(primitive.apply(before), after)
+            prediction_held: Optional[bool] = holds(skill.apply(before), after)
         else:
             status = StepStatus.EPISODE_ENDED if episode_over else StepStatus.OUT_OF_FRAMES
             prediction_held = None

@@ -18,12 +18,14 @@ from decomposition.effects import (
     replay,
     summarise,
 )
-from demo.build_lunar_effect_table import PLANS
+from decomposition.planner import plans_for
+from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
 from demo.run_lunar_subskill_reliability import SEQUENCES, fly
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import OUTCOMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
-from env.lunar_subskills import LEFT_ENGINE, MAIN_ENGINE, NO_ENGINE, RIGHT_ENGINE
+from env.lunar_facts import FACT_NAMES
+from env.lunar_subskills import LEFT_ENGINE, MAIN_ENGINE, NO_ENGINE, RIGHT_ENGINE, SUBSKILLS
 
 CAREFUL = SEQUENCES["careful_landing"]
 FUEL_SAVING = SEQUENCES["fuel_saving_landing"]
@@ -45,6 +47,10 @@ def episode_start(group, seeds=range(1000)):
     raise AssertionError(f"no episode start in group {group}")
 
 
+def both_plans(facts):
+    return [CAREFUL, FUEL_SAVING]
+
+
 @pytest.fixture
 def env():
     environment = SubRepEnv(seed=0)
@@ -54,7 +60,7 @@ def env():
 
 @pytest.fixture(scope="module")
 def small_table():
-    return build_table(LUNAR_LANDER, range(4), [CAREFUL, FUEL_SAVING], min_samples=1)
+    return build_table(LUNAR_LANDER, range(4), both_plans, min_samples=1)
 
 
 @pytest.fixture(scope="module")
@@ -165,7 +171,7 @@ def test_summarise_rejects_samples_from_different_groups():
 
 
 def test_the_table_is_reproducible_from_its_seeds(small_table):
-    assert build_table(LUNAR_LANDER, range(4), [CAREFUL, FUEL_SAVING], min_samples=1).data == small_table.data
+    assert build_table(LUNAR_LANDER, range(4), both_plans, min_samples=1).data == small_table.data
 
 
 def test_a_shared_first_step_is_counted_once_per_seed(small_table):
@@ -240,32 +246,33 @@ def test_the_table_checks_its_format(small_table):
 
 
 def test_committed_table_covers_every_plan_from_unseen_episode_starts(committed_table, env):
+    plans = plans_for(load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS))
     unseen = range(committed_table.data["seeds"]["stop"], committed_table.data["seeds"]["stop"] + 30)
     for seed in unseen:
         start = replay(env, seed, ())
-        for skills in PLANS:
+        for skills in plans(lander_facts(start)):
             assert committed_table.plan(skills, start) is not None, (seed, skills)
 
 
 def test_committed_table_refuses_a_mid_flight_state_with_the_same_facts(committed_table, env):
     falling = replay(env, 7, [NO_ENGINE] * 40)  # 40 frames of doing nothing: low and falling fast
     group = group_key(LUNAR_LANDER, lander_facts(falling))
-    entry = next(e for e in committed_table.data["plans"] if e["skills"] == FUEL_SAVING and e["group"] == group)
+    entry = next(e for e in committed_table.data["plans"] if e["group"] == group and "touch_down" in e["skills"])
     assert entry["samples"] >= committed_table.min_samples
     assert falling[1] < entry["support"]["low"][1]
-    assert committed_table.plan(FUEL_SAVING, falling) is None
+    assert committed_table.plan(entry["skills"], falling) is None
 
 
 def test_committed_landing_plans_are_safer_than_doing_nothing_and_differ_in_fuel(committed_table):
-    groups = {entry["group"] for entry in committed_table.data["plans"]}
+    groups = {e["group"] for e in committed_table.data["plans"] if "move_over_pad" in e["skills"]}
     assert groups
     for group in groups:
         start = episode_start(group)
-        careful = committed_table.plan(CAREFUL, start)
-        fuel_saving = committed_table.plan(FUEL_SAVING, start)
-        assert careful.lower.delta_n[0] > 0.0, group
-        assert fuel_saving.lower.delta_n[0] > 0.0, group
-        assert fuel_saving.mean.delta_n[1] > careful.mean.delta_n[1], group  # fuel gains are negative
+        careful = next(e for e in committed_table.data["plans"] if e["group"] == group and "free_fall" not in e["skills"] and "move_over_pad" in e["skills"])
+        fuel_saving = next(e for e in committed_table.data["plans"] if e["group"] == group and "brake" in e["skills"])
+        assert committed_table.plan(careful["skills"], start).lower.delta_n[0] > 0.0, group
+        assert committed_table.plan(fuel_saving["skills"], start).lower.delta_n[0] > 0.0, group
+        assert fuel_saving["delta_fuel"]["mean"] > careful["delta_fuel"]["mean"], group  # fuel gains are negative
 
 
 def test_committed_doing_nothing_steps_gain_nothing(committed_table):
@@ -279,7 +286,7 @@ def test_plan_outcomes_come_from_the_final_result(small_table, committed_table):
         for entry in table.data["plans"]:
             assert set(entry["outcomes"]) == set(PLAN_OUTCOMES)
             assert sum(entry["outcomes"].values()) == pytest.approx(1.0)
-    landings = [e for e in committed_table.data["plans"] if e["skills"] in (CAREFUL, FUEL_SAVING)]
+    landings = [e for e in committed_table.data["plans"] if "touch_down" in e["skills"]]
     # Completed steps overstate landings on the pad: some end off the pad or crash after touching down.
     assert max(e["completion_rate"] - e["outcomes"]["landed_on_pad"] for e in landings) > 0.05
 

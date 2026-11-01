@@ -33,7 +33,8 @@ from certification.certificate_schema import Certificate
 from certification.cvar_test import CVaRGate
 from certification.pds_test import PDSGate
 from decomposition.effects import EffectTable, Estimate, Gains
-from decomposition.planner import CandidatePlan
+from decomposition.effects import plan_key
+from decomposition.planner import CandidatePlan, goal_graph
 from library.skill_metadata import FULL_SIMPLEX, MDN_WX, SkillEntry
 from library.skill_selector import score_skill_entry
 
@@ -149,7 +150,8 @@ class PlanVerdict:
             "goal": candidate.goal,
             "option": candidate.option,
             "skills": list(candidate.skills),
-            "methods": [list(method) for method in candidate.methods],
+            "methods": list(candidate.methods),
+            "goal_graph": goal_graph(candidate),
             "admitted": self.admitted,
             "reason": self.reason,
             "estimate": None if self.estimate is None else _estimate_record(self.estimate),
@@ -160,7 +162,7 @@ class PlanVerdict:
 
 
 def plan_skill_id(candidate: CandidatePlan) -> str:
-    return f"plan:{candidate.goal}/{candidate.option}"
+    return f"plan:{candidate.goal}/{candidate.option}/{plan_key(candidate.skills)}"
 
 
 def verify(

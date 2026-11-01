@@ -33,7 +33,7 @@ EVEN = Priorities(weights=(0.5, 0.5))
 
 
 def candidate(option, skills):
-    return CandidatePlan("land_on_pad", option, (("land", option),), tuple(skills), {"landed": True})
+    return CandidatePlan("land_on_pad", option, (option,), tuple(skills), {"landed": True})
 
 
 def gains(delta_r, delta_n):
@@ -110,7 +110,7 @@ def test_cds_admits_a_plan_that_gains_under_every_weighting():
     assert verdict.admitted and verdict.reason == "admitted by the CDS gate"
     assert verdict.cds_margin == pytest.approx(7.0)
     certificate = verdict.entry.certificate
-    assert certificate.skill_id == "plan:land_on_pad/plan"
+    assert certificate.skill_id == "plan:land_on_pad/plan/a>b"
     assert certificate.gate_type == "CDS" and certificate.epsilon == 0.0
     assert certificate.delta_r == 10.0 and certificate.delta_n == (5.0, -3.0)
     assert certificate.admission_margin == pytest.approx(7.0)
@@ -323,7 +323,8 @@ def test_a_safety_first_region_certifies_a_landing_plan_from_the_air(lunar_book,
     best = best_plan(verdicts)
     assert best is not None
     certificate = best.entry.certificate
-    assert certificate.skill_id in {"plan:land_on_pad/careful_landing", "plan:land_on_pad/fuel_saving_landing"}
+    assert certificate.skill_id.startswith("plan:land_on_pad/")
+    assert certificate.skill_id.endswith(">".join(best.candidate.skills))
     assert best.estimate.samples >= lunar_table.min_samples
     assert np.isclose(best.score, certificate.delta_r + np.dot((0.7, 0.3), certificate.delta_n))
 

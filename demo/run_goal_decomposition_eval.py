@@ -38,10 +38,10 @@ import numpy as np
 from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, build_table
 from decomposition.executor import execute
 from decomposition.feedback import FeedbackLog, realised_gains
+from decomposition.planner import plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, RecipeBook, load_recipe_book
 from decomposition.runtime import GoalStatus, pursue
 from decomposition.verifier import MdnRegion, Priorities
-from demo.build_lunar_effect_table import PLANS
 from demo.run_lunar_baseline import CONTROLLERS, EpisodeResult, run_episode, summarise
 from demo.run_lunar_subskill_reliability import SEQUENCES
 from env.lunar_domain import LUNAR_LANDER
@@ -175,9 +175,9 @@ def evaluate_profile(
 # ---------------------------------------------------------------------------
 
 
-def check_table(committed: EffectTable, seeds: range) -> List[Dict[str, Any]]:
+def check_table(committed: EffectTable, book: RecipeBook, seeds: range) -> List[Dict[str, Any]]:
     """Measure the plans again on ``seeds`` and compare each group with the committed table."""
-    unseen = build_table(LUNAR_LANDER, seeds, PLANS, min_samples=1)
+    unseen = build_table(LUNAR_LANDER, seeds, plans_for(book), min_samples=1)
     fresh = {(entry["name"], entry["group"]): entry for entry in unseen.data["plans"]}
     rows = []
     for entry in committed.data["plans"]:
@@ -265,7 +265,7 @@ def evaluate(
         "profiles": {name: _profile_record(p) for name, p in profiles.items()},
         "controllers": controllers,
         "goal_runs": goal_runs,
-        "table_check": check_table(table, seeds),
+        "table_check": check_table(table, book, seeds),
         "recover_stability": recovery,
     }
 

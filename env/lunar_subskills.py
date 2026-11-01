@@ -109,7 +109,7 @@ SUBSKILLS: Dict[str, SubSkill] = {
         SubSkill(
             name="free_fall",
             policy=lambda s: NO_ENGINE,
-            is_done=lambda f: f["falling_fast"] or f["near_ground"],
+            is_done=lambda f: f["descent_underway"],
             max_frames=300,
         ),
         SubSkill(
