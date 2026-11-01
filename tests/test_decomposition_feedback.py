@@ -10,7 +10,7 @@ from decomposition.executor import execute
 from decomposition.feedback import REVOKED_REASON, CertificateStatus, FeedbackLog, realised_gains
 from decomposition.planner import propose
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
-from decomposition.runtime import GoalStatus, pursue
+from decomposition.runtime import pursue
 from decomposition.verifier import MdnRegion, Priorities, best_plan, plan_skill_id, verify
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
@@ -146,8 +146,8 @@ def test_the_runtime_skips_a_revoked_plan(env, book, table, verdicts, start):
 
     run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, SAFETY_FIRST, feedback=log)
     chosen = run.decisions[0].chosen
-    assert chosen.candidate.skills != best.candidate.skills
-    assert run.status is GoalStatus.ACHIEVED
+    assert chosen is None or chosen.candidate.skills != best.candidate.skills
+    assert REVOKED_REASON in {verdict.reason for verdict in run.decisions[0].verdicts}
 
 
 def test_the_report_is_json_ready(verdicts, start):

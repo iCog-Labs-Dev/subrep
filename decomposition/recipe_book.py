@@ -5,7 +5,7 @@ network (HGN):
 
 - a goal is a set of conditions on facts. A terminal goal is achieved only by how
   the episode ends, so its conditions are confirmed on the final result rather
-  than mid-episode;
+  than mid-episode, and ``success_outcomes`` names the endings that achieve it;
 - a method is one way to reach a subgoal: an ordered list of subgoals, each a set
   of conditions, and the facts that must hold before it is chosen. Its last
   subgoal is what it achieves;
@@ -71,6 +71,7 @@ class Goal:
     name: str
     achieved_when: Dict[str, bool]
     terminal: bool = False  # achieved only by how the episode ends
+    success_outcomes: Tuple[str, ...] = ()  # the endings of an episode that achieve a terminal goal
 
 
 @dataclass(frozen=True)
@@ -168,11 +169,16 @@ def _method(spec: Mapping, facts: Set[str]) -> Method:
 
 
 def _goal(name: str, spec: Mapping, facts: Set[str]) -> Goal:
-    _check_keys(spec, f"goal {name}", required={"achieved_when"}, optional={"terminal"})
+    _check_keys(spec, f"goal {name}", required={"achieved_when"}, optional={"terminal", "success_outcomes"})
     achieved_when = _conditions(spec["achieved_when"], facts, f"goal {name} achieved_when")
     if not achieved_when:
         raise RecipeBookError(f"goal {name} needs at least one fact in achieved_when")
     terminal = spec.get("terminal", False)
     if not isinstance(terminal, bool):
         raise RecipeBookError(f"goal {name} terminal must be true or false")
-    return Goal(name, achieved_when, terminal)
+    outcomes = spec.get("success_outcomes", [])
+    if not isinstance(outcomes, list) or not all(isinstance(outcome, str) for outcome in outcomes):
+        raise RecipeBookError(f"goal {name} success_outcomes must be a list of names")
+    if outcomes and not terminal:
+        raise RecipeBookError(f"goal {name} has success_outcomes but is not terminal")
+    return Goal(name, achieved_when, terminal, tuple(outcomes))

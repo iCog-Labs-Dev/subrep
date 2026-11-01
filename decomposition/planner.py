@@ -70,6 +70,7 @@ class CandidatePlan:
     predicted_facts: Dict[str, bool]  # facts known once the plan completes
     subgoals: Tuple[SubgoalStep, ...] = ()
     searched: bool = False  # whether the search filled a gap the book's methods left
+    success_outcomes: Tuple[str, ...] = ()  # the endings of an episode that achieve the goal
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,7 @@ def propose(book: RecipeBook, goal: str, facts: Facts) -> List[CandidatePlan]:
                 predicted_facts=partial.facts,
                 subgoals=partial.steps,
                 searched=partial.searched,
+                success_outcomes=target.success_outcomes,
             )
         )
     return candidates

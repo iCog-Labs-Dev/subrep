@@ -16,6 +16,12 @@ region W_x when the priorities carry one. An admitted plan gets a standard
 ``library.skill_selector.score_skill_entry`` under the priorities' weights.
 Plans are ranked by score; ties go to the plan with fewer steps, then to the
 option name.
+
+The gates compare discounted rewards, and the discount favours flights that end
+soon. A controller can therefore outscore a plan while reaching the goal less
+often. So a plan for a terminal goal must also reach it: with ``min_goal_rate``
+set, the one-sided lower confidence bound of the measured rate at which flights
+ended in one of the goal's ``success_outcomes`` must reach that rate.
 """
 
 from __future__ import annotations
@@ -42,6 +48,8 @@ CERTIFICATE_VERSION = "decomposition-0.1.0"
 CVAR_SAMPLES = 1000
 CVAR_SEED = 0
 NOT_MEASURED = "not measured from states like this one"
+GOAL_TOO_RARE = "reaches its goal too rarely"
+_WILSON_Z = 1.645  # one-sided 95%, the confidence of the measured gains
 _SIMPLEX_TOLERANCE = 1e-6
 
 
@@ -135,6 +143,7 @@ class PlanVerdict:
     cds_margin: Optional[float] = None
     pds_margin: Optional[float] = None
     cvar: Optional[float] = None
+    goal_rate: Optional[float] = None  # lower bound of how often flights reached a terminal goal
     entry: Optional[SkillEntry] = None  # the certified library entry; None when rejected
     score: Optional[float] = None
 
@@ -156,6 +165,7 @@ class PlanVerdict:
             "reason": self.reason,
             "estimate": None if self.estimate is None else _estimate_record(self.estimate),
             "gates": {"cds_margin": self.cds_margin, "pds_margin": self.pds_margin, "cvar": self.cvar},
+            "goal_rate": self.goal_rate,
             "score": self.score,
             "certificate": None if self.entry is None else self.entry.certificate.to_dict(),
         }
@@ -171,14 +181,24 @@ def verify(
     table: EffectTable,
     priorities: Priorities,
     timestamp: Optional[str] = None,
+    min_goal_rate: float = 0.0,
 ) -> List[PlanVerdict]:
     """Certify every candidate from ``observation``; admitted plans come first, best first."""
     timestamp = timestamp or datetime.now(timezone.utc).isoformat()
     verdicts = [
-        _verify(candidate, table.plan(candidate.skills, observation), table, priorities, timestamp)
+        _verify(candidate, table.plan(candidate.skills, observation), table, priorities, timestamp, min_goal_rate)
         for candidate in candidates
     ]
     return sorted(verdicts, key=_rank)
+
+
+def goal_rate_bound(estimate: Estimate, success_outcomes: Sequence[str]) -> float:
+    """One-sided Wilson lower confidence bound of the rate at which flights reached the goal."""
+    rate = sum((estimate.outcomes or {}).get(outcome, 0.0) for outcome in success_outcomes)
+    n, z = estimate.samples, _WILSON_Z
+    centre = rate + z * z / (2 * n)
+    margin = z * math.sqrt(rate * (1 - rate) / n + z * z / (4 * n * n))
+    return (centre - margin) / (1 + z * z / n)
 
 
 def best_plan(verdicts: Sequence[PlanVerdict]) -> Optional[PlanVerdict]:
@@ -192,6 +212,7 @@ def _verify(
     table: EffectTable,
     priorities: Priorities,
     timestamp: str,
+    min_goal_rate: float,
 ) -> PlanVerdict:
     if estimate is None:
         return PlanVerdict(candidate, reason=NOT_MEASURED)
@@ -203,7 +224,14 @@ def _verify(
     cds_margin = cds.get_admission_margin(delta_r, delta_n, support_values=support)
     pds_margin = pds.get_admission_margin(delta_r, delta_n, support_values=support)
     cvar = _cvar(delta_r, delta_n, priorities)
-    results = {"estimate": estimate, "cds_margin": cds_margin, "pds_margin": pds_margin, "cvar": cvar}
+    goal_rate = goal_rate_bound(estimate, candidate.success_outcomes) if candidate.success_outcomes else None
+    results = {
+        "estimate": estimate,
+        "cds_margin": cds_margin,
+        "pds_margin": pds_margin,
+        "cvar": cvar,
+        "goal_rate": goal_rate,
+    }
 
     if cds.admit(delta_r, delta_n, support_values=support):
         gate, margin, epsilon = "CDS", cds_margin, 0.0
@@ -213,6 +241,8 @@ def _verify(
         return PlanVerdict(candidate, reason="rejected by the CDS and PDS gates", **results)
     if cvar is not None and cvar < 0.0:
         return PlanVerdict(candidate, reason="rejected by the CVaR check", **results)
+    if goal_rate is not None and goal_rate < min_goal_rate:
+        return PlanVerdict(candidate, reason=GOAL_TOO_RARE, **results)
 
     certificate = _certificate(candidate, estimate, gate, margin, epsilon, table, priorities, timestamp)
     entry = SkillEntry(

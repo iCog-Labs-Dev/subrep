@@ -13,13 +13,24 @@ from decomposition.effects import (
     GAMMA,
     SCHEMA_VERSION,
     EffectTable,
+    Estimate,
+    Gains,
     group_key,
     plan_key,
     replay,
 )
 from decomposition.planner import CandidatePlan, propose
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
-from decomposition.verifier import CERTIFICATE_VERSION, NOT_MEASURED, MdnRegion, Priorities, best_plan, verify
+from decomposition.verifier import (
+    CERTIFICATE_VERSION,
+    GOAL_TOO_RARE,
+    NOT_MEASURED,
+    MdnRegion,
+    Priorities,
+    best_plan,
+    goal_rate_bound,
+    verify,
+)
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
@@ -32,8 +43,10 @@ TIMESTAMP = "2026-10-17T00:00:00+00:00"
 EVEN = Priorities(weights=(0.5, 0.5))
 
 
-def candidate(option, skills):
-    return CandidatePlan("land_on_pad", option, (option,), tuple(skills), {"landed": True})
+def candidate(option, skills, success_outcomes=()):
+    return CandidatePlan(
+        "land_on_pad", option, (option,), tuple(skills), {"landed": True}, success_outcomes=success_outcomes
+    )
 
 
 def gains(delta_r, delta_n):
@@ -140,6 +153,28 @@ def test_a_trade_off_beyond_the_budget_is_rejected_with_its_margins():
 def test_the_gates_use_the_lower_bounds_not_the_means():
     # The means are one higher than the lower bounds: CDS would pass on the means.
     assert not verify_one(-0.5, (0.0, 0.0)).admitted
+
+
+def test_a_plan_that_rarely_reaches_its_goal_is_rejected():
+    table = table_of([(("a", "b"), 10.0, (5.0, 5.0))])  # 90 of 100 flights landed on the pad
+    plan = candidate("plan", ["a", "b"], success_outcomes=("landed_on_pad",))
+    [strict] = verify([plan], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.95)
+    assert not strict.admitted and strict.reason == GOAL_TOO_RARE
+    assert strict.goal_rate == pytest.approx(goal_rate_bound(strict.estimate, ("landed_on_pad",)))
+    [lenient] = verify([plan], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.8)
+    assert lenient.admitted
+
+
+def test_a_goal_with_no_final_outcome_has_no_rate_to_check():
+    table = table_of([(("a", "b"), 10.0, (5.0, 5.0))])
+    [verdict] = verify([candidate("plan", ["a", "b"])], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.99)
+    assert verdict.admitted and verdict.goal_rate is None
+
+
+@pytest.mark.parametrize("rate, samples, low, high", [(0.9, 100, 0.83, 0.9), (1.0, 100, 0.97, 1.0), (0.0, 100, 0.0, 0.01)])
+def test_the_goal_rate_bound_is_a_wilson_lower_bound(rate, samples, low, high):
+    estimate = Estimate(samples, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes={"won": rate, "lost": 1.0 - rate})
+    assert low <= goal_rate_bound(estimate, ("won",)) <= high
 
 
 def test_plans_without_enough_measurements_are_not_certified():

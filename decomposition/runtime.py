@@ -12,9 +12,15 @@ The plan in progress is kept unless another admitted plan beats it by more than
 lander change its mind at every subgoal.
 
 When nothing is admitted, the plan in progress goes on under the certificate it
-already holds only if the last skill completed and the verifier did not reject
-the rest of the plan, that is, if the rest was simply not measured from a state
-like this one. A plan the gates reject is not flown.
+already holds only if the last skill completed and the gates did not reject the
+rest of the plan: if the rest was simply not measured from a state like this one,
+or if it passes the gates but reaches its goal less often than a new plan must.
+In the air, stopping is usually worse than carrying on. A plan the gates reject
+is not flown.
+
+A new plan must reach its goal at least ``DEFAULT_MIN_GOAL_RATE`` of the time
+with 95% confidence, so that a plan cannot be chosen because it ends the episode
+quickly while often missing the goal. The rate is a policy choice for the team.
 
 Whether a goal is achieved is confirmed, never assumed:
 
@@ -46,9 +52,18 @@ from decomposition.executor import Execution, execute
 from decomposition.feedback import FeedbackLog
 from decomposition.planner import goal_graph, propose
 from decomposition.recipe_book import Goal, RecipeBook, holds
-from decomposition.verifier import NOT_MEASURED, PlanVerdict, Priorities, best_plan, plan_skill_id, verify
+from decomposition.verifier import (
+    GOAL_TOO_RARE,
+    NOT_MEASURED,
+    PlanVerdict,
+    Priorities,
+    best_plan,
+    plan_skill_id,
+    verify,
+)
 
 DEFAULT_MAX_ATTEMPTS = 3  # skills that may fail before the run gives up
+DEFAULT_MIN_GOAL_RATE = 0.9
 MAX_DECISIONS = 30
 SWITCH_MARGIN = 0.1  # another plan must score this fraction higher to replace the plan in progress
 
@@ -147,6 +162,7 @@ def pursue(
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     feedback: Optional[FeedbackLog] = None,
     timestamp: Optional[str] = None,
+    min_goal_rate: float = DEFAULT_MIN_GOAL_RATE,
 ) -> GoalRun:
     """Pursue ``goal`` from ``observation``, which ``env`` must have just produced."""
     if goal not in book.goals:
@@ -169,7 +185,8 @@ def pursue(
         status = GoalStatus.FAILED
         for _ in range(MAX_DECISIONS):
             facts = domain.facts(obs)
-            verdicts = tuple(verify(propose(book, goal, facts), obs, table, priorities, timestamp))
+            candidates = propose(book, goal, facts)
+            verdicts = tuple(verify(candidates, obs, table, priorities, timestamp, min_goal_rate))
             if feedback is not None:
                 verdicts = feedback.screen(verdicts, facts)
 
@@ -230,7 +247,7 @@ def _may_go_on(verdicts: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> b
     if not remaining:
         return False
     current = _verdict_for(verdicts, remaining)
-    return current is None or current.reason == NOT_MEASURED
+    return current is None or current.reason in (NOT_MEASURED, GOAL_TOO_RARE)
 
 
 def goal_achieved(

@@ -118,6 +118,8 @@ def _set(path, value):
         (_set(["goals", "reach", "achieved_when"], {}), "at least one fact"),
         (lambda book: book["goals"]["reach"].pop("achieved_when"), "missing"),
         (_set(["goals", "reach", "terminal"], "yes"), "terminal must be true or false"),
+        (_set(["goals", "reach", "success_outcomes"], "won"), "must be a list of names"),
+        (_set(["goals", "reach", "success_outcomes"], ["won"]), "not terminal"),
     ],
 )
 def test_malformed_books_are_rejected(change, message):
@@ -139,6 +141,7 @@ def test_landing_on_the_pad_is_a_terminal_goal_that_needs_the_pad(lunar_book):
     goal = lunar_book.goals["land_on_pad"]
     assert goal.terminal
     assert goal.achieved_when == {"landed": True, "over_pad": True}
+    assert goal.success_outcomes == ("landed_on_pad",)
     assert not lunar_book.goals["recover_stability"].terminal
 
 

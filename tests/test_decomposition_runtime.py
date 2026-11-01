@@ -10,7 +10,7 @@ from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, build_table
 from decomposition.planner import CandidatePlan, plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
 from decomposition.runtime import GoalStatus, _choose, _may_go_on, goal_achieved, pursue
-from decomposition.verifier import NOT_MEASURED, MdnRegion, PlanVerdict, Priorities
+from decomposition.verifier import GOAL_TOO_RARE, NOT_MEASURED, MdnRegion, PlanVerdict, Priorities
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, landing_outcome, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
@@ -113,7 +113,7 @@ def test_without_a_certified_plan_nothing_is_flown(env, book, table):
 
 
 def test_a_plan_goes_on_under_its_certificate_when_the_rest_was_not_measured(env, book, starts_only):
-    runs = (run_goal(env, book, starts_only, seed) for seed in range(2000, 2100))
+    runs = (run_goal(env, book, starts_only, seed, min_goal_rate=0.0) for seed in range(2000, 2100))
     run = next(r for r in runs if len(r.flown) > 1 and not r.flown[1].recertified)
     first, second = run.flown[:2]
     assert first.recertified
@@ -124,7 +124,7 @@ def test_a_plan_goes_on_under_its_certificate_when_the_rest_was_not_measured(env
 def test_after_a_failed_step_a_replan_needs_measurements_that_apply(env, book, starts_only, monkeypatch):
     monkeypatch.setitem(SUBSKILLS, "slow_descent", dataclasses.replace(SUBSKILLS["slow_descent"], max_frames=20))
     monkeypatch.setitem(SUBSKILLS, "move_over_pad", dataclasses.replace(SUBSKILLS["move_over_pad"], max_frames=20))
-    runs = (run_goal(env, book, starts_only, seed) for seed in range(2000, 2100))
+    runs = (run_goal(env, book, starts_only, seed, min_goal_rate=0.0) for seed in range(2000, 2100))
     run = next(r for r in runs if r.flown and r.flown[0].execution.stopped_at is not None)
     assert run.status is GoalStatus.NO_CERTIFIED_PLAN
     assert run.decisions[-1].execution is None
@@ -164,6 +164,14 @@ def test_a_crash_is_a_failure(env, book, table, monkeypatch):
     run = run_goal(env, book, table, TILTED_START_SEED)
     assert run.status is GoalStatus.FAILED
     assert run.episode_over and run.info["crashed"]
+
+
+def test_a_plan_that_ends_quickly_but_misses_the_pad_is_not_chosen(env, book, table):
+    run = next(r for r in (run_goal(env, book, table, seed) for seed in range(2000, 2100)) if r.decisions)
+    rushed = [v for v in run.decisions[0].verdicts if v.reason == GOAL_TOO_RARE]
+    chosen = run.decisions[0].chosen
+    assert all(v.goal_rate < 0.9 for v in rushed)
+    assert chosen.goal_rate >= 0.9
 
 
 def test_inputs_are_checked(env, book, table):
@@ -220,6 +228,7 @@ def test_a_plan_in_progress_the_gates_now_reject_is_replaced():
         ([], (), False),
         ([], ("b",), True),  # the planner no longer proposes this exact rest
         ([verdict(["b"], reason=NOT_MEASURED)], ("b",), True),
+        ([verdict(["b"], reason=GOAL_TOO_RARE)], ("b",), True),
         ([verdict(["b"])], ("b",), False),  # the gates rejected it
     ],
 )
