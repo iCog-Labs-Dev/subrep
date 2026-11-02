@@ -109,3 +109,38 @@ class SkillGenerator(nn.Module):
         """Load model weights with optional device mapping."""
         state_dict = torch.load(path, map_location=map_location)
         self.load_state_dict(state_dict)
+
+
+class PolicyConditionedSkillGenerator(SkillGenerator):
+    """Predict payoff and [Safety, Fuel] for an observation AND known policy ID.
+
+    The legacy SkillGenerator remains unchanged for historical callers and
+    the observation-only comparison. No certification decision is made here.
+    """
+
+    def __init__(self, input_dim: int = 8, hidden_dim: int = 64,
+                 motive_dim: int = 2, num_policies: int = 9,
+                 embedding_dim: int = 4) -> None:
+        super().__init__(input_dim=input_dim + embedding_dim,
+                         hidden_dim=hidden_dim, motive_dim=motive_dim)
+        self.observation_dim = input_dim
+        self.embedding_dim = embedding_dim
+        self.num_policies = num_policies
+        self.policy_embedding = nn.Embedding(num_policies, embedding_dim)
+
+    def forward(self, obs: Tensor, policy_id: Tensor | int) -> tuple[Tensor, Tensor]:
+        if obs.ndim not in (1, 2) or obs.shape[-1] != self.observation_dim:
+            raise ValueError(f'Expected observation shape ({self.observation_dim},) or (N, {self.observation_dim})')
+        single = obs.ndim == 1
+        batch = obs.unsqueeze(0) if single else obs
+        ids = torch.as_tensor(policy_id, device=batch.device)
+        if ids.dtype not in (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8):
+            raise ValueError('Policy IDs must be integers')
+        ids = ids.long().reshape(-1)
+        if ids.numel() != batch.shape[0]:
+            raise ValueError('One policy ID is required per observation')
+        if torch.any(ids < 0) or torch.any(ids >= self.num_policies):
+            raise ValueError('Policy ID outside registry')
+        features = torch.cat((batch, self.policy_embedding(ids)), dim=-1)
+        payoff, motives = super().forward(features)
+        return (payoff.squeeze(0), motives.squeeze(0)) if single else (payoff, motives)

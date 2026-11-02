@@ -98,3 +98,34 @@ def test_generator_save_and_load_restores_outputs():
             save_path.unlink()
 
     print("Save/load checks passed.\n")
+
+
+def test_policy_conditioned_embedding_gradients_and_checkpoint(tmp_path):
+    from generator.skill_generator import PolicyConditionedSkillGenerator
+    from generator.multi_policy_pipeline import save_model, load_model
+    model = PolicyConditionedSkillGenerator(embedding_dim=4)
+    obs = torch.randn(4, 8)
+    ids = torch.tensor([0, 1, 2, 3])
+    payoff, motives = model(obs, ids)
+    assert payoff.shape == (4, 1) and motives.shape == (4, 2)
+    (payoff.square().mean() + motives.square().mean()).backward()
+    assert model.policy_embedding.weight.grad is not None
+    assert model.policy_embedding.weight.grad[:4].abs().sum() > 0
+    checkpoint = tmp_path / 'conditioned.pt'
+    save_model(model, checkpoint, conditioned=True, embedding_dim=4)
+    loaded, conditioned = load_model(checkpoint)
+    assert conditioned
+    with torch.no_grad():
+        actual = loaded(obs, ids)
+    assert torch.allclose(payoff, actual[0]) and torch.allclose(motives, actual[1])
+
+
+def test_policy_conditioned_rejects_invalid_ids_and_shapes():
+    import pytest
+    from generator.skill_generator import PolicyConditionedSkillGenerator
+    model = PolicyConditionedSkillGenerator()
+    for obs, ids in [(torch.zeros(7), 0), (torch.zeros(2, 8), [0]),
+                     (torch.zeros(8), 9), (torch.zeros(8), -1),
+                     (torch.zeros(8), 1.5)]:
+        with pytest.raises(ValueError):
+            model(obs, ids)
