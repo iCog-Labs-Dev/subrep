@@ -83,12 +83,25 @@ def test_cli_roundtrip(tmp_path, monkeypatch, m):
     scales.write_text(json.dumps({'divisors':[1]*m}))
     base = tmp_path / 'base.pth'
     model = MotiveDecompositionNetwork(input_dim=4,num_objectives=m)
-    torch.save({'model_state_dict':model.state_dict()}, base)
+    metadata = {}
+    if m != 2:
+        metadata['auxiliary_target_normalization'] = {
+            'enabled': True, 'mean': [2.] * m, 'std': [3.] * m, 'count': 12}
+    if m == 5:
+        metadata['auxiliary_q_calibration'] = {
+            'enabled': True, 'type': 'affine', 'slope': [1.5] * m,
+            'intercept': [-.5] * m, 'count': 12}
+    torch.save({'model_state_dict':model.state_dict(), **metadata}, base)
     output = tmp_path / 'output'
     monkeypatch.setattr(sys, 'argv', ['train', '--data-dir',str(data),'--scales-file',str(scales),
         '--base-checkpoint',str(base),'--output-dir',str(output),'--epochs','2','--baseline-candidate-id','reference'])
     main()
     loaded = load_mdn_checkpoint(output / 'support.pth')
+    payload = torch.load(output / 'support.pth', map_location='cpu')
+    for key in ('auxiliary_target_normalization', 'auxiliary_q_calibration'):
+        assert (key in payload) == (key in metadata)
+        if key in metadata:
+            assert payload[key] == metadata[key]
     for n,p in model.named_parameters():
         if not n.startswith('support_head.'):
             assert torch.equal(p,dict(loaded.named_parameters())[n])

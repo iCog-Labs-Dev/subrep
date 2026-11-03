@@ -467,46 +467,6 @@ weights at every training step and at inference — no penalty term or coefficie
 The construction is permutation-equivariant, so no objective is privileged by its index, and
 `slack_floor` prevents `W_x` collapsing to a single point.
 
-### Certification
-
-- **CDS:** Cone-Dominant Subtask, universal-benefit admission
-- **PDS-epsilon:** Pareto-Dominant Subtask, bounded trade-off admission
-- **Supported regions:** `FULL_SIMPLEX` and `MDN_WX` at any `M >= 2`
-- **Worst-case evaluation:** exact `O(M log M)` greedy support function, no vertex enumeration
-
-The gates need `h_Wx(c) = max { w . c : w in simplex, w_i <= s_i }`. This is a linear program with a
-closed-form greedy solution — sort coordinates by coefficient descending and fill each to its cap
-until total mass 1 is placed — exact because the feasible set is the base polytope of a polymatroid.
-Vertex enumeration was retired because its cost grows combinatorially with M.
-
-### MeTTa Integration
-
-- **Package:** `hyperon`
-- **Active implementation:** `certification/metta_bridge.py` and `certification/metta_storage.py`
-- **Persistence:** `data/certificates.metta`
-
-## Documentation
-
-- `generator/README.md`: skill-generator and MDN training/evaluation
-- `docs/GENERATOR_TRAINING_PIPELINE.md`: skill-generator train/val/test pipeline, exact commands, and file outputs
-- `data/README.md`: rollout and candidate-set data schemas
-- `docs/CERTIFICATE_STORAGE.md`: certificate schema and MeTTa atom format
-- `docs/ZERO_SHOT_PROTOCOL.md`: full-simplex and MDN_WX reuse protocol
-- `docs/INTEGRATION_REPORT.md`: integration and validation report
-- `docs/METTA_INTEGRATION.md`: MeTTa and Hyperon integration notes
-- `docs/IPS_DR_LOGGED_TRAINING.md`: probability-aware logged-data workflow for IPS/DR checkpoints
-- [MeTTa Python Integration Guide](https://metta-lang.dev/docs/learn/tutorials/python_use/metta_python_basics.html)
-
-## Future Work
-
-- Retrain the MDN under SASP and validate held-out metrics; the committed checkpoint is pre-SASP.
-- Exercise the MDN on a testbed with more than two objectives. The support head, certification chain,
-  certificate schema and MeTTa storage are all correct at any `M >= 2`, but MO-LunarLander only
-  provides `[Safety, Fuel]`, so M > 2 is currently covered by tests rather than by a live environment.
-- Add MetaMo integration for dynamic weight management and risk budgets.
-- Explore cross-paradigm skill sources through logic macros and evolutionary programs.
-- Expand benchmark comparisons against MORL baselines.
-
 ### Optional margin-based support-head training
 
 `python -m generator.train_mdn_margin_support --help` describes the
@@ -569,3 +529,43 @@ are recorded. If the base MDN saw these contexts, this is only a head-fitting
 split, not independent end-to-end evaluation. Always certify predicted regions
 with the exact gates on fresh contexts. Existing target-regression training
 remains available. This method is a documented adaptation of the draft.
+
+### Certification
+
+- **CDS:** Cone-Dominant Subtask, universal-benefit admission
+- **PDS-epsilon:** Pareto-Dominant Subtask, bounded trade-off admission
+- **Supported regions:** `FULL_SIMPLEX` and `MDN_WX` at any `M >= 2`
+- **Worst-case evaluation:** exact `O(M log M)` greedy support function, no vertex enumeration
+
+The gates need `h_Wx(c) = max { w . c : w in simplex, w_i <= s_i }`. This is a linear program with a
+closed-form greedy solution — sort coordinates by coefficient descending and fill each to its cap
+until total mass 1 is placed — exact because the feasible set is the base polytope of a polymatroid.
+Vertex enumeration was retired because its cost grows combinatorially with M.
+
+### MeTTa Integration
+
+- **Package:** `hyperon`
+- **Active implementation:** `certification/metta_bridge.py` and `certification/metta_storage.py`
+- **Persistence:** `data/certificates.metta`
+
+## Documentation
+
+- `generator/README.md`: skill-generator and MDN training/evaluation
+- `docs/GENERATOR_TRAINING_PIPELINE.md`: skill-generator train/val/test pipeline, exact commands, and file outputs
+- `data/README.md`: rollout and candidate-set data schemas
+- `docs/CERTIFICATE_STORAGE.md`: certificate schema and MeTTa atom format
+- `docs/ZERO_SHOT_PROTOCOL.md`: full-simplex and MDN_WX reuse protocol
+- `docs/INTEGRATION_REPORT.md`: integration and validation report
+- `docs/METTA_INTEGRATION.md`: MeTTa and Hyperon integration notes
+- `docs/IPS_DR_LOGGED_TRAINING.md`: probability-aware logged-data workflow for IPS/DR checkpoints
+- [MeTTa Python Integration Guide](https://metta-lang.dev/docs/learn/tutorials/python_use/metta_python_basics.html)
+
+## Future Work
+
+- Retrain the MDN under SASP and validate held-out metrics; the committed checkpoint is pre-SASP.
+- Exercise the MDN on a testbed with more than two objectives. The support head, certification chain,
+  certificate schema and MeTTa storage are all correct at any `M >= 2`, but MO-LunarLander only
+  provides `[Safety, Fuel]`, so M > 2 is currently covered by tests rather than by a live environment.
+- Add MetaMo integration for dynamic weight management and risk budgets.
+- Explore cross-paradigm skill sources through logic macros and evolutionary programs.
+- Expand benchmark comparisons against MORL baselines.

@@ -216,7 +216,14 @@ def main():
               'scope': 'Head-only development split; base model may have seen these contexts. Fresh end-to-end evaluation required.',
               'method': 'Explicit baseline, separate payoff, configured eligibility; equal context weighting; hinge loss plus full-simplex squared-distance anchor. Adaptation, not exact draft replication.'}
     out.mkdir(parents=True)
-    torch.save({'model_state_dict':model.state_dict(), 'support_training':report},out/'support.pth')
+    saved = {'model_state_dict': model.state_dict(), 'support_training': report}
+    # The auxiliary head is frozen, so preserve its output interpretation too.
+    base_payload = torch.load(args.base_checkpoint, map_location='cpu')
+    if isinstance(base_payload, dict):
+        for key in ('auxiliary_target_normalization', 'auxiliary_q_calibration'):
+            if key in base_payload:
+                saved[key] = copy.deepcopy(base_payload[key])
+    torch.save(saved, out/'support.pth')
     (out/'summary.json').write_text(json.dumps(report,indent=2,allow_nan=False))
     print('Saved:',out/'support.pth')
 
