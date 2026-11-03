@@ -234,7 +234,23 @@ modulators, which increase the Safety weight, and boldness through Approach,
 which increases the Fuel weight. Its goal-affinity and modulator-gain
 coefficients are semantically designed and evaluated with a synthetic grid
 search; they are **not fitted to actual LunarLander episode outcomes** and
-should be revisited when an end-to-end demo is available.
+should be revisited against real episode outcomes.
+
+**Known limitations of the LunarLander loop**
+(`env/lunar_lander_rollout.py`, `tests/test_lunar_lander_integration.py`):
+
+- **The landing result is counted twice.** The task reward Δr is the landing
+  result alone, but the wrapper's Safety objective also includes the terminal
+  landing reward (`env/lunar_lander_wrapper.py`, `_map_rewards`). So a landing
+  or crash shows up in both Δr and Δn_Safety.
+- **ε cannot decide an admission at the current scale.** ε is at most 0.5,
+  while Δn values are in the hundreds, so crash-only candidates are rejected
+  and landings admitted whatever ε is.
+- **Evidence and execution share a seed.** Each decision step certifies the
+  candidates and flies the chosen one from the same start. This shows the loop
+  is wired correctly, not that a certificate holds on unseen starts.
+- **CVaR is off.** The MDN is untrained, and an untrained MDN makes the CVaR
+  gate admit nearly everything, so the loop certifies with PDS only.
 
 ---
 

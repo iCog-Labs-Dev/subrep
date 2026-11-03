@@ -28,6 +28,9 @@ Known behaviour these tests record without changing:
 * MetaMo raises caution on every step, so the tests that check MetaMo's reaction
   to an outcome compare two fresh governors fed different outcomes, rather than
   one governor before and after.
+* Certification and execution use the same seed. Each step certifies the
+  candidates and flies the chosen one from the same start, so these tests show
+  the loop is wired correctly, not that a certificate holds on unseen starts.
 
 The core tests use the fixed-action and random candidates, which need no PPO
 checkpoint. The PPO tests skip when models/pilot_ppo.pt is missing, and the
