@@ -8,10 +8,7 @@ import re
 import select
 import time
 
-from env.minecraft.reset_manager import (
-    ALLOWED_CONSOLE_COMMANDS,
-    BLOCK_PROBE_POSITIONS,
-)
+from env.minecraft.reset_manager import BLOCK_PROBE_POSITIONS
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,6 +90,7 @@ RAIDER_TYPES = frozenset(
 UUID_PATTERN = re.compile(r"UUID:\s*\[I;\s*([^\]]+)\]")
 NUMBER = r"-?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?"
 HEALTH_PATTERN = re.compile(r"Health:\s*(" + NUMBER + r")f")
+FOOD_PATTERN = re.compile(r"foodLevel:\s*(\d+)")
 POSITION_PATTERN = re.compile(
     r"Pos:\s*\[\s*("
     + NUMBER
@@ -110,6 +108,22 @@ ITEM_PATTERN = re.compile(
     r'\{\s*id:\s*"(minecraft:[^"]+)"\s*,\s*count:\s*(\d+)'
 )
 ANSI_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+ENTITY_ID_PATTERN = re.compile(r'id:\s*"(minecraft:[a-z0-9_]+)"')
+
+
+def _areas():
+    with AREAS_PATH.open(encoding="utf-8") as areas_file:
+        return json.load(areas_file)
+
+
+_AREA_DATA = _areas()
+TORCH_POSITIONS = tuple(tuple(item) for item in _AREA_DATA["torch_positions"])
+GAP_POSITIONS = tuple(tuple(item) for item in _AREA_DATA["perimeter"]["gap_positions"])
+LIGHT_SAMPLE_POSITIONS = tuple(
+    tuple(item) for item in _AREA_DATA["light_sample_positions"]
+)
+CHEST_POSITION = tuple(_AREA_DATA["settlement"]["delivery_chest"])
+VILLAGE_BOUNDS = _AREA_DATA["village_bounds"]
 
 
 def _read_until(manager, predicate, timeout):
@@ -149,11 +163,17 @@ def _entity_from_line(line):
     if marker not in line:
         raise ValueError("unparseable entity observation: {}".format(line.rstrip()))
     prefix = line.split(marker, 1)[0]
-    entity_type = re.sub(r"^.*?\]:\s*", "", prefix).strip()
+    entity_id = ENTITY_ID_PATTERN.search(line)
+    entity_type = (
+        entity_id.group(1).split(":", 1)[1]
+        if entity_id
+        else re.sub(r"^.*?\]:\s*", "", prefix).strip().lower().replace(" ", "_")
+    )
     if not entity_type:
         raise ValueError("entity display name is missing: {}".format(line.rstrip()))
     uuid_match = UUID_PATTERN.search(line)
     health_match = HEALTH_PATTERN.search(line)
+    food_match = FOOD_PATTERN.search(line)
     position_match = POSITION_PATTERN.search(line)
     if not uuid_match:
         raise ValueError("entity observation is missing UUID: {}".format(line.rstrip()))
@@ -169,6 +189,7 @@ def _entity_from_line(line):
         "type": entity_type,
         "uuid": ",".join(uuid_parts),
         "health": float(health_match.group(1)) if health_match else None,
+        "food": int(food_match.group(1)) if food_match else None,
         "pos": [float(value) for value in position_match.groups()],
         "profession": profession_match.group(1) if profession_match else None,
         "has_villager_data": "VillagerData:" in line,
@@ -214,17 +235,15 @@ def _block_from_line(line, position, chest=False):
 def _probe_block(manager, position, block_id):
     x, y, z = position
     command = (
-        "execute if block {} {} {} minecraft:{} run "
-        "say block_id=minecraft:{}"
-    ).format(x, y, z, block_id, block_id)
+        "execute if block {} {} {} minecraft:{}"
+    ).format(x, y, z, block_id)
     manager.send_command(command)
     line = _read_until(
-        manager, lambda value: "block_id=minecraft:" in value, 30
+        manager, lambda value: "Test passed" in value or "Test failed" in value, 30
     )
-    match = PROBED_BLOCK_ID_PATTERN.search(line)
-    if not match:
-        raise ValueError("block probe is missing an id at {}".format(position))
-    return {"id": match.group(1), "items": []}
+    if "Test failed" in line:
+        raise ValueError("unexpected block at {}".format(position))
+    return {"id": "minecraft:" + block_id, "items": []}
 
 
 def observe(manager):
@@ -243,27 +262,24 @@ def observe(manager):
         raise ValueError("entity observation returned no entities")
     entities = [_entity_from_line(line) for line in entity_records]
 
-    with AREAS_PATH.open(encoding="utf-8") as areas_file:
-        gap_positions = [tuple(position) for position in json.load(areas_file)["perimeter"]["gap_positions"]]
     block_observations = {}
-    if len(gap_positions) != len(GAP_COMMANDS):
-        raise ValueError("areas.json gap count does not match fixed observation commands")
     probe_ids = dict(BLOCK_PROBE_POSITIONS)
-    for position in gap_positions + [(32, 64, 0), (40, 64, 0)]:
+    for position in probe_ids:
+        if position == CHEST_POSITION:
+            continue
         block_observations[position] = _probe_block(
             manager, position, probe_ids[position]
         )
-    manager.send_command("data get block 55 64 0")
+    manager.send_command("data get block {} {} {}".format(*CHEST_POSITION))
     line = _read_until(manager, lambda value: "has the following block data:" in value, 30)
-    position = (55, 64, 0)
-    block_observations[position] = _block_from_line(
-        line, position, chest=True
+    block_observations[CHEST_POSITION] = _block_from_line(
+        line, CHEST_POSITION, chest=True
     )
 
     return {"tick": tick, "entities": entities, "blocks": block_observations}
 
 
-def digest_for(observation):
+def _digest_payload(observation):
     villagers = []
     zombie = None
     golem_count = 0
@@ -271,7 +287,14 @@ def digest_for(observation):
     raider_count = 0
     other_entities = []
     for entity in observation["entities"]:
-        entity_type = entity["type"].lower().replace(" ", "_")
+        entity_type = entity["type"].lower().replace("minecraft:", "")
+        position = [math.floor(value) for value in entity["pos"]]
+        if not (
+            VILLAGE_BOUNDS["min"][0] <= position[0] <= VILLAGE_BOUNDS["max"][0]
+            and VILLAGE_BOUNDS["min"][1] <= position[1] <= VILLAGE_BOUNDS["max"][1]
+            and VILLAGE_BOUNDS["min"][2] <= position[2] <= VILLAGE_BOUNDS["max"][2]
+        ) and entity_type != "player":
+            continue
         is_villager = entity["has_villager_data"] and (
             entity["has_offers"] or entity["has_gossips"]
         )
@@ -289,7 +312,7 @@ def digest_for(observation):
                     "uuid": entity["uuid"],
                     "alive": entity["health"] > 0,
                     "health": round(entity["health"], 2),
-                    "pos": [math.floor(value) for value in entity["pos"]],
+                    "pos": position,
                     "profession": entity["profession"],
                 }
             )
@@ -297,7 +320,7 @@ def digest_for(observation):
             zombie = {
                 "present": True,
                 "health": round(entity["health"], 2),
-                "pos": [math.floor(value) for value in entity["pos"]],
+                "pos": position,
                 "profession": entity["profession"],
             }
         elif entity_type == "iron_golem":
@@ -310,31 +333,59 @@ def digest_for(observation):
             other_entities.append(entity_type)
 
     blocks = observation["blocks"]
+    player = next(
+        (
+            {
+                "health": round(entity["health"], 2),
+                "food": entity.get("food"),
+                "pos": [math.floor(value) for value in entity["pos"]],
+            }
+            for entity in observation["entities"]
+            if entity["type"].lower().replace("minecraft:", "") == "player"
+        ),
+        None,
+    )
     light_samples = {
         "{},{},{}".format(*position): blocks[position]["id"]
-        for position in TORCH_POSITIONS
+        for position in LIGHT_SAMPLE_POSITIONS
+        if position in blocks
     }
     gap_positions = []
     with AREAS_PATH.open(encoding="utf-8") as areas_file:
         gap_positions = [tuple(position) for position in json.load(areas_file)["perimeter"]["gap_positions"]]
     wall_gaps = {
         "{},{},{}".format(*position): blocks[position]["id"]
-        for position in gap_positions
+        for position in GAP_POSITIONS
+        if position in blocks
     }
-    chest = blocks[(55, 64, 0)]
+    chest = blocks.get(CHEST_POSITION)
+    if chest is None:
+        chest = next(
+            (value for value in blocks.values() if value.get("id") in ("chest", "minecraft:chest")),
+            {"id": "minecraft:chest", "items": []},
+        )
     result = {
         "tick": int(observation["tick"]),
-        "player": None,
+        "player": player,
         "villagers": sorted(villagers, key=lambda value: value["uuid"]),
         "zombie": zombie if zombie is not None else {"present": False},
         "golem_count": golem_count,
         "hostile_count": hostile_count,
         "raider_count": raider_count,
         "other_entities": sorted(other_entities),
-        "raid_active": False,
+        "raid_active": bool(observation.get("raid_active", False)),
         "light_samples": light_samples,
         "wall_gaps": wall_gaps,
         "chest": {"id": chest["id"], "items": chest["items"]},
     }
-    canonical = json.dumps(result, sort_keys=True, separators=(",", ":"))
+    return result
+
+
+def canonical_digest_payload(observation):
+    payload = _digest_payload(observation)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def digest_for(observation):
+    canonical = canonical_digest_payload(observation)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

@@ -19,9 +19,15 @@ def main():
     digests = []
     timings = []
     failure = None
+    existing_digests, existing_timings = _successful_records()
+    completed = {iteration for iteration, _ in existing_digests}
+    digests.extend(existing_digests)
+    timings.extend(existing_timings)
     try:
         with LOG_PATH.open("a", encoding="utf-8") as log_file:
             for iteration in range(1, 101):
+                if iteration in completed:
+                    continue
                 timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 try:
                     reset_seconds = manager.reset()
@@ -51,6 +57,40 @@ def main():
         _print_summary(digests, timings)
     if failure is not None:
         raise failure
+
+
+def _successful_records():
+    if not LOG_PATH.exists():
+        return [], []
+    records = []
+    with LOG_PATH.open(encoding="utf-8") as log_file:
+        for line in log_file:
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    run_start = max(
+        (
+            index
+            for index, record in enumerate(records)
+            if record.get("iteration") == 1
+        ),
+        default=0,
+    )
+    digests = []
+    timings = []
+    for record in records[run_start:]:
+        iteration = record.get("iteration")
+        if (
+            isinstance(iteration, int)
+            and 1 <= iteration <= 100
+            and isinstance(record.get("digest"), str)
+        ):
+            digests.append((iteration, record["digest"]))
+            reset_seconds = record.get("reset_seconds")
+            if isinstance(reset_seconds, (int, float)):
+                timings.append(reset_seconds)
+    return digests, timings
 
 
 def _print_summary(digests, timings):
