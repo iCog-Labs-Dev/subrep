@@ -8,6 +8,7 @@ const TOKEN = process.env.SUBREP_BOT_TOKEN;
 const MAX_BODY_BYTES = 1024 * 1024;
 const RATE_WINDOW_MS = 1000;
 const RATE_LIMIT = 10;
+const RUN_TOKEN_EXPIRES_AT = Number(process.env.SUBREP_BOT_TOKEN_EXPIRES_AT || 0) || Date.now() + 3600000;
 const NOT_IMPLEMENTED_ACTIONS = new Set([
   "walk_route",
   "sprint_route",
@@ -40,6 +41,7 @@ bot.loadPlugin(pathfinder);
 let movements;
 let stopping = false;
 const requestTimes = [];
+const seenMessageIds = new Set();
 
 function observation() {
   if (!bot.entity) {
@@ -68,7 +70,21 @@ function sendJson(response, statusCode, payload) {
 }
 
 function authorized(request) {
-  return request.headers["x-subrep-token"] === TOKEN;
+  return request.headers["x-subrep-token"] === TOKEN && Date.now() < RUN_TOKEN_EXPIRES_AT;
+}
+
+function envelope(payload, body) {
+  if (!body || typeof body.message_id !== "string") {
+    return payload;
+  }
+  return Object.assign(
+    {
+      message_id: body.message_id,
+      snapshot_id: body.snapshot_id || null,
+      world_tick: body.world_tick == null ? null : body.world_tick,
+    },
+    payload,
+  );
 }
 
 function rateAllowed() {
@@ -87,16 +103,23 @@ function readBody(request) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let tooLarge = false;
     request.on("data", (chunk) => {
+      if (tooLarge) {
+        return;
+      }
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
+        tooLarge = true;
         reject(Object.assign(new Error("request body too large"), { statusCode: 413 }));
-        request.destroy();
         return;
       }
       chunks.push(chunk);
     });
     request.on("end", () => {
+      if (tooLarge) {
+        return;
+      }
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
       } catch {
@@ -148,6 +171,16 @@ async function handle(request, response) {
     sendJson(response, 429, { status: "error", reason: "rate_limited" });
     return;
   }
+  if (request.method === "GET" && ["/health", "/status"].includes(request.url)) {
+    sendJson(response, 200, {
+      status: "ok",
+      health: bot.entity ? bot.health : null,
+      spawned: Boolean(bot.entity),
+      auth: "offline",
+      token_expires_at: new Date(RUN_TOKEN_EXPIRES_AT).toISOString(),
+    });
+    return;
+  }
   if (request.method !== "POST" || !["/observe", "/act", "/stop"].includes(request.url)) {
     sendJson(response, 404, { status: "error", reason: "not_found" });
     return;
@@ -163,25 +196,32 @@ async function handle(request, response) {
     return;
   }
   try {
+    if (body.message_id) {
+      if (seenMessageIds.has(body.message_id)) {
+        sendJson(response, 409, { status: "error", reason: "replay" });
+        return;
+      }
+      seenMessageIds.add(body.message_id);
+    }
     if (request.url === "/observe") {
-      sendJson(response, 200, observation());
+      sendJson(response, 200, envelope(observation(), body));
     } else if (request.url === "/act") {
       if (NOT_IMPLEMENTED_ACTIONS.has(body.action)) {
-        sendJson(response, 200, {
+        sendJson(response, 200, envelope({
           status: "not_implemented",
           action: body.action,
-        });
+        }, body));
       } else if (body.action === "wait") {
-        sendJson(response, 200, observation());
+        sendJson(response, 200, envelope(observation(), body));
       } else if (body.action === "move_hall") {
-        sendJson(response, 200, await moveTo(40, 64, 0));
+        sendJson(response, 200, envelope(await moveTo(40, 64, 0), body));
       } else if (body.action === "move_perimeter") {
-        sendJson(response, 200, await moveTo(40, 64, 8));
+        sendJson(response, 200, envelope(await moveTo(68, 64, 1), body));
       } else {
-        sendJson(response, 400, { status: "error", reason: "unknown_action" });
+        sendJson(response, 400, envelope({ status: "error", reason: "unknown_action" }, body));
       }
     } else {
-      sendJson(response, 200, { status: "ok" });
+      sendJson(response, 200, envelope({ status: "ok" }, body));
       stopping = true;
       bot.quit("emergency stop");
       setImmediate(() => process.exit(0));

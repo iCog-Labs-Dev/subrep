@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import time
 from typing import Dict, Any
 from urllib import error, request
@@ -26,6 +27,31 @@ class SidecarClient:
 
     def emergency_stop(self) -> Dict[str, Any]:
         return self._post("/stop", {}, 5)
+
+    def health(self) -> Dict[str, Any]:
+        return self._get("/health", 5)
+
+    def status(self) -> Dict[str, Any]:
+        return self._get("/status", 5)
+
+    def _get(self, path: str, timeout: float) -> Dict[str, Any]:
+        http_request = request.Request(
+            self.base_url + path,
+            method="GET",
+            headers={"X-SubRep-Token": self.token},
+        )
+        try:
+            with request.urlopen(http_request, timeout=timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            if exc.code == 401:
+                raise RuntimeError("sidecar authentication failed") from exc
+            raise RuntimeError("sidecar returned HTTP {}".format(exc.code)) from exc
+        except (error.URLError, TimeoutError, socket.timeout) as exc:
+            raise RuntimeError("sidecar request failed") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("sidecar returned invalid JSON")
+        return result
 
     def _post(
         self, path: str, payload: Dict[str, Any], timeout: float
@@ -66,7 +92,7 @@ class SidecarClient:
             ) from exc
         except error.URLError as exc:
             raise RuntimeError("sidecar connection failed: {}".format(exc.reason)) from exc
-        except TimeoutError as exc:
+        except (TimeoutError, socket.timeout) as exc:
             raise RuntimeError("sidecar request timed out") from exc
         if not isinstance(result, dict):
             raise RuntimeError("sidecar returned invalid JSON")

@@ -18,6 +18,13 @@ Endpoints:
 - `POST /act` accepts `{"action":"wait"}`, `{"action":"move_hall"}`,
   or `{"action":"move_perimeter"}`.
 - `POST /stop` disconnects the bot and exits.
+- `GET /health` and `GET /status` report spawn health, offline authentication,
+  and the current run-token expiry.
+
+Requests may include `message_id`, `snapshot_id`, and `world_tick`. A
+`message_id` is accepted once per bot run; replayed IDs return HTTP 409.
+Responses to enveloped requests echo those fields. The run token expires one
+hour after startup, or at `SUBREP_BOT_TOKEN_EXPIRES_AT` when supplied.
 
 Action gate:
 
@@ -29,6 +36,6 @@ Action gate:
 
 The bot spawns at world spawn `(0, 64, 0)`. `move_hall` targets
 `(40, 64, 0)`, the hall player start from `minecraft/world/areas.json`.
-`move_perimeter` targets `(40, 64, 8)`, a clear interior point. Movement
+`move_perimeter` targets `(68, 64, 1)`, a clear interior point. Movement
 waits up to 30 seconds. Requests are limited to 10 per second and bodies
 are limited to 1 MB.
