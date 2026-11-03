@@ -506,3 +506,33 @@ Vertex enumeration was retired because its cost grows combinatorially with M.
 - Add MetaMo integration for dynamic weight management and risk budgets.
 - Explore cross-paradigm skill sources through logic macros and evolutionary programs.
 - Expand benchmark comparisons against MORL baselines.
+
+### Optional margin-based support-head training
+
+`python -m generator.train_mdn_margin_support --help` describes the offline
+trainer. This CLI is specifically a three-objective SafetyPointGoal1 adapter,
+not a general dataset interface. Its differentiable solver supports arbitrary
+matching objective dimensions. It keeps the architecture and exact certification gates unchanged.
+The differentiable capped-simplex solver matches the exact worst-case solver;
+it is piecewise differentiable, with subgradients at active-set changes.
+Only support-head parameters are optimized. The CDS margin uses epsilon zero;
+positive epsilon uses the existing PDS-epsilon definition, not the draft's
+coverage-PDS algorithm.
+
+Implementation choices: exclude idle and non-positive-task candidates; include
+only candidates that could pass at some simplex weight; average hinge penalties
+within each eligible context and then across contexts. Add
+`regularization * mean((1-caps)^2)` as a full-simplex anchor against gratuitous
+shrinking. The default 0.1 is a development starting point, not a paper-derived
+or validated optimum. This does not guarantee meaningful semantic geometry or
+prevent all degeneracy. Record/freeze settings before fresh evaluation.
+
+Raw candidate outcomes and frozen divisors are required. The utility convention
+remains normalized task payoff plus weighted motives (task contributes twice).
+A seeded context-disjoint 70/15/15 split selects a checkpoint on validation
+loss, including the initial model as an eligible checkpoint. Data files,
+checkpoint and scales are hashed in the summary. Since the base MDN may already
+have seen these observations, the split evaluates support fitting only, not
+independent end-to-end generalization. Always recheck predicted regions with the
+exact certification gates on fresh evaluation contexts. No PPO retraining or
+synthetic largest-region teacher is required.
