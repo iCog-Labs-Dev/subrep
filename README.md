@@ -509,30 +509,63 @@ Vertex enumeration was retired because its cost grows combinatorially with M.
 
 ### Optional margin-based support-head training
 
-`python -m generator.train_mdn_margin_support --help` describes the offline
-trainer. This CLI is specifically a three-objective SafetyPointGoal1 adapter,
-not a general dataset interface. Its differentiable solver supports arbitrary
-matching objective dimensions. It keeps the architecture and exact certification gates unchanged.
-The differentiable capped-simplex solver matches the exact worst-case solver;
-it is piecewise differentiable, with subgradients at active-set changes.
-Only support-head parameters are optimized. The CDS margin uses epsilon zero;
-positive epsilon uses the existing PDS-epsilon definition, not the draft's
-coverage-PDS algorithm.
+`python -m generator.train_mdn_margin_support --help` describes the
+**environment-independent** offline trainer. Users supply their own measured
+candidate outcomes and a dimension-compatible base MDN checkpoint. No simulator
+or environment-specific imports are required by the trainer. The existing
+architecture and exact CDS/PDS gates remain unchanged.
 
-Implementation choices: exclude idle and non-positive-task candidates; include
-only candidates that could pass at some simplex weight; average hinge penalties
-within each eligible context and then across contexts. Add
-`regularization * mean((1-caps)^2)` as a full-simplex anchor against gratuitous
-shrinking. The default 0.1 is a development starting point, not a paper-derived
-or validated optimum. This does not guarantee meaningful semantic geometry or
-prevent all degeneracy. Record/freeze settings before fresh evaluation.
+Each `.npz` file represents one starting-context rollout and contains:
 
-Raw candidate outcomes and frozen divisors are required. The utility convention
-remains normalized task payoff plus weighted motives (task contributes twice).
-A seeded context-disjoint 70/15/15 split selects a checkpoint on validation
-loss, including the initial model as an eligible checkpoint. Data files,
-checkpoint and scales are hashed in the summary. Since the base MDN may already
-have seen these observations, the split evaluates support fitting only, not
-independent end-to-end generalization. Always recheck predicted regions with the
-exact certification gates on fresh evaluation contexts. No PPO retraining or
-synthetic largest-region teacher is required.
+- `context`: finite numeric vector `(D,)`.
+- `candidate_skill_ids`: distinct string IDs `(K,)`, including the baseline.
+- `candidate_payoffs`: finite cumulative scalar payoffs `(K,)`.
+- `candidate_motives`: finite cumulative motive returns `(K,M)`, with M >= 2.
+
+All outcomes must be measured from that same starting context using consistent
+horizons, discounts, and objective order. Higher values must mean better outcomes
+(negate costs). The same candidates in the same order are currently required
+across files. At least ten distinct context groups are required. Repeated observations (rounded
+to four decimals) stay together in one split; all their outcomes are retained.
+Training weights rollout records equally, so contexts with more repeats have
+more influence. Optional metadata
+`env_id`, `gamma`, and `objective_names` must be consistent across files. Legacy
+files without these fields are accepted; their semantics are the collector's
+responsibility. If `values_are_raw` is supplied it must be true. The existing
+MO-LunarLander candidate collector emits the required fields, with `noop` as an
+available baseline. No Safety objective or environment is assumed.
+
+The trainer subtracts the explicitly named baseline separately from payoffs and
+motives. Optional `--scales-file` JSON contains positive `divisors` of length M;
+without it motive scales are identity. `--payoff-scale` independently scales
+payoff improvements (default 1). Scales must be fitted before final evaluation
+and then frozen; no automatic coordinate is used as payoff.
+
+Example after collecting MO-LunarLander candidate data and training a compatible
+base MDN:
+
+```bash
+python -m generator.train_mdn_margin_support \
+  --data-dir data/my_candidates \
+  --baseline-candidate-id noop \
+  --base-checkpoint models/my_auxiliary.pth \
+  --output-dir data/my_margin_run \
+  --eligibility feasible --epsilon 0.2 --regularization 0.1 --epochs 500
+```
+
+Eligibility is explicit: `all` uses every non-baseline candidate; `feasible`
+(default) uses candidates whose recorded payoff/motives could pass at some
+simplex weight; `positive-payoff` further requires positive payoff improvement.
+Hinge penalties are averaged within records, then across eligible records.
+The anchor `regularization * mean((1-caps)^2)` discourages gratuitous shrinking.
+The default 0.1 is a development choice, not a validated optimum or semantic
+guarantee. Only support-head parameters are optimized. Epsilon zero uses the CDS
+margin; positive epsilon uses existing PDS-epsilon, not draft coverage-PDS.
+The solver is exact for capped simplices and differentiable almost everywhere.
+
+A seeded context-disjoint 70/15/15 split selects the validation-best checkpoint,
+including the initial model. Data, base checkpoint and optional scales hashes
+are recorded. If the base MDN saw these contexts, this is only a head-fitting
+split, not independent end-to-end evaluation. Always certify predicted regions
+with the exact gates on fresh contexts. Existing target-regression training
+remains available. This method is a documented adaptation of the draft.

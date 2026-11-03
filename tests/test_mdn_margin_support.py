@@ -33,7 +33,7 @@ def test_updates_only_support_head_and_reduces_loss():
     d = torch.tensor([[[-2.,1.,-2.]]]*3)
     opt = torch.optim.SGD(m.support_head.parameters(),lr=.01)
     def loss():
-        return margin_loss(m.forward_inference(x)[1],d,0.,.1)[0]
+        return margin_loss(m.forward_inference(x)[1],d,d[...,1],0.,.1)[0]
     initial = float(loss().detach())
     opt.zero_grad(); loss().backward()
     assert any(p.grad is not None and p.grad.abs().sum()>0 for p in m.support_head.parameters())
@@ -48,7 +48,7 @@ def test_infeasible_caps_and_empty_eligibility():
     with pytest.raises(ValueError):
         worst_case(torch.ones(3),torch.tensor([.1,.1,.1]))
     caps=torch.tensor([[.7,.7,.7]],requires_grad=True)
-    loss,metrics=margin_loss(caps,torch.tensor([[[0.,-1.,0.]]]),.2,.1)
+    loss,metrics=margin_loss(caps,torch.tensor([[[0.,-1.,0.]]]),torch.tensor([[-1.]]),.2,.1)
     assert metrics['eligible_pairs']==0
     assert metrics['eligible_pass_rate'] is None
     loss.backward()
@@ -67,7 +67,8 @@ def test_rejects_objective_broadcasting():
         worst_case(torch.ones(1), torch.ones(3))
 
 
-def test_cli_roundtrip(tmp_path, monkeypatch):
+@pytest.mark.parametrize("m", [2, 3, 5])
+def test_cli_roundtrip(tmp_path, monkeypatch, m):
     import json
     import sys
     from generator.train_mdn_margin_support import main
@@ -76,17 +77,16 @@ def test_cli_roundtrip(tmp_path, monkeypatch):
     data.mkdir()
     for i in range(12):
         np.savez(data / f'{i:02}.npz', context=np.array([i, 0, 1, 2],dtype=np.float32),
-                 candidate_skill_ids=['zero_action','moving'], values_are_raw=True,
-                 candidate_motives=[[0,0,0],[-2,1,-2]], env_id='SafetyPointGoal1-v0',
-                 gamma=.99, objective_names=['Safety','Task','ControlEfficiency'])
+                 candidate_skill_ids=['reference','moving'], values_are_raw=True,
+                 candidate_motives=np.array([[0.]*m, [-2.]*(m-1)+[1.]]), candidate_payoffs=[0.,.5])
     scales = tmp_path / 'scales.json'
-    scales.write_text(json.dumps({'divisors':[1,1,1]}))
+    scales.write_text(json.dumps({'divisors':[1]*m}))
     base = tmp_path / 'base.pth'
-    model = MotiveDecompositionNetwork(input_dim=4,num_objectives=3)
+    model = MotiveDecompositionNetwork(input_dim=4,num_objectives=m)
     torch.save({'model_state_dict':model.state_dict()}, base)
     output = tmp_path / 'output'
     monkeypatch.setattr(sys, 'argv', ['train', '--data-dir',str(data),'--scales-file',str(scales),
-        '--base-checkpoint',str(base),'--output-dir',str(output),'--epochs','2'])
+        '--base-checkpoint',str(base),'--output-dir',str(output),'--epochs','2','--baseline-candidate-id','reference'])
     main()
     loaded = load_mdn_checkpoint(output / 'support.pth')
     for n,p in model.named_parameters():
@@ -98,3 +98,24 @@ def test_cli_roundtrip(tmp_path, monkeypatch):
     assert summary['best_epoch'] in (0,1,2)
     with pytest.raises(FileExistsError):
         main()
+
+
+def test_payoff_is_independent_of_motive_coordinates():
+    caps = torch.ones(1, 2)
+    motives = torch.tensor([[[-2., -1.]]])
+    _, good = margin_loss(caps, motives, torch.tensor([[3.]]), 0., 0., 'all')
+    _, bad = margin_loss(caps, motives, torch.tensor([[0.]]), 0., 0., 'all')
+    assert good['eligible_pass_rate'] == 1
+    assert bad['eligible_pass_rate'] == 0
+
+
+def test_repeated_contexts_stay_in_same_split():
+    from generator.train_mdn_margin_support import grouped_split
+    contexts = np.repeat(np.arange(12, dtype=np.float32)[:, None], 3, axis=0)
+    splits = grouped_split(contexts, 42)
+    assert sorted(i for ids in splits.values() for i in ids) == list(range(36))
+    key_sets = [set(float(contexts[i, 0]) for i in ids) for ids in splits.values()]
+    assert all(not key_sets[i] & key_sets[j] for i in range(3) for j in range(i))
+    assert all(np.array_equal(ids, grouped_split(contexts, 42)[name]) for name, ids in splits.items())
+    with pytest.raises(ValueError, match='distinct context groups'):
+        grouped_split(np.zeros((20, 2)), 42)
