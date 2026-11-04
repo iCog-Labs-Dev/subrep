@@ -204,6 +204,18 @@ def test_a_measuring_limit_is_recorded_and_still_needs_a_certificate(env, book, 
     assert record["not_measured_by_limit"]
 
 
+def test_a_measuring_limit_keeps_the_rest_of_the_plan_in_progress_measured(env, book, table):
+    runs = [run_goal(env, book, table, seed, limit=1) for seed in range(2000, 2010)]
+    rests = [
+        (before.skills[1:], after)
+        for run in runs
+        for before, after in zip(run.decisions, run.decisions[1:])
+        if before.execution is not None and before.execution.completed and len(before.skills) > 1
+    ]
+    assert rests
+    assert all(rest not in {candidate.skills for candidate in after.skipped} for rest, after in rests)
+
+
 def test_several_goals_compete_and_the_winner_is_recorded(env, book, table):
     observation, _ = env.reset(seed=TILTED_START_SEED)
     run = pursue(LUNAR_LANDER, env, observation, ("recover_stability", "land_on_pad"), book, table, SAFETY_FIRST)

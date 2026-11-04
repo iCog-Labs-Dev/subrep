@@ -150,6 +150,19 @@ def test_a_limit_keeps_the_most_promising_plans_and_records_the_rest():
     assert [c.skills for c in generation.skipped] == [("warm", "finish")]
 
 
+def test_a_limit_always_keeps_the_rest_of_the_plan_in_progress():
+    values = {("warm", "finish"): 1.0, ("cool", "finish"): 2.0}
+    generation = generate(toy_book(), ("g",), {}, rough_value=values.get, limit=1, keep=("warm", "finish"))
+    assert [c.skills for c in generation.candidates] == [("warm", "finish")]
+    assert [c.skills for c in generation.skipped] == [("cool", "finish")]
+
+
+def test_a_plan_in_progress_the_planner_no_longer_proposes_changes_nothing():
+    values = {("warm", "finish"): 1.0, ("cool", "finish"): 2.0}
+    without = generate(toy_book(), ("g",), {}, rough_value=values.get, limit=1)
+    assert generate(toy_book(), ("g",), {}, rough_value=values.get, limit=1, keep=("finish",)) == without
+
+
 def test_priorities_change_which_plans_a_limit_keeps():
     weights_to_values = {
         "warm_first": {("warm", "finish"): 2.0, ("cool", "finish"): 1.0},

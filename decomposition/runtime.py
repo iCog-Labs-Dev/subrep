@@ -231,7 +231,13 @@ def pursue(
             if current is not None:
                 weights = current.weights
                 generation = generate(
-                    book, offered, facts, lambda skills: table.rough_value(skills, weights), limit, not decisions
+                    book,
+                    offered,
+                    facts,
+                    lambda skills: table.rough_value(skills, weights),
+                    limit,
+                    at_start=not decisions,
+                    keep=remaining,
                 )
                 verdicts = tuple(verify(generation.candidates, obs, table, current, timestamp, min_goal_rate))
                 if feedback is not None:

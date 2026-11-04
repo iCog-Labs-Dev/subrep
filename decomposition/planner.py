@@ -30,7 +30,8 @@ effects by the verifier.
 
 Priorities reach the planner in one way only. Measuring a plan can cost far more
 than listing it, so ``generate`` can order the candidates by a rough value under
-the priorities and keep the most promising ones, recording what it left out. It
+the priorities and keep the most promising ones, recording what it left out. The
+rest of the plan in progress is always kept, so that it can be re-certified. It
 never drops a plan because of what the plan is called or which motive it seems to
 serve: the plan named fuel-saving can be the safest. Without a limit it returns
 every candidate in the book's order, so that experiments can hold the candidate
@@ -147,12 +148,15 @@ def generate(
     rough_value: Optional[Callable[[Tuple[str, ...]], float]] = None,
     limit: Optional[int] = None,
     at_start: bool = True,
+    keep: Tuple[str, ...] = (),
 ) -> Generation:
     """The distinct candidate plans for ``goals``, the first goal's plan winning when two share their skills.
 
     ``rough_value`` estimates a plan's worth under the current priorities. With a
     ``limit``, only that many candidates are kept, best first; ties keep the
-    book's order. Without one, every candidate is kept in the book's order.
+    book's order. A proposed plan with the skills ``keep``, the rest of the plan
+    in progress, is always kept and takes the first place. Without a limit, every
+    candidate is kept in the book's order.
     """
     if limit is not None and limit < 1:
         raise ValueError(f"limit must be at least 1, got {limit}")
@@ -165,7 +169,7 @@ def generate(
         return Generation(tuple(plans))
     if rough_value is None:
         raise ValueError("a limit needs a rough value to choose which plans to measure")
-    ranked = sorted(plans, key=lambda plan: -rough_value(plan.skills))
+    ranked = sorted(plans, key=lambda plan: (plan.skills != keep, -rough_value(plan.skills)))
     return Generation(tuple(ranked[:limit]), tuple(ranked[limit:]))
 
 
