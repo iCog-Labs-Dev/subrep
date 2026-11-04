@@ -16,12 +16,16 @@ The plan in progress is kept unless another admitted plan beats it by more than
 ``SWITCH_MARGIN``, so that small differences between estimates do not make the
 lander change its mind at every subgoal.
 
-When nothing is admitted, the plan in progress goes on under the certificate it
-already holds only if the last skill completed and the gates did not reject the
-rest of the plan: if the rest was simply not measured from a state like this one,
-or if it passes the gates but reaches its goal less often than a new plan must.
-In the air, stopping is usually worse than carrying on. A plan the gates reject
-is not flown.
+Every skill flies under a certificate admitted from the state it starts in. When
+nothing is admitted, the run stops, unless the caller chooses the continuation
+policy ``Continuation.KEEP_UNREJECTED_PLAN``. The plan in progress then goes on
+without a new certificate, but only if priorities were given, its last skill
+completed, and the rest of it was not rejected from this state: nothing was
+measured from states like this one, or it passed the gates but reaches its goal
+less often than a new plan must. A rest the gates reject, a rest the planner no
+longer proposes, and refused priorities stop the run under either policy.
+Decisions taken under the continuation policy are recorded as continued, never
+as re-certified.
 
 A new plan must reach its goal at least ``DEFAULT_MIN_GOAL_RATE`` of the time
 with 95% confidence, so that a plan cannot be chosen because it ends the episode
@@ -38,11 +42,11 @@ Whether a goal is achieved is confirmed, never assumed:
   hold. A terminal goal, such as landing on the pad, is achieved only by how the
   episode ends.
 
-The runtime never acts without a certificate: when no plan can be flown it stops
-and leaves the lander to the caller. Given a feedback log, it also skips plans
-whose certificates the log has revoked. A source of priorities may refuse to give
-any, as an MDN whose weights lie outside its own region does; nothing new is then
-certified.
+By default the runtime never acts without a current certificate: when no plan can
+be flown it stops and leaves the lander to the caller. Given a feedback log, it
+also skips plans whose certificates the log has revoked. A source of priorities
+may refuse to give any, as an MDN whose weights lie outside its own region does;
+nothing new is then certified.
 """
 
 from __future__ import annotations
@@ -87,6 +91,13 @@ class GoalStatus(str, Enum):
     FAILED = "failed"
 
 
+class Continuation(str, Enum):
+    """What the runtime does when no plan is admitted from the current state."""
+
+    STOP = "stop"  # every skill needs a certificate admitted from the state it starts in
+    KEEP_UNREJECTED_PLAN = "keep_unrejected_plan"  # the plan in progress may go on, as the module describes
+
+
 @dataclass(frozen=True)
 class Decision:
     """One round of planning and certifying, and the skill flown because of it."""
@@ -99,6 +110,7 @@ class Decision:
     recertified: bool  # whether the verifier admitted this plan from this very state
     skipped: Tuple[CandidatePlan, ...] = ()  # candidates a measuring limit left out, kept for the record
     weights: Optional[Tuple[float, ...]] = None  # the priorities at this decision; None if refused
+    continued: bool = False  # flown under the continuation policy, on a certificate from an earlier state
 
 
 @dataclass(frozen=True)
@@ -136,6 +148,11 @@ class GoalRun:
         return sum(decision.recertified for decision in self.decisions[1:])
 
     @property
+    def continued(self) -> int:
+        """Decisions flown under the continuation policy, without current approval."""
+        return sum(decision.continued for decision in self.decisions)
+
+    @property
     def switches(self) -> int:
         """Times a skill finished and the next one flown was not the next skill of the plan."""
         return sum(
@@ -156,6 +173,7 @@ class GoalRun:
             "frames": self.frames,
             "rechecks": self.rechecks,
             "recertified_rechecks": self.recertified_rechecks,
+            "continued": self.continued,
             "switches": self.switches,
             "replans": self.replans,
             "episode_over": self.episode_over,
@@ -176,12 +194,14 @@ def pursue(
     timestamp: Optional[str] = None,
     min_goal_rate: float = DEFAULT_MIN_GOAL_RATE,
     limit: Optional[int] = None,
+    continuation: Continuation = Continuation.STOP,
 ) -> GoalRun:
     """Pursue ``goals`` from ``observation``, which ``env`` must have just produced.
 
     ``priorities`` are fixed, or a source asked at every decision. ``limit`` caps
     how many candidates are measured at each decision, most promising first under
-    the priorities. It is off by default.
+    the priorities. It is off by default. ``continuation`` says what happens when
+    nothing is admitted; by default the run stops.
     """
     offered = (goals,) if isinstance(goals, str) else tuple(goals)
     unknown = [goal for goal in offered if goal not in book.goals]
@@ -217,19 +237,26 @@ def pursue(
                 if feedback is not None:
                     verdicts = feedback.screen(verdicts, facts)
             weights = None if current is None else current.weights
+            skipped = generation.skipped
 
             chosen = _choose(verdicts, remaining)
             recertified = chosen is not None
-            if chosen is not None:
+            continued = (
+                not recertified
+                and continuation is Continuation.KEEP_UNREJECTED_PLAN
+                and current is not None
+                and _may_continue(verdicts, remaining)
+            )
+            if recertified:
                 in_progress, remaining = chosen, chosen.candidate.skills
-            elif not _may_go_on(verdicts, remaining):
-                decisions.append(Decision(facts, verdicts, None, (), None, False, generation.skipped, weights))
+            elif not continued:
+                decisions.append(Decision(facts, verdicts, None, (), None, False, skipped, weights))
                 status = GoalStatus.NO_CERTIFIED_PLAN if current is not None else GoalStatus.PRIORITIES_REFUSED
                 break
 
             execution = execute(domain, env, book, remaining[:1], obs, settle=len(remaining) == 1)
             decisions.append(
-                Decision(facts, verdicts, in_progress, remaining, execution, recertified, generation.skipped, weights)
+                Decision(facts, verdicts, in_progress, remaining, execution, recertified, skipped, weights, continued)
             )
             rewards.extend(execution.rewards)
             obs, episode_over = execution.observation, execution.episode_over
@@ -272,12 +299,13 @@ def _choose(verdicts: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> Opti
     return best if best.score > current.score + SWITCH_MARGIN * abs(current.score) else current
 
 
-def _may_go_on(verdicts: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> bool:
-    """Whether the plan in progress may go on although nothing was admitted from this state."""
-    if not remaining:
-        return False
-    current = _verdict_for(verdicts, remaining)
-    return current is None or current.reason in (NOT_MEASURED, GOAL_TOO_RARE)
+def _may_continue(verdicts: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> bool:
+    """Whether the continuation policy lets the plan in progress go on although nothing was admitted.
+
+    Only a rest the planner still proposes and the gates did not reject may go on.
+    """
+    current = _verdict_for(verdicts, remaining) if remaining else None
+    return current is not None and current.reason in (NOT_MEASURED, GOAL_TOO_RARE)
 
 
 def goal_achieved(
@@ -299,6 +327,7 @@ def _decision_record(decision: Decision) -> Dict[str, object]:
         "goal_graph": None if chosen is None else goal_graph(chosen.candidate),
         "skills_left": list(decision.skills),
         "recertified": decision.recertified,
+        "continued": decision.continued,
         "gate": None if chosen is None else chosen.entry.gate_type,
         "score": None if chosen is None else chosen.score,
         "rejected": [

@@ -9,7 +9,7 @@ import pytest
 from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, build_table
 from decomposition.planner import CandidatePlan, plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
-from decomposition.runtime import GoalStatus, _choose, _may_go_on, goal_achieved, pursue
+from decomposition.runtime import Continuation, GoalStatus, _choose, _may_continue, goal_achieved, pursue
 from decomposition.verifier import GOAL_TOO_RARE, NOT_MEASURED, MdnRegion, PlanVerdict, Priorities
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, landing_outcome, lander_facts
@@ -117,20 +117,37 @@ def test_without_a_certified_plan_nothing_is_flown(env, book, table):
     np.testing.assert_array_equal(run.observation, observation)
 
 
-def test_a_plan_goes_on_under_its_certificate_when_the_rest_was_not_measured(env, book, starts_only):
-    runs = (run_goal(env, book, starts_only, seed, min_goal_rate=0.0) for seed in range(2000, 2100))
+def test_the_rest_of_a_plan_without_current_approval_is_not_flown(env, book, starts_only):
+    runs = [run_goal(env, book, starts_only, seed, min_goal_rate=0.0) for seed in range(2000, 2030)]
+    assert all(decision.recertified and not decision.continued for run in runs for decision in run.flown)
+    stopped = next(r for r in runs if r.status is GoalStatus.NO_CERTIFIED_PLAN and r.flown)
+    assert stopped.flown[-1].execution.completed
+    assert stopped.decisions[-1].execution is None and stopped.decisions[-1].chosen is None
+    assert {v.reason for v in stopped.decisions[-1].verdicts if v.candidate.skills == stopped.flown[-1].skills[1:]} == {
+        NOT_MEASURED
+    }
+
+
+def test_the_continuation_policy_flies_an_unmeasured_rest_and_records_it(env, book, starts_only):
+    runs = (
+        run_goal(env, book, starts_only, seed, min_goal_rate=0.0, continuation=Continuation.KEEP_UNREJECTED_PLAN)
+        for seed in range(2000, 2100)
+    )
     run = next(r for r in runs if len(r.flown) > 1 and not r.flown[1].recertified)
     first, second = run.flown[:2]
-    assert first.recertified
-    assert second.chosen is first.chosen
+    assert first.recertified and not first.continued
+    assert second.continued and second.chosen is first.chosen
     assert second.skills == first.skills[1:]
+    assert run.continued >= 1 and run.record()["decisions"][1]["continued"] is True
 
 
 def test_after_a_failed_step_a_replan_needs_measurements_that_apply(env, book, starts_only, monkeypatch):
     monkeypatch.setitem(SUBSKILLS, "slow_descent", dataclasses.replace(SUBSKILLS["slow_descent"], max_frames=20))
     monkeypatch.setitem(SUBSKILLS, "move_over_pad", dataclasses.replace(SUBSKILLS["move_over_pad"], max_frames=20))
     runs = (run_goal(env, book, starts_only, seed, min_goal_rate=0.0) for seed in range(2000, 2100))
-    run = next(r for r in runs if r.status is GoalStatus.NO_CERTIFIED_PLAN and r.flown)
+    run = next(
+        r for r in runs if r.status is GoalStatus.NO_CERTIFIED_PLAN and r.flown and r.flown[-1].execution.stopped_at
+    )
     assert run.flown[-1].execution.stopped_at is not None
     assert run.decisions[-1].execution is None
     assert {verdict.reason for verdict in run.decisions[-1].verdicts} == {NOT_MEASURED}
@@ -214,13 +231,19 @@ def test_a_source_that_refuses_priorities_flies_nothing_new(env, book, table):
     assert run.frames == 0 and run.decisions[0].weights is None
 
 
-def test_a_refusal_in_mid_flight_lets_the_plan_in_progress_go_on(env, book, table):
+@pytest.mark.parametrize("continuation", list(Continuation))
+def test_a_refusal_in_mid_flight_stops_the_run(env, book, table, continuation):
     answers = iter([SAFETY_FIRST])
+
+    def source(observation):
+        return next(answers, None)
+
     observation, _ = env.reset(seed=TILTED_START_SEED)
-    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, lambda obs: next(answers, None))
-    assert len(run.flown) > 1
-    assert all(decision.weights is None and not decision.recertified for decision in run.flown[1:])
-    assert run.flown[1].chosen is run.flown[0].chosen
+    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, source, continuation=continuation)
+    assert run.status is GoalStatus.PRIORITIES_REFUSED
+    [flown] = run.flown
+    assert flown.recertified and run.continued == 0
+    assert run.decisions[-1].weights is None and run.decisions[-1].execution is None
 
 
 def test_inputs_are_checked(env, book, table):
@@ -238,7 +261,8 @@ def test_the_record_is_json_ready(env, book, table):
     assert record["status"] == "achieved" and record["replans"] == 0
     first = record["decisions"][0]
     assert first["plan"].startswith("plan:land_on_pad/")
-    assert first["gate"] == "CDS" and first["recertified"]
+    assert first["gate"] == "CDS" and first["recertified"] and first["continued"] is False
+    assert record["continued"] == 0
     assert first["goal_graph"]["goal"] == "land_on_pad"
     last = record["decisions"][-1]
     assert last["steps"][-1]["skill"] == "touch_down"
@@ -277,14 +301,15 @@ def test_a_plan_in_progress_the_gates_now_reject_is_replaced():
     "verdicts, remaining, allowed",
     [
         ([], (), False),
-        ([], ("b",), True),  # the planner no longer proposes this exact rest
+        ([verdict(["b"], reason=NOT_MEASURED)], (), False),  # no plan in progress
+        ([], ("b",), False),  # the planner no longer proposes this exact rest, or priorities were refused
         ([verdict(["b"], reason=NOT_MEASURED)], ("b",), True),
         ([verdict(["b"], reason=GOAL_TOO_RARE)], ("b",), True),
         ([verdict(["b"])], ("b",), False),  # the gates rejected it
     ],
 )
-def test_a_plan_goes_on_only_when_the_rest_was_not_rejected(verdicts, remaining, allowed):
-    assert _may_go_on(verdicts, remaining) is allowed
+def test_the_continuation_policy_covers_only_a_proposed_rest_the_gates_did_not_reject(verdicts, remaining, allowed):
+    assert _may_continue(verdicts, remaining) is allowed
 
 
 # Confirming a goal
