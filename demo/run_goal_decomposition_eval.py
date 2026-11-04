@@ -425,6 +425,17 @@ def criteria_table(criteria: Sequence[Mapping[str, Any]]) -> List[str]:
     return ["| Criterion | Value | Needed | Result | Evidence |", "|---|---|---|---|---|", *rows]
 
 
+def shortfalls(entry: Mapping[str, Any]) -> str:
+    """The gains of a feedback entry whose realised upper bound fell below the certified value."""
+    gains = {name: gain for name, gain in entry.items() if isinstance(gain, Mapping)}
+    short = [
+        name
+        for name, gain in gains.items()
+        if gain["realised_upper"] is not None and gain["realised_upper"] < gain["certified"]
+    ]
+    return ", ".join(short) or "-"
+
+
 def continuation_lines(report: Mapping[str, Any], success: str, label: str) -> List[str]:
     """Markdown comparing current approval with the continuation policy, for the priorities flown under both."""
     runs = report.get("continuation") or {}
@@ -522,14 +533,15 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         CERTIFICATES_NOTE,
         "",
-        "| Profile | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status |",
-        "|---|---|---|---|---|---|---|",
+        "| Profile | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status | Fell short on |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for name, run in report["goal_runs"].items():
         for entry in run["feedback"]:
             lines.append(
                 f"| {name} | {entry['plan']} | {entry['group']} | {entry['samples']} | "
-                f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} |"
+                f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} | "
+                f"{shortfalls(entry)} |"
             )
 
     lines += [

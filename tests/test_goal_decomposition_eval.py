@@ -15,6 +15,7 @@ from demo.run_goal_decomposition_eval import (
     finish_episode,
     revocation_criterion,
     share_criterion,
+    shortfalls,
     to_markdown,
 )
 from env.lunar_facts import OUTCOMES, lander_facts
@@ -123,6 +124,17 @@ def test_revocations_with_too_few_samples_are_insufficient_evidence_not_a_pass(r
 def test_revocations_are_judged_only_on_groups_with_enough_flights(statuses, result):
     runs = [{"feedback": [{"status": status} for status in statuses]}]
     assert revocation_criterion(runs)["result"] == result
+
+
+def test_a_revoked_certificate_names_the_gains_that_fell_short(report):
+    entry = {
+        "status": "revoked",
+        "delta_r": {"certified": 55.7, "realised_mean": 64.4, "realised_upper": 70.3},
+        "delta_fuel": {"certified": -56.0, "realised_mean": -60.0, "realised_upper": -57.1},
+    }
+    assert shortfalls(entry) == "delta_fuel"
+    assert shortfalls({"delta_r": {"certified": 1.0, "realised_mean": 0.0, "realised_upper": None}}) == "-"
+    assert "| Fell short on |" in to_markdown(report)
 
 
 def test_a_share_of_nothing_is_insufficient_evidence():

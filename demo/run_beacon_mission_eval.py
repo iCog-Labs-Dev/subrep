@@ -51,6 +51,7 @@ from demo.run_goal_decomposition_eval import (
     record_followed_plans,
     revocation_criterion,
     share_criterion,
+    shortfalls,
 )
 from demo.train_lunar_mdn import load_mission_mdn
 from env.lunar_beacon import BEACON_MISSION, MISSION_COMPLETE, beacon_domain
@@ -418,8 +419,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         CERTIFICATES_NOTE,
         "",
-        "| Priorities | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status |",
-        "|---|---|---|---|---|---|---|",
+        "| Priorities | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status | Fell short on |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     unjudged = 0
     for name, run in report["goal_runs"].items():
@@ -429,7 +430,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
                 continue
             lines.append(
                 f"| {name} | {entry['plan']} | {entry['group']} | {entry['samples']} | "
-                f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} |"
+                f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} | "
+                f"{shortfalls(entry)} |"
             )
     lines += ["", f"{unjudged} more plan and start groups had too few samples and are not listed."]
     lines += ["", "## The beacon moved, the recipe book unchanged", "", "| Beacon | Runtime: mission done | Runtime: crashed | PPO trained on the first beacon: mission done |", "|---|---|---|---|"]
