@@ -8,7 +8,9 @@ Every controller flies one episode from the start of every seed:
 - the goal runtime for ``land_on_pad`` under several priority profiles, which
   re-certifies the rest of the plan after every skill. When it ends without
   achieving the goal and the episode goes on, the lander does nothing for the
-  rest of the episode, as SubRep does without a certificate.
+  rest of the episode, as SubRep does without a certificate. Safety-first
+  priorities are also flown under the continuation policy, reported apart from
+  the criteria.
 
 The evaluation also checks the measurements behind the certificates:
 
@@ -51,7 +53,7 @@ from decomposition.feedback import MIN_SAMPLES, CertificateStatus, FeedbackLog, 
 from decomposition.mdn_priorities import priorities_from_weights
 from decomposition.planner import plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, RecipeBook, load_recipe_book
-from decomposition.runtime import GoalRun, GoalStatus, pursue
+from decomposition.runtime import Continuation, GoalRun, GoalStatus, pursue
 from decomposition.verifier import Priorities
 from demo.run_lunar_baseline import CONTROLLERS, EpisodeResult, run_episode, summarise
 from demo.run_lunar_subskill_reliability import SEQUENCES
@@ -63,9 +65,10 @@ from env.lunar_subskills import NO_ENGINE
 
 GOAL = "land_on_pad"
 _GAINS = ("delta_r", "delta_safety", "delta_fuel")
-# The table was built from seeds 0-999. Seeds 2000-2499 and 6000-6499 were looked at
-# while reviewing the plans, and 3000-3199 while tuning skills, so these are fresh.
-DEFAULT_START_SEED = 8000
+# The table was built from seeds 0-1999. Seeds 2000-2499 and 6000-6499 were looked at
+# while reviewing the plans, 3000-3199 while tuning skills, and 8000-8499 and 9000-9499
+# by earlier evaluations, so these are fresh.
+DEFAULT_START_SEED = 10000
 DEFAULT_SEEDS = 500
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 
@@ -134,20 +137,35 @@ def fixed_sequence_episode(env: SubRepEnv, book: RecipeBook, skills: Sequence[st
 
 
 def evaluate_profile(
-    env: SubRepEnv, book: RecipeBook, table: EffectTable, priorities: Any, seeds: Sequence[int]
+    env: SubRepEnv,
+    book: RecipeBook,
+    table: EffectTable,
+    priorities: Any,
+    seeds: Sequence[int],
+    continuation: Continuation = Continuation.STOP,
 ) -> Dict[str, Any]:
     """Pursue the goal from every seed under one source of priorities."""
     episodes: List[EpisodeResult] = []
     statuses: Counter = Counter()
     first_plans: Counter = Counter()
     stops: Counter = Counter()
-    replanned = rechecks = recertified = switches = predictions_checked = predictions_held = 0
+    replanned = rechecks = recertified = continued = switches = predictions_checked = predictions_held = 0
     feedback = FeedbackLog(LUNAR_LANDER)
 
     records: List[Dict[str, Any]] = []
     for seed in seeds:
         observation, _ = env.reset(seed=seed)
-        run = pursue(LUNAR_LANDER, env, observation, GOAL, book, table, priorities, timestamp=TIMESTAMP)
+        run = pursue(
+            LUNAR_LANDER,
+            env,
+            observation,
+            GOAL,
+            book,
+            table,
+            priorities,
+            timestamp=TIMESTAMP,
+            continuation=continuation,
+        )
         episode = finish_episode(env, seed, run.rewards, run.observation, run.info, run.episode_over)
         episodes.append(episode)
 
@@ -155,6 +173,7 @@ def evaluate_profile(
         replanned += run.replans > 0
         rechecks += run.rechecks
         recertified += run.recertified_rechecks
+        continued += run.continued
         switches += run.switches
         first = run.decisions[0].chosen if run.decisions else None
         first_plans[first.entry.skill_id if first else "none"] += 1
@@ -182,6 +201,7 @@ def evaluate_profile(
         "episodes_with_replans": replanned,
         "rechecks": rechecks,
         "recertified_rechecks": recertified,
+        "continued": continued,
         "switches": switches,
         "plan_stops": dict(stops),
         "predictions": {"checked": predictions_checked, "held": predictions_held},
@@ -273,8 +293,13 @@ def evaluate(
     profiles: Mapping[str, Priorities] = PROFILES,
     baselines: Sequence[str] = tuple(CONTROLLERS),
     use_mdn: bool = True,
+    continuing: Sequence[str] = ("safety_first",),
 ) -> Dict[str, Any]:
-    """Fly every controller from every seed and check the measurements behind the certificates."""
+    """Fly every controller from every seed and check the measurements behind the certificates.
+
+    The profiles named in ``continuing`` are also flown under the continuation policy,
+    for comparison only: the criteria judge the runtime as it runs by default.
+    """
     table = EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
     measured = range(table.data["seeds"]["start"], table.data["seeds"]["stop"])
     if len(seeds) == 0:
@@ -288,20 +313,26 @@ def evaluate(
     env = SubRepEnv(seed=int(seeds[0]))
     controllers: Dict[str, Dict[str, Any]] = {}
     goal_runs: Dict[str, Dict[str, Any]] = {}
+    int_seeds = [int(seed) for seed in seeds]
     try:
         for name in baselines:
             policy = CONTROLLERS[name](env)
-            controllers[name] = _results([run_episode(env, policy, int(seed)) for seed in seeds])
+            controllers[name] = _results([run_episode(env, policy, seed) for seed in int_seeds])
         for name, steps in SEQUENCES.items():
-            episodes = [fixed_sequence_episode(env, book, steps, int(seed)) for seed in seeds]
+            episodes = [fixed_sequence_episode(env, book, steps, seed) for seed in int_seeds]
             controllers[f"fixed_{name}"] = _results(episodes)
         for name, priorities in profiles.items():
-            goal_runs[name] = evaluate_profile(env, book, table, priorities, [int(seed) for seed in seeds])
+            goal_runs[name] = evaluate_profile(env, book, table, priorities, int_seeds)
             controllers[f"runtime_{name}"] = {"summary": goal_runs[name]["summary"]}
         if use_mdn:
-            goal_runs["mdn"] = evaluate_profile(env, book, table, load_landing_mdn(), [int(seed) for seed in seeds])
+            goal_runs["mdn"] = evaluate_profile(env, book, table, load_landing_mdn(), int_seeds)
             controllers["runtime_mdn"] = {"summary": goal_runs["mdn"]["summary"]}
-        recovery = check_recovery(env, book, table, PROFILES["safety_first"], [int(seed) for seed in seeds])
+        continued_runs = {
+            name: evaluate_profile(env, book, table, profiles[name], int_seeds, Continuation.KEEP_UNREJECTED_PLAN)
+            for name in continuing
+            if name in profiles
+        }
+        recovery = check_recovery(env, book, table, PROFILES["safety_first"], int_seeds)
     finally:
         env.close()
 
@@ -311,6 +342,7 @@ def evaluate(
         "profiles": {name: _profile_record(p) for name, p in profiles.items()},
         "controllers": controllers,
         "goal_runs": goal_runs,
+        "continuation": continued_runs,
         "table_check": check_table(table, book, seeds),
         "recover_stability": recovery,
     }
@@ -393,6 +425,31 @@ def criteria_table(criteria: Sequence[Mapping[str, Any]]) -> List[str]:
     return ["| Criterion | Value | Needed | Result | Evidence |", "|---|---|---|---|---|", *rows]
 
 
+def continuation_lines(report: Mapping[str, Any], success: str, label: str) -> List[str]:
+    """Markdown comparing current approval with the continuation policy, for the priorities flown under both."""
+    runs = report.get("continuation") or {}
+    if not runs:
+        return []
+    lines = [
+        "",
+        "## Continuation policy",
+        "",
+        "The same priorities under `Continuation.KEEP_UNREJECTED_PLAN`: when nothing is admitted, the plan in "
+        "progress may go on without a new certificate. For comparison only; the criteria judge current approval.",
+        "",
+        f"| Priorities | Policy | {label} | Crashed | Decisions flown without current approval | Statuses |",
+        "|---|---|---|---|---|---|",
+    ]
+    for name, continued in runs.items():
+        for policy, run in (("current approval", report["goal_runs"][name]), ("continuation", continued)):
+            summary = run["summary"]
+            lines.append(
+                f"| {name} | {policy} | {summary[success]:.3f} | {summary['crashed_rate']:.3f} | "
+                f"{run['continued']} | {_counts(run['statuses'])} |"
+            )
+    return lines
+
+
 def _value(value: Optional[float]) -> str:
     if value is None:
         return "-"
@@ -457,6 +514,7 @@ def to_markdown(report: Mapping[str, Any]) -> str:
             f"{run['episodes_with_replans']} | {predictions['held']}/{predictions['checked']} | "
             f"{_counts(run['plan_stops']) or '-'} |"
         )
+    lines += continuation_lines(report, "landed_on_pad_rate", "On pad")
 
     lines += [
         "",

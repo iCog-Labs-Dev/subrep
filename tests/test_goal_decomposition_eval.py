@@ -92,6 +92,16 @@ def test_the_report_says_which_criteria_were_met(report):
     assert "## Criteria written before the evaluation" in to_markdown(report)
 
 
+def test_the_continuation_policy_is_compared_apart_from_the_criteria(report):
+    assert all(run["continued"] == 0 for run in report["goal_runs"].values())
+    continued = report["continuation"]["safety_first"]
+    assert continued["summary"]["episodes"] == len(SEEDS)
+    assert "safety_first_continuing" not in report["goal_runs"]
+    markdown = to_markdown(report)
+    assert "## Continuation policy" in markdown
+    assert "| safety_first | current approval |" in markdown and "| safety_first | continuation |" in markdown
+
+
 def test_revocations_with_too_few_samples_are_insufficient_evidence_not_a_pass(report):
     [row] = [row for row in report["criteria"] if row["criterion"].startswith("Certificates revoked")]
     assert row["result"] == INSUFFICIENT_EVIDENCE and row["value"] is None

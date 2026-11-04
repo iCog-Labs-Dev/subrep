@@ -7,6 +7,8 @@ Every controller flies one episode from the start of every seed:
 - the mission's skills in a fixed order, with the runtime checks but no certification;
 - the goal runtime under several priorities, with ``scan_then_land`` and
   ``land_on_pad`` both on offer, so that priorities can decide between them.
+  Mission-first priorities are also flown under the continuation policy,
+  reported apart from the criteria.
 
 It also moves the beacon and repeats the mission with the same recipe book, and
 flies with a limit on how many plans are measured at each decision. Certified
@@ -38,11 +40,12 @@ from decomposition.executor import execute
 from decomposition.feedback import CertificateStatus, FeedbackLog
 from decomposition.mdn_priorities import priorities_from_weights
 from decomposition.recipe_book import RecipeBook
-from decomposition.runtime import GoalRun, pursue
+from decomposition.runtime import Continuation, GoalRun, pursue
 from decomposition.verifier import Priorities
 from demo.build_lunar_effect_table import build_mission_table, mission_book
 from demo.run_goal_decomposition_eval import (
     CERTIFICATES_NOTE,
+    continuation_lines,
     criteria_table,
     criterion,
     record_followed_plans,
@@ -54,8 +57,9 @@ from env.lunar_beacon import BEACON_MISSION, MISSION_COMPLETE, beacon_domain
 from env.lunar_pilots import mission_pilots
 
 GOALS = ("scan_then_land", "land_on_pad")
-# The tables were built from seeds 0-999 and the skills were tuned on seeds 3000-3199.
-DEFAULT_START_SEED = 8000
+# The mission table was built from seeds 0-1999 and the moved-beacon tables from 0-999.
+# The skills were tuned on seeds 3000-3199, and an earlier evaluation flew 8000-8499.
+DEFAULT_START_SEED = 10000
 DEFAULT_SEEDS = 500
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 FIXED_MISSION = ("go_to_beacon", "cruise_to_pad", "slow_descent", "touch_down")
@@ -147,6 +151,7 @@ def evaluate_runtime(
     seeds: Sequence[int],
     limit: Optional[int] = None,
     check_certificates: bool = True,
+    continuation: Continuation = Continuation.STOP,
 ) -> Dict[str, Any]:
     """Pursue the mission's goals from every seed under one source of priorities."""
     episodes: List[MissionEpisode] = []
@@ -154,12 +159,23 @@ def evaluate_runtime(
     first_goals: Counter = Counter()
     first_plans: Counter = Counter()
     stops: Counter = Counter()
-    rechecks = recertified = switches = replans = checked = held = 0
+    rechecks = recertified = continued = switches = replans = checked = held = 0
     feedback = FeedbackLog(domain)
     records: List[Dict[str, Any]] = []
     for seed in seeds:
         observation, _ = env.reset(seed=seed)
-        run: GoalRun = pursue(domain, env, observation, GOALS, book, table, priorities, timestamp=TIMESTAMP, limit=limit)
+        run: GoalRun = pursue(
+            domain,
+            env,
+            observation,
+            GOALS,
+            book,
+            table,
+            priorities,
+            timestamp=TIMESTAMP,
+            limit=limit,
+            continuation=continuation,
+        )
         episode = _episode(domain, env, seed, run.rewards, run.observation, run.info, run.episode_over)
         episodes.append(episode)
         statuses[run.status.value] += 1
@@ -168,6 +184,7 @@ def evaluate_runtime(
         first_plans[">".join(first.candidate.skills) if first else "none"] += 1
         rechecks += run.rechecks
         recertified += run.recertified_rechecks
+        continued += run.continued
         switches += run.switches
         replans += run.replans
         for decision in run.flown:
@@ -194,6 +211,7 @@ def evaluate_runtime(
         "first_plans": dict(first_plans),
         "rechecks": rechecks,
         "recertified_rechecks": recertified,
+        "continued": continued,
         "switches": switches,
         "replans": replans,
         "plan_stops": dict(stops),
@@ -296,7 +314,13 @@ def check_criteria(report: Mapping[str, Any]) -> List[Dict[str, Any]]:
     ]
 
 
-def evaluate(seeds: range, profiles: Mapping[str, Any] = PROFILES, moved: Sequence[Tuple[float, float]] = MOVED_BEACONS) -> Dict[str, Any]:
+def evaluate(
+    seeds: range,
+    profiles: Mapping[str, Any] = PROFILES,
+    moved: Sequence[Tuple[float, float]] = MOVED_BEACONS,
+    continuing: Sequence[str] = ("mission_first",),
+) -> Dict[str, Any]:
+    """Fly every controller from every seed; the profiles in ``continuing`` also fly under the continuation policy."""
     table = EffectTable.load(LUNAR_BEACON_TABLE, BEACON_MISSION)
     measured = range(table.data["seeds"]["start"], table.data["seeds"]["stop"])
     if len(seeds) == 0:
@@ -327,6 +351,13 @@ def evaluate(seeds: range, profiles: Mapping[str, Any] = PROFILES, moved: Sequen
             split = 0.0
         goal_runs["mdn"] = evaluate_runtime(domain, env, book, table, load_mission_mdn(), int_seeds)
         limited = evaluate_runtime(domain, env, book, table, profiles["mission_first"], int_seeds, MEASURING_LIMIT, False)
+        continued_runs = {
+            name: evaluate_runtime(
+                domain, env, book, table, profiles[name], int_seeds, continuation=Continuation.KEEP_UNREJECTED_PLAN
+            )
+            for name in continuing
+            if name in profiles
+        }
     finally:
         env.close()
     moved_runs = [evaluate_moved_beacon(beacon, book, int_seeds, profiles["mission_first"]) for beacon in moved]
@@ -335,6 +366,7 @@ def evaluate(seeds: range, profiles: Mapping[str, Any] = PROFILES, moved: Sequen
         "goals": list(GOALS),
         "controllers": controllers,
         "goal_runs": goal_runs,
+        "continuation": continued_runs,
         "goal_split": split,
         "limit": compare_limit(goal_runs["mission_first"], limited),
         "moved_beacons": moved_runs,
@@ -376,6 +408,7 @@ def to_markdown(report: Mapping[str, Any]) -> str:
             f"| {name} | {_counts(run['statuses'])} | {_counts(run['first_goals'])} | {run['rechecks']} | {run['recertified_rechecks']} | "
             f"{run['switches']} | {run['replans']} | {p['held']}/{p['checked']} | {_counts(run['plan_stops']) or '-'} |"
         )
+    lines += continuation_lines(report, f"{MISSION_COMPLETE}_rate", "Mission done")
     lines += ["", "## First plans", ""]
     for name, run in report["goal_runs"].items():
         lines.append(f"- {name}: {_counts(run['first_plans'])}")

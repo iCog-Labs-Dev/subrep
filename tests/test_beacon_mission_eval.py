@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from decomposition.effects import LUNAR_BEACON_TABLE, EffectTable
-from decomposition.runtime import GoalStatus, pursue
+from decomposition.runtime import Continuation, GoalStatus, pursue
 from demo.build_lunar_effect_table import mission_book
 from demo.run_beacon_mission_eval import (
     GOALS,
@@ -49,6 +49,14 @@ def table():
 @pytest.fixture(scope="module")
 def mission_run(env, book, table):
     return evaluate_runtime(BEACON_MISSION, env, book, table, PROFILES["mission_first"], SEEDS)
+
+
+@pytest.fixture(scope="module")
+def continuing_run(env, book, table):
+    continuation = Continuation.KEEP_UNREJECTED_PLAN
+    return evaluate_runtime(
+        BEACON_MISSION, env, book, table, PROFILES["mission_first"], SEEDS, continuation=continuation
+    )
 
 
 def test_the_committed_table_measures_the_mission(table):
@@ -155,11 +163,12 @@ def test_criteria_without_evidence_are_neither_met_nor_missed():
     }
 
 
-def test_the_report_lists_only_judged_certificates_and_counts_the_rest(mission_run):
+def test_the_report_lists_only_judged_certificates_and_counts_the_rest(mission_run, continuing_run):
     report = {
         "seeds": {"start": SEEDS[0], "count": len(SEEDS)},
         "controllers": {},
         "goal_runs": {"mission_first": mission_run},
+        "continuation": {"mission_first": continuing_run},
         "criteria": check_criteria(fake_report(0.95)),
         "moved_beacons": [],
         "limit": {"limit": 5, "same_first_plan_rate": 1.0, "same_outcome_rate": 1.0, "limited_completion_rate": 1.0},
@@ -170,6 +179,13 @@ def test_the_report_lists_only_judged_certificates_and_counts_the_rest(mission_r
     assert unjudged > 0
     assert f"{unjudged} more plan and start groups had too few samples and are not listed." in markdown
     assert "the runtime did not apply these revocations during the runs" in markdown
+    assert "| mission_first | current approval |" in markdown and "| mission_first | continuation |" in markdown
+
+
+def test_only_the_continuation_policy_flies_without_current_approval(mission_run, continuing_run):
+    assert mission_run["continued"] == 0
+    assert continuing_run["summary"]["episodes"] == len(SEEDS)
+    assert isinstance(continuing_run["continued"], int)
 
 
 def test_profiles_are_on_the_simplex():
