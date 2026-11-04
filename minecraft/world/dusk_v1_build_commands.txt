@@ -1,0 +1,88 @@
+Server console:
+stop
+
+Terminal after the server exits:
+cd minecraft/server
+rm -rf world
+./start.sh
+
+Console:
+/setworldspawn 0 64 0
+/forceload add 16 -16 160 16
+
+/fill 24 60 0 160 72 16 minecraft:air
+/fill 24 62 0 160 72 16 minecraft:stone
+/fill 24 63 0 160 63 16 minecraft:grass_block
+
+/fill 60 63 -10 76 63 10 minecraft:stone
+/fill 60 64 -10 76 67 10 minecraft:stone_bricks
+/fill 60 68 -10 76 68 10 minecraft:oak_planks
+/fill 61 64 -9 75 67 9 minecraft:air
+/fill 60 64 -8 60 65 -8 minecraft:air
+/fill 76 64 -8 76 65 -8 minecraft:air
+/fill 60 64 0 60 65 0 minecraft:air
+/fill 76 64 0 76 65 0 minecraft:air
+/fill 60 64 4 60 65 4 minecraft:air
+/fill 76 64 4 76 65 4 minecraft:air
+/setblock 60 64 -4 minecraft:oak_fence_gate[facing=east,open=false]
+/setblock 60 64 4 minecraft:oak_fence_gate[facing=east,open=false]
+/setblock 60 64 8 minecraft:oak_fence_gate[facing=east,open=false]
+/setblock 76 64 -4 minecraft:oak_fence_gate[facing=west,open=false]
+/setblock 76 64 4 minecraft:oak_fence_gate[facing=west,open=false]
+/setblock 76 64 8 minecraft:oak_fence_gate[facing=west,open=false]
+
+/fill 38 63 -3 42 63 3 minecraft:oak_planks
+/fill 38 64 -3 42 67 3 minecraft:air
+/fill 38 68 -3 42 68 3 minecraft:oak_planks
+
+/fill 65 63 -5 72 63 5 minecraft:oak_planks
+/fill 65 64 -5 72 67 5 minecraft:air
+/fill 65 68 -5 72 68 5 minecraft:oak_planks
+/fill 65 64 -5 72 67 -5 minecraft:oak_planks
+/fill 65 64 5 72 67 5 minecraft:oak_planks
+/fill 65 64 -5 65 67 5 minecraft:oak_planks
+/fill 72 64 -5 72 67 5 minecraft:oak_planks
+/setblock 68 64 -4 minecraft:lectern
+/setblock 70 64 -4 minecraft:lectern
+/setblock 68 64 -3 minecraft:red_bed[facing=south,part=foot]
+/setblock 70 64 -3 minecraft:red_bed[facing=south,part=foot]
+/summon minecraft:villager 68 64 -2 {UUID:[I;1001,0,0,1],VillagerData:{profession:"minecraft:librarian",level:2,type:"minecraft:plains"},Health:20f,Offers:{Recipes:[{buy:{id:"minecraft:emerald",count:7},sell:{id:"minecraft:book",count:1},maxUses:999999}]}}
+/summon minecraft:villager 70 64 -2 {UUID:[I;1001,0,0,2],VillagerData:{profession:"minecraft:librarian",level:2,type:"minecraft:plains"},Health:20f,Offers:{Recipes:[{buy:{id:"minecraft:emerald",count:7},sell:{id:"minecraft:book",count:1},maxUses:999999}]}}
+/setblock 68 64 3 minecraft:red_bed[facing=north,part=foot]
+/setblock 70 64 3 minecraft:red_bed[facing=north,part=foot]
+/summon minecraft:villager 68 64 2 {UUID:[I;1001,0,0,3],VillagerData:{profession:"minecraft:farmer",level:2,type:"minecraft:plains"},Health:20f}
+/summon minecraft:villager 70 64 2 {UUID:[I;1001,0,0,4],VillagerData:{profession:"minecraft:farmer",level:2,type:"minecraft:plains"},Health:20f}
+
+/fill 64 64 7 72 66 9 minecraft:iron_bars
+/fill 67 64 8 67 65 8 minecraft:air
+/summon minecraft:zombie_villager 67 64 8 {UUID:[I;1001,0,0,5],VillagerData:{profession:"minecraft:farmer",level:1,type:"minecraft:plains"},Health:20f}
+
+/fill 43 63 0 150 63 0 minecraft:dirt_path
+/fill 43 64 0 150 64 0 minecraft:air
+/fill 150 63 -4 156 63 4 minecraft:oak_planks
+/fill 150 64 -4 156 67 4 minecraft:air
+/fill 150 68 -4 156 68 4 minecraft:oak_planks
+/fill 150 64 -4 156 67 -4 minecraft:oak_planks
+/fill 150 64 4 156 67 4 minecraft:oak_planks
+/fill 150 64 -4 150 67 4 minecraft:oak_planks
+/fill 156 64 -4 156 67 4 minecraft:oak_planks
+/setblock 153 64 0 minecraft:chest
+
+/setblock 48 64 0 minecraft:lantern
+/setblock 55 64 0 minecraft:lantern
+/setblock 68 64 0 minecraft:torch
+/setblock 72 64 0 minecraft:torch
+/setblock 68 64 6 minecraft:torch
+/setblock 72 64 6 minecraft:torch
+/setblock 64 64 -2 minecraft:torch
+/setblock 76 64 2 minecraft:torch
+
+/kill @e[type=!minecraft:player,type=!minecraft:villager,type=!minecraft:zombie_villager]
+/time set 12000
+/gamerule doWeatherCycle false
+/gamerule doInsomnia false
+/gamerule doPatrolSpawning false
+/gamerule doTraderSpawning false
+/gamerule doMobSpawning false
+/tick freeze
+/time query daytime
