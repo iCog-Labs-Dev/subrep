@@ -9,9 +9,12 @@ Every controller flies one episode from the start of every seed:
   ``land_on_pad`` both on offer, so that priorities can decide between them.
 
 It also moves the beacon and repeats the mission with the same recipe book, and
-flies with a limit on how many plans are measured at each decision. The criteria
+flies with a limit on how many plans are measured at each decision. Certified
+plans are checked against what they really achieved after every episode has been
+flown, so a revocation found there was not applied during the runs. The criteria
 at the top of this file were written before the evaluation seeds were flown, and
-the report says which of them were met.
+the report says which of them were met, which were missed and which had too
+little evidence to judge.
 
     python -m demo.run_beacon_mission_eval
     python -m demo.run_beacon_mission_eval --seeds 50 --start-seed 3000
@@ -32,13 +35,20 @@ import numpy as np
 from decomposition.domain import Domain
 from decomposition.effects import LUNAR_BEACON_TABLE, EffectTable
 from decomposition.executor import execute
-from decomposition.feedback import FeedbackLog
+from decomposition.feedback import CertificateStatus, FeedbackLog
 from decomposition.mdn_priorities import priorities_from_weights
 from decomposition.recipe_book import RecipeBook
 from decomposition.runtime import GoalRun, pursue
 from decomposition.verifier import Priorities
 from demo.build_lunar_effect_table import build_mission_table, mission_book
-from demo.run_goal_decomposition_eval import record_followed_plans
+from demo.run_goal_decomposition_eval import (
+    CERTIFICATES_NOTE,
+    criteria_table,
+    criterion,
+    record_followed_plans,
+    revocation_criterion,
+    share_criterion,
+)
 from demo.train_lunar_mdn import load_mission_mdn
 from env.lunar_beacon import BEACON_MISSION, MISSION_COMPLETE, beacon_domain
 from env.lunar_pilots import mission_pilots
@@ -234,29 +244,56 @@ def check_criteria(report: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """Each criterion written before the evaluation, with its result."""
     runs, controllers = report["goal_runs"], report["controllers"]
     mission = runs["mission_first"]
-    completion = mission["summary"][f"{MISSION_COMPLETE}_rate"]
-    single = [
-        data["summary"][f"{MISSION_COMPLETE}_rate"]
+    summary = mission["summary"]
+    completion = summary[f"{MISSION_COMPLETE}_rate"]
+    episodes = f"{summary['episodes']} episodes"
+    single = {
+        name: data["summary"][f"{MISSION_COMPLETE}_rate"]
         for name, data in controllers.items()
         if name.startswith(("heuristic", "ppo", "mission_ppo"))
-    ]
-    recertified = mission["recertified_rechecks"] / max(1, mission["rechecks"])
-    revoked = [e for run in runs.values() for e in run["feedback"] if e["status"] == "revoked"]
-    moved = [m["runtime"]["summary"][f"{MISSION_COMPLETE}_rate"] for m in report["moved_beacons"]]
+    }
+    best = max(single, key=single.get)
+    moved = {str(m["beacon"]): m["runtime"]["summary"][f"{MISSION_COMPLETE}_rate"] for m in report["moved_beacons"]}
     return [
-        _criterion("Mission completion under mission-first priorities", completion, f">= {MIN_COMPLETION}", completion >= MIN_COMPLETION),
-        _criterion("Crashes under mission-first priorities", mission["summary"]["crashed_rate"], f"<= {MAX_CRASHES}", mission["summary"]["crashed_rate"] <= MAX_CRASHES),
-        _criterion("Best single controller's completion (runtime must be within 0.02)", max(single), f"<= {completion + SINGLE_CONTROLLER_TOLERANCE:.3f}", completion + SINGLE_CONTROLLER_TOLERANCE >= max(single)),
-        _criterion("Priorities change the goal pursued (mission-first against fuel-first)", report["goal_split"], f">= {MIN_GOAL_SPLIT}", report["goal_split"] >= MIN_GOAL_SPLIT),
-        _criterion("Mid-flight re-checks admitted from the real state", recertified, f">= {MIN_RECERTIFIED}", recertified >= MIN_RECERTIFIED),
-        _criterion("Certificates revoked by what really happened", len(revoked), "== 0", not revoked),
-        _criterion("Completion with the beacon moved and the same recipe book (lowest)", min(moved), f">= {MIN_MOVED_COMPLETION}", min(moved) >= MIN_MOVED_COMPLETION),
-        _criterion("Same first plan with a measuring limit", report["limit"]["same_first_plan_rate"], f">= {MIN_LIMIT_AGREEMENT}", report["limit"]["same_first_plan_rate"] >= MIN_LIMIT_AGREEMENT),
+        criterion("Mission completion under mission-first priorities", completion, ">=", MIN_COMPLETION, episodes),
+        criterion("Crashes under mission-first priorities", summary["crashed_rate"], "<=", MAX_CRASHES, episodes),
+        criterion(
+            "Best single controller's completion (runtime must be within 0.02)",
+            single[best],
+            "<=",
+            round(completion + SINGLE_CONTROLLER_TOLERANCE, 3),
+            best,
+        ),
+        criterion(
+            "Priorities change the goal pursued (mission-first against fuel-first)",
+            report["goal_split"],
+            ">=",
+            MIN_GOAL_SPLIT,
+            episodes,
+        ),
+        share_criterion(
+            "Mid-flight re-checks admitted from the real state",
+            mission["recertified_rechecks"],
+            mission["rechecks"],
+            MIN_RECERTIFIED,
+            "mid-flight re-checks",
+        ),
+        revocation_criterion(runs.values()),
+        criterion(
+            "Completion with the beacon moved and the same recipe book (lowest)",
+            min(moved.values()),
+            ">=",
+            MIN_MOVED_COMPLETION,
+            "beacons " + ", ".join(moved),
+        ),
+        criterion(
+            "Same first plan with a measuring limit",
+            report["limit"]["same_first_plan_rate"],
+            ">=",
+            MIN_LIMIT_AGREEMENT,
+            episodes,
+        ),
     ]
-
-
-def _criterion(name: str, value: float, needed: str, met: bool) -> Dict[str, Any]:
-    return {"criterion": name, "value": float(value), "needed": needed, "met": bool(met)}
 
 
 def evaluate(seeds: range, profiles: Mapping[str, Any] = PROFILES, moved: Sequence[Tuple[float, float]] = MOVED_BEACONS) -> Dict[str, Any]:
@@ -315,11 +352,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         "## Criteria written before the evaluation",
         "",
-        "| Criterion | Value | Needed | Met |",
-        "|---|---|---|---|",
+        *criteria_table(report["criteria"]),
     ]
-    for row in report["criteria"]:
-        lines.append(f"| {row['criterion']} | {row['value']:.3f} | {row['needed']} | {'yes' if row['met'] else 'NO'} |")
     lines += [
         "",
         "## Controllers",
@@ -345,11 +379,26 @@ def to_markdown(report: Mapping[str, Any]) -> str:
     lines += ["", "## First plans", ""]
     for name, run in report["goal_runs"].items():
         lines.append(f"- {name}: {_counts(run['first_plans'])}")
-    lines += ["", "## Certificates against realised gains", "", "| Priorities | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status |", "|---|---|---|---|---|---|---|"]
+    lines += [
+        "",
+        "## Certificates against realised gains",
+        "",
+        CERTIFICATES_NOTE,
+        "",
+        "| Priorities | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    unjudged = 0
     for name, run in report["goal_runs"].items():
         for entry in run["feedback"]:
-            if entry["samples"] >= 30:
-                lines.append(f"| {name} | {entry['plan']} | {entry['group']} | {entry['samples']} | {entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} |")
+            if entry["status"] == CertificateStatus.TOO_FEW_SAMPLES.value:
+                unjudged += 1
+                continue
+            lines.append(
+                f"| {name} | {entry['plan']} | {entry['group']} | {entry['samples']} | "
+                f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} |"
+            )
+    lines += ["", f"{unjudged} more plan and start groups had too few samples and are not listed."]
     lines += ["", "## The beacon moved, the recipe book unchanged", "", "| Beacon | Runtime: mission done | Runtime: crashed | PPO trained on the first beacon: mission done |", "|---|---|---|---|"]
     for moved in report["moved_beacons"]:
         s = moved["runtime"]["summary"]

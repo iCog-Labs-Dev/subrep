@@ -14,7 +14,10 @@ The evaluation also checks the measurements behind the certificates:
 
 - feedback: for every plan the runtime certified, at the start of an episode or
   in mid-flight, and then flew to the end, the gains it really achieved from that
-  state are compared with its certificate;
+  state are compared with its certificate. This happens after every episode has
+  been flown, so a revocation found here was not applied during the runs. A plan
+  and start group with fewer than ``MIN_SAMPLES`` flights is not judged, and a
+  criterion with nothing to judge reports insufficient evidence, never a pass;
 - the effect table: the plans are measured again on the unseen seeds and
   compared with the committed table;
 - ``recover_stability`` is pursued from every tilted start.
@@ -32,18 +35,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import operator
 import sys
 from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import numpy as np
 
 from decomposition.domain import Domain
 from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, build_table
 from decomposition.executor import execute
-from decomposition.feedback import FeedbackLog, realised_gains
+from decomposition.feedback import MIN_SAMPLES, CertificateStatus, FeedbackLog, realised_gains
 from decomposition.mdn_priorities import priorities_from_weights
 from decomposition.planner import plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, RecipeBook, load_recipe_book
@@ -69,6 +73,17 @@ TIMESTAMP = "2026-01-01T00:00:00+00:00"
 MIN_ON_PAD = 0.95
 MAX_CRASHES = 0.02
 MIN_RECERTIFIED = 0.90
+
+# How a criterion came out. With nothing to judge it on, it is neither met nor missed.
+MET = "met"
+MISSED = "missed"
+INSUFFICIENT_EVIDENCE = "insufficient evidence"
+REPORT_ONLY = "report only"
+_COMPARISONS = {">=": operator.ge, "<=": operator.le, "==": operator.eq}
+CERTIFICATES_NOTE = (
+    "Checked after every episode was flown: the runtime did not apply these revocations during the runs. "
+    f"A plan and start group with fewer than {MIN_SAMPLES} flights has too few samples and is not judged."
+)
 
 PROFILES: Dict[str, Priorities] = {
     "safety_first": priorities_from_weights((0.7, 0.3), cvar_tail_level=0.1),
@@ -309,23 +324,79 @@ def check_criteria(report: Mapping[str, Any]) -> List[Dict[str, Any]]:
         return []
     run = report["goal_runs"]["safety_first"]
     summary = run["summary"]
-    revoked = [e for each in report["goal_runs"].values() for e in each["feedback"] if e["status"] == "revoked"]
+    episodes = f"{summary['episodes']} episodes"
     below = [row for row in report["table_check"] if row["below_committed_lower"]]
-    recertified = run["recertified_rechecks"] / max(1, run["rechecks"])
     predictions = run["predictions"]
-    held = predictions["held"] / max(1, predictions["checked"])
     return [
-        _criterion("On the pad under safety-first priorities", summary["landed_on_pad_rate"], f">= {MIN_ON_PAD}", summary["landed_on_pad_rate"] >= MIN_ON_PAD),
-        _criterion("Crashes under safety-first priorities", summary["crashed_rate"], f"<= {MAX_CRASHES}", summary["crashed_rate"] <= MAX_CRASHES),
-        _criterion("Mid-flight re-checks admitted from the real state", recertified, f">= {MIN_RECERTIFIED}", recertified >= MIN_RECERTIFIED),
-        _criterion("Book predictions that held", held, ">= 0.99", held >= 0.99),
-        _criterion("Certificates revoked by what really happened", len(revoked), "== 0", not revoked),
-        _criterion("Table entries whose unseen mean fell below the committed bound", len(below), "report only", True),
+        criterion(
+            "On the pad under safety-first priorities", summary["landed_on_pad_rate"], ">=", MIN_ON_PAD, episodes
+        ),
+        criterion("Crashes under safety-first priorities", summary["crashed_rate"], "<=", MAX_CRASHES, episodes),
+        share_criterion(
+            "Mid-flight re-checks admitted from the real state",
+            run["recertified_rechecks"],
+            run["rechecks"],
+            MIN_RECERTIFIED,
+            "mid-flight re-checks",
+        ),
+        share_criterion(
+            "Book predictions that held", predictions["held"], predictions["checked"], 0.99, "predictions checked"
+        ),
+        revocation_criterion(report["goal_runs"].values()),
+        reported(
+            "Table entries whose unseen mean fell below the committed bound",
+            len(below),
+            f"{len(report['table_check'])} entries compared",
+        ),
     ]
 
 
-def _criterion(name: str, value: float, needed: str, met: bool) -> Dict[str, Any]:
-    return {"criterion": name, "value": float(value), "needed": needed, "met": bool(met)}
+def criterion(name: str, value: Optional[float], sign: str, threshold: float, evidence: str) -> Dict[str, Any]:
+    """A criterion ``value sign threshold``; with no value there was nothing to judge it on."""
+    if value is None:
+        result = INSUFFICIENT_EVIDENCE
+    else:
+        result = MET if _COMPARISONS[sign](value, threshold) else MISSED
+    return {"criterion": name, "value": value, "needed": f"{sign} {threshold}", "result": result, "evidence": evidence}
+
+
+def share_criterion(name: str, count: int, total: int, threshold: float, what: str) -> Dict[str, Any]:
+    """A criterion on the share ``count / total``, which needs at least one of ``what``."""
+    return criterion(name, count / total if total else None, ">=", threshold, f"{count} of {total} {what}")
+
+
+def revocation_criterion(runs: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    """No certificate revoked, judged only on plan and start groups with enough flights to tell."""
+    entries = [entry for run in runs for entry in run["feedback"]]
+    judged = [entry for entry in entries if entry["status"] != CertificateStatus.TOO_FEW_SAMPLES.value]
+    revoked = sum(entry["status"] == CertificateStatus.REVOKED.value for entry in judged)
+    return criterion(
+        "Certificates revoked, checked after the runs (not applied during them)",
+        revoked if judged else None,
+        "==",
+        0,
+        f"{len(judged)} of {len(entries)} plan and start groups had at least {MIN_SAMPLES} flights",
+    )
+
+
+def reported(name: str, value: float, evidence: str) -> Dict[str, Any]:
+    """A number the evaluation reports without judging it."""
+    return {"criterion": name, "value": value, "needed": REPORT_ONLY, "result": REPORT_ONLY, "evidence": evidence}
+
+
+def criteria_table(criteria: Sequence[Mapping[str, Any]]) -> List[str]:
+    """The criteria as markdown table lines."""
+    rows = (
+        f"| {c['criterion']} | {_value(c['value'])} | {c['needed']} | {c['result']} | {c['evidence']} |"
+        for c in criteria
+    )
+    return ["| Criterion | Value | Needed | Result | Evidence |", "|---|---|---|---|---|", *rows]
+
+
+def _value(value: Optional[float]) -> str:
+    if value is None:
+        return "-"
+    return str(value) if isinstance(value, int) else f"{value:.3f}"
 
 
 def _results(episodes: Sequence[EpisodeResult]) -> Dict[str, Any]:
@@ -358,12 +429,7 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         "## Criteria written before the evaluation",
         "",
-        "| Criterion | Value | Needed | Met |",
-        "|---|---|---|---|",
-        *(
-            f"| {row['criterion']} | {row['value']:.3f} | {row['needed']} | {'yes' if row['met'] else 'NO'} |"
-            for row in report["criteria"]
-        ),
+        *criteria_table(report["criteria"]),
         "",
         "## Controllers",
         "",
@@ -395,6 +461,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
     lines += [
         "",
         "## Certificates against realised gains",
+        "",
+        CERTIFICATES_NOTE,
         "",
         "| Profile | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status |",
         "|---|---|---|---|---|---|---|",

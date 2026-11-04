@@ -19,8 +19,10 @@ from demo.run_beacon_mission_eval import (
     fly_fixed,
     goal_split,
     rates,
+    to_markdown,
     wilson_interval,
 )
+from demo.run_goal_decomposition_eval import INSUFFICIENT_EVIDENCE, MET, MISSED
 from env.lunar_beacon import BEACON_MISSION, MISSION_COMPLETE
 
 SEEDS = list(range(3200, 3204))
@@ -121,27 +123,53 @@ def test_a_goal_split_counts_episodes_with_different_goals():
     assert goal_split({"episodes": [{"goal": "a"}, {"goal": "b"}]}, {"episodes": [{"goal": "a"}, {"goal": "a"}]}) == 0.5
 
 
-def fake_report(completion, crashed=0.0):
+def fake_report(completion, crashed=0.0, feedback=({"status": "held"},), rechecks=10):
     run = {
-        "summary": {f"{MISSION_COMPLETE}_rate": completion, "crashed_rate": crashed},
-        "recertified_rechecks": 9,
-        "rechecks": 10,
-        "feedback": [],
+        "summary": {f"{MISSION_COMPLETE}_rate": completion, "crashed_rate": crashed, "episodes": 10},
+        "recertified_rechecks": min(9, rechecks),
+        "rechecks": rechecks,
+        "feedback": list(feedback),
     }
     return {
         "goal_runs": {"mission_first": run},
         "controllers": {"mission_ppo": {"summary": {f"{MISSION_COMPLETE}_rate": 0.5}}},
-        "moved_beacons": [{"runtime": {"summary": {f"{MISSION_COMPLETE}_rate": 0.9}}}],
+        "moved_beacons": [{"beacon": [0.5, 0.7], "runtime": {"summary": {f"{MISSION_COMPLETE}_rate": 0.9}}}],
         "goal_split": 1.0,
         "limit": {"same_first_plan_rate": 1.0},
     }
 
 
 def test_the_criteria_report_what_was_met():
-    assert all(row["met"] for row in check_criteria(fake_report(0.95)))
-    missed = {row["criterion"] for row in check_criteria(fake_report(0.5, crashed=0.2)) if not row["met"]}
+    assert all(row["result"] == MET for row in check_criteria(fake_report(0.95)))
+    missed = {row["criterion"] for row in check_criteria(fake_report(0.5, crashed=0.2)) if row["result"] == MISSED}
     assert "Mission completion under mission-first priorities" in missed
     assert "Crashes under mission-first priorities" in missed
+
+
+def test_criteria_without_evidence_are_neither_met_nor_missed():
+    criteria = check_criteria(fake_report(0.95, feedback=[{"status": "too_few_samples"}], rechecks=0))
+    unjudged = {row["criterion"] for row in criteria if row["result"] == INSUFFICIENT_EVIDENCE}
+    assert unjudged == {
+        "Mid-flight re-checks admitted from the real state",
+        "Certificates revoked, checked after the runs (not applied during them)",
+    }
+
+
+def test_the_report_lists_only_judged_certificates_and_counts_the_rest(mission_run):
+    report = {
+        "seeds": {"start": SEEDS[0], "count": len(SEEDS)},
+        "controllers": {},
+        "goal_runs": {"mission_first": mission_run},
+        "criteria": check_criteria(fake_report(0.95)),
+        "moved_beacons": [],
+        "limit": {"limit": 5, "same_first_plan_rate": 1.0, "same_outcome_rate": 1.0, "limited_completion_rate": 1.0},
+        "goal_split": 1.0,
+    }
+    markdown = to_markdown(report)
+    unjudged = sum(entry["status"] == "too_few_samples" for entry in mission_run["feedback"])
+    assert unjudged > 0
+    assert f"{unjudged} more plan and start groups had too few samples and are not listed." in markdown
+    assert "the runtime did not apply these revocations during the runs" in markdown
 
 
 def test_profiles_are_on_the_simplex():

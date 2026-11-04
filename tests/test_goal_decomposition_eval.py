@@ -5,7 +5,18 @@ import json
 import numpy as np
 import pytest
 
-from demo.run_goal_decomposition_eval import PROFILES, evaluate, finish_episode, to_markdown
+from demo.run_goal_decomposition_eval import (
+    INSUFFICIENT_EVIDENCE,
+    MET,
+    MISSED,
+    PROFILES,
+    REPORT_ONLY,
+    evaluate,
+    finish_episode,
+    revocation_criterion,
+    share_criterion,
+    to_markdown,
+)
 from env.lunar_facts import OUTCOMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 
@@ -77,8 +88,37 @@ def test_recovery_is_tried_from_every_tilted_start(report):
 
 def test_the_report_says_which_criteria_were_met(report):
     assert {row["criterion"] for row in report["criteria"]} >= {"On the pad under safety-first priorities"}
-    assert all(isinstance(row["met"], bool) for row in report["criteria"])
+    assert all(row["result"] in (MET, MISSED, INSUFFICIENT_EVIDENCE, REPORT_ONLY) for row in report["criteria"])
     assert "## Criteria written before the evaluation" in to_markdown(report)
+
+
+def test_revocations_with_too_few_samples_are_insufficient_evidence_not_a_pass(report):
+    [row] = [row for row in report["criteria"] if row["criterion"].startswith("Certificates revoked")]
+    assert row["result"] == INSUFFICIENT_EVIDENCE and row["value"] is None
+    assert row["evidence"].startswith("0 of ")
+    markdown = to_markdown(report)
+    assert "| insufficient evidence |" in markdown
+    assert "the runtime did not apply these revocations during the runs" in markdown
+
+
+@pytest.mark.parametrize(
+    "statuses, result",
+    [
+        ([], INSUFFICIENT_EVIDENCE),
+        (["too_few_samples", "too_few_samples"], INSUFFICIENT_EVIDENCE),
+        (["too_few_samples", "held"], MET),
+        (["held", "revoked"], MISSED),
+    ],
+)
+def test_revocations_are_judged_only_on_groups_with_enough_flights(statuses, result):
+    runs = [{"feedback": [{"status": status} for status in statuses]}]
+    assert revocation_criterion(runs)["result"] == result
+
+
+def test_a_share_of_nothing_is_insufficient_evidence():
+    assert share_criterion("re-checks", 0, 0, 0.9, "re-checks")["result"] == INSUFFICIENT_EVIDENCE
+    assert share_criterion("re-checks", 9, 10, 0.9, "re-checks")["result"] == MET
+    assert share_criterion("re-checks", 8, 10, 0.9, "re-checks")["result"] == MISSED
 
 
 def test_the_report_is_json_and_markdown_ready(report):
