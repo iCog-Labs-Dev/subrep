@@ -252,6 +252,53 @@ should be revisited against real episode outcomes.
 - **CVaR is off.** The MDN is untrained, and an untrained MDN makes the CVaR
   gate admit nearly everything, so the loop certifies with PDS only.
 
+### Running the LunarLander demo
+
+`demo/run_lunar_lander_metamo.py` runs the full loop on MO-LunarLander, one
+episode per decision step (step *k* uses seed `seed + k`):
+
+```bash
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo
+python demo/run_lunar_lander_metamo.py --steps 10 --candidates ci      # no PPO checkpoint needed
+```
+
+| Option | Meaning |
+|---|---|
+| `--steps`, `--seed` | number of decision steps, and the first seed |
+| `--candidates ci\|ppo\|extended` | the candidate set; defaults to `ppo` when `models/pilot_ppo.pt` exists, otherwise `ci` |
+| `--no-selection noop\|stop` | when nothing is admitted: fly the noop baseline, or fly nothing. Both feed MetaMo a zero-Δ outcome with `admitted=False` |
+| `--cvar`, `--cvar-samples` | also apply the CVaR gate (OR semantics); a `pds` column then shows the PDS-only count |
+| `--verbose` | print every candidate's Δr, Δn, PDS margin and verdict |
+| `--json-out PATH` | save the configuration, every step and the summary as JSON |
+
+Example rows (`--candidates ci`, seeds 1–2):
+
+```
+step seed  secur thresh   appr     eps  alpha Safety   Fuel   adm  selected               result        d_r   min d_n
+   0    1  0.500  0.500  0.500  0.1000  0.100  0.632  0.368  0/4   -                      crashed      +0.0      +0.0
+   1    2  0.746  0.733  0.494  0.0004  0.050  0.743  0.257  0/4   -                      crashed      +0.0      +0.0
+```
+
+- `secur`, `thresh`, `appr`: Securing, Threshold and Approach at decision time.
+- `eps`, `alpha`, `Safety`, `Fuel`: the signal SubRep certified and selected
+  under. Without `--cvar`, no gate reads `alpha`.
+- `adm`: admitted/scored candidates, as the pipeline decided them.
+- `selected`: the chosen skill; `-` when nothing was admitted and the noop
+  baseline flew; `STOP` when nothing flew.
+- `result`, `d_r`, `min d_n`: how the flown episode ended, and the realised
+  outcome fed back to MetaMo.
+
+The summary reports measured diagnostics: the ε and α ranges, the first and
+last weights, admissions, selections and flown results, the first step where
+Securing reaches 0.95, and the number of steps where ε anywhere in [0, 0.5]
+would change a PDS admission.
+
+**Comparing two runs.** Save each run with `--json-out`, using the same options
+and seeds, for example before and after updating the MetaMo submodule. Then
+compare the `summary` blocks, or the per-step `signal` and `modulators`. The
+demo is deterministic, so any difference comes from the change, not from
+sampling.
+
 ---
 
 ## 6. One step, end to end
