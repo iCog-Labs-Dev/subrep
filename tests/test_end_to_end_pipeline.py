@@ -15,7 +15,7 @@ import pytest
 from demo.run_full_pipeline import (
     PDS_EPSILON,
     _noisy_ppo_policy,
-    _ppo_then_fixed_action_policy,
+    _ppo_then_burst_policy,
     run_pipeline,
 )
 
@@ -35,21 +35,35 @@ class _FakeEnv:
 class TestEndToEndPipeline:
     """Validate the complete pipeline execution with MDN and report integration."""
 
-    def test_ppo_then_fixed_policy_resets_between_episodes(self):
-        """Stateful demo policy should start each episode from step zero."""
-        policy = _ppo_then_fixed_action_policy(
-            lambda obs: (2, 0.8),
-            switch_step=3,
-            fixed_action=1,
+    def test_ppo_then_burst_policy_resets_between_episodes(self):
+        """Burst policy: PPO, then a bounded burst, then PPO again; reset restarts the count."""
+        policy = _ppo_then_burst_policy(
+        lambda obs: (2, 0.8),
+        burst_start=3,
+        burst_len=2,
+        fixed_action=1,
         )
         obs = np.zeros(8, dtype=np.float32)
 
+        # Steps 1-2: before the burst, follow PPO
         assert policy(obs) == (2, 0.8)
         assert policy(obs) == (2, 0.8)
+
+        # Steps 3-4: inside the burst window (3 <= step < 5), fixed action
         assert policy(obs) == (1, 1.0)
+        assert policy(obs) == (1, 1.0)
+
+        # Step 5 onward: the burst has ended, PPO takes back control
+        assert policy(obs) == (2, 0.8)
+        assert policy(obs) == (2, 0.8)
 
         policy.reset()
 
+        # After reset the counter is back at zero, so the whole pattern repeats
+        assert policy(obs) == (2, 0.8)
+        assert policy(obs) == (2, 0.8)
+        assert policy(obs) == (1, 1.0)
+        assert policy(obs) == (1, 1.0)
         assert policy(obs) == (2, 0.8)
 
     def test_noisy_policy_uses_unit_probability_when_base_probability_missing(self):

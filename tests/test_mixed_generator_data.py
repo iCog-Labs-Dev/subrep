@@ -1,5 +1,6 @@
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -9,8 +10,16 @@ import torch
 from data_collector.collect_candidate_sets import (
     PpoThenSideTradeoff,
     PpoNoisyActions,
+    parse_args as parse_candidate_set_args,
 )
-from data_collector.collect_mixed_generator_data import MixedGeneratorDataCollector
+from data_collector.collect_mixed_generator_data import (
+    MixedGeneratorDataCollector,
+    parse_args as parse_mixed_args,
+)
+from data_collector.collect_probability_aware_runtime_logs import (
+    ProbabilityAwareRuntimeLogCollector,
+    parse_args as parse_probability_aware_args,
+)
 from generator.train_generator import SkillDataset
 
 
@@ -26,6 +35,24 @@ class MockPilot:
     """A tiny mock just to test stateful policy resets without loading heavy models."""
     def predict(self, obs, deterministic=True, return_probability=True):
         return 0, 1.0
+
+
+def test_lunar_lander_collectors_default_to_full_environment_horizon(monkeypatch):
+    parsers = (
+        parse_candidate_set_args,
+        parse_mixed_args,
+        parse_probability_aware_args,
+    )
+    for parse_args in parsers:
+        monkeypatch.setattr(sys, "argv", ["collector"])
+        args = parse_args()
+        assert args.max_steps is None
+        assert args.gamma == 0.99
+
+        monkeypatch.setattr(sys, "argv", ["collector", "--max-steps", "17"])
+        args = parse_args()
+        assert args.max_steps == 17
+        assert isinstance(args.max_steps, int)
 
 
 def test_mixed_collector_creates_valid_npz_records(mixed_data_dir):
