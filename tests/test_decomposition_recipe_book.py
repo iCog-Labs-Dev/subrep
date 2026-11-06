@@ -7,13 +7,14 @@ import pytest
 from decomposition.recipe_book import (
     LUNAR_LANDER_BOOK,
     SCHEMA_VERSION,
-    Primitive,
     RecipeBookError,
+    Skill,
     holds,
     load_recipe_book,
     parse_recipe_book,
 )
-from demo.build_lunar_effect_table import PLANS
+from demo.run_lunar_subskill_reliability import SEQUENCES
+from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import SUBSKILLS, run_subskill
@@ -23,21 +24,22 @@ HELD_OUT_SEEDS = range(300, 400)
 
 FACTS = ("there", "tired")
 SKILLS = ("step",)
+PLANS = [*SEQUENCES.values(), ["stabilise"], ["slow_descent", "touch_down"]]
 
 
 def minimal_book():
     return {
         "schema_version": SCHEMA_VERSION,
         "environment": "test",
-        "goals": {"reach": {"task": "go", "achieved_when": {"there": True}}},
-        "tasks": {"go": {"methods": [{"name": "walk", "subtasks": ["step"]}]}},
-        "primitives": {"step": {"requires": {}, "effects": {"there": True}, "may_change": ["tired"]}},
+        "goals": {"reach": {"achieved_when": {"there": True}}},
+        "methods": [{"name": "walk", "subgoals": [{"there": True}]}],
+        "skills": {"step": {"requires": {}, "effects": {"there": True}, "may_change": ["tired"]}},
     }
 
 
 @pytest.fixture(scope="module")
 def lunar_book():
-    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
 
 
 @pytest.fixture(scope="module")
@@ -61,7 +63,7 @@ def flown_steps():
     return steps
 
 
-# Facts and primitives
+# Facts and skills
 
 
 def test_holds_treats_missing_facts_as_unknown():
@@ -71,9 +73,9 @@ def test_holds_treats_missing_facts_as_unknown():
     assert holds({}, {})
 
 
-def test_a_primitive_sets_its_effects_forgets_what_it_may_change_and_keeps_the_rest():
-    primitive = Primitive("brake", requires={}, effects={"slow": True}, may_change=("upright",))
-    after = primitive.apply({"slow": False, "upright": True, "over_pad": True})
+def test_a_skill_sets_its_effects_forgets_what_it_may_change_and_keeps_the_rest():
+    skill = Skill("brake", requires={}, effects={"slow": True}, may_change=("upright",))
+    after = skill.apply({"slow": False, "upright": True, "over_pad": True})
     assert after == {"slow": True, "over_pad": True}
 
 
@@ -82,10 +84,10 @@ def test_a_primitive_sets_its_effects_forgets_what_it_may_change_and_keeps_the_r
 
 def test_a_minimal_book_loads():
     book = parse_recipe_book(minimal_book(), FACTS, SKILLS)
-    assert book.goals["reach"].task == "go"
-    assert book.tasks["go"].methods[0].subtasks == ("step",)
-    assert book.tasks["go"].methods[0].requires == {}
-    assert book.primitives["step"].may_change == ("tired",)
+    assert book.goals["reach"].achieved_when == {"there": True}
+    assert book.methods[0].subgoals == ({"there": True},)
+    assert book.methods[0].requires == {}
+    assert book.skills["step"].may_change == ("tired",)
     assert book.goals["reach"].terminal is False
 
 
@@ -103,20 +105,23 @@ def _set(path, value):
     "change, message",
     [
         (_set(["schema_version"], "other"), "schema_version"),
-        (_set(["primitives", "step", "requires"], {"hungry": True}), "unknown facts"),
-        (_set(["primitives", "step", "effects"], {"there": 1}), "true or false"),
-        (_set(["primitives", "step", "may_change"], ["there"]), "both an effect"),
-        (_set(["primitives", "step", "require"], {}), "unexpected keys"),
-        (_set(["primitives", "jump"], {"requires": {}, "effects": {}, "may_change": []}), "not sub-skills"),
-        (_set(["tasks", "go", "methods", 0, "subtasks"], ["fly"]), "unknown subtasks"),
-        (_set(["tasks", "go", "methods", 0, "subtasks"], ["go"]), "cycle"),
-        (_set(["tasks", "go", "methods"], []), "at least one method"),
-        (lambda book: book["tasks"]["go"]["methods"].append({"name": "walk", "subtasks": []}), "same name"),
-        (_set(["tasks", "step"], {"methods": [{"name": "m", "subtasks": []}]}), "both a task and a primitive"),
-        (_set(["goals", "reach", "task"], "step"), "unknown task"),
+        (_set(["skills", "step", "requires"], {"hungry": True}), "unknown facts"),
+        (_set(["skills", "step", "effects"], {"there": 1}), "true or false"),
+        (_set(["skills", "step", "may_change"], ["there"]), "both an effect"),
+        (_set(["skills", "step", "require"], {}), "unexpected keys"),
+        (_set(["skills", "step", "whole_episode"], "yes"), "whole_episode must be true or false"),
+        (_set(["skills", "jump"], {"requires": {}, "effects": {}, "may_change": []}), "not skills"),
+        (_set(["methods"], {}), "must be a list"),
+        (_set(["methods", 0, "subgoals"], []), "at least one subgoal"),
+        (_set(["methods", 0, "subgoals"], [{}]), "no conditions"),
+        (_set(["methods", 0, "subgoals"], [{"hungry": True}]), "unknown facts"),
+        (_set(["methods", 0, "requires"], {"hungry": True}), "unknown facts"),
+        (lambda book: book["methods"].append({"name": "walk", "subgoals": [{"tired": True}]}), "different names"),
         (_set(["goals", "reach", "achieved_when"], {}), "at least one fact"),
-        (lambda book: book["goals"]["reach"].pop("task"), "missing"),
+        (lambda book: book["goals"]["reach"].pop("achieved_when"), "missing"),
         (_set(["goals", "reach", "terminal"], "yes"), "terminal must be true or false"),
+        (_set(["goals", "reach", "success_outcomes"], "won"), "must be a list of names"),
+        (_set(["goals", "reach", "success_outcomes"], ["won"]), "not terminal"),
     ],
 )
 def test_malformed_books_are_rejected(change, message):
@@ -126,19 +131,11 @@ def test_malformed_books_are_rejected(change, message):
         parse_recipe_book(book, FACTS, SKILLS)
 
 
-def test_a_cycle_through_several_tasks_is_rejected():
-    book = minimal_book()
-    book["tasks"]["go"]["methods"][0]["subtasks"] = ["prepare"]
-    book["tasks"]["prepare"] = {"methods": [{"name": "again", "subtasks": ["go"]}]}
-    with pytest.raises(RecipeBookError, match="cycle: go -> prepare -> go"):
-        parse_recipe_book(book, FACTS, SKILLS)
-
-
 # The LunarLander book
 
 
 def test_lunar_book_covers_every_sub_skill(lunar_book):
-    assert set(lunar_book.primitives) == set(SUBSKILLS)
+    assert set(lunar_book.skills) == set(LUNAR_LANDER.skills)
     assert set(lunar_book.goals) == {"land_on_pad", "recover_stability"}
 
 
@@ -146,6 +143,7 @@ def test_landing_on_the_pad_is_a_terminal_goal_that_needs_the_pad(lunar_book):
     goal = lunar_book.goals["land_on_pad"]
     assert goal.terminal
     assert goal.achieved_when == {"landed": True, "over_pad": True}
+    assert goal.success_outcomes == ("landed_on_pad",)
     assert not lunar_book.goals["recover_stability"].terminal
 
 
@@ -153,36 +151,44 @@ def test_lunar_book_predicts_the_facts_after_every_completed_step(lunar_book, fl
     completed = [(name, before, after) for name, before, after, done in flown_steps if done]
     assert completed
     for name, before, after in completed:
-        predicted = lunar_book.primitives[name].apply(before)
+        predicted = lunar_book.skills[name].apply(before)
         assert holds(predicted, after), (name, before, after)
 
 
 def test_lunar_book_requirements_hold_whenever_a_plan_reaches_a_step(lunar_book, flown_steps):
     for name, before, _, _ in flown_steps:
-        assert holds(lunar_book.primitives[name].requires, before), (name, before)
+        assert holds(lunar_book.skills[name].requires, before), (name, before)
 
 
 def possible_facts():
     """Every combination of facts except those the fact definitions rule out.
 
-    ``slow`` (|vy| <= 0.2) and ``falling_fast`` (vy <= -0.4) cannot both hold.
+    ``slow`` (|vy| <= 0.2) and ``falling_fast`` (vy <= -0.4) cannot both hold,
+    and ``descent_underway`` means falling fast or near the ground.
     """
     for values in itertools.product((False, True), repeat=len(FACT_NAMES)):
         facts = dict(zip(FACT_NAMES, values))
-        if not (facts["slow"] and facts["falling_fast"]):
+        consistent = facts["descent_underway"] == (facts["falling_fast"] or facts["near_ground"])
+        if consistent and not (facts["slow"] and facts["falling_fast"]):
             yield facts
 
 
 def test_lunar_book_effects_follow_from_how_each_sub_skill_stops(lunar_book):
-    for name, primitive in lunar_book.primitives.items():
+    for name in SUBSKILLS:
+        skill = lunar_book.skills[name]
         stops = [facts for facts in possible_facts() if SUBSKILLS[name].is_done(facts)]
         assert stops, name
         for facts in stops:
-            assert holds(primitive.effects, facts), (name, facts)
+            assert holds(skill.effects, facts), (name, facts)
 
 
 def test_free_fall_may_stop_near_the_ground_and_brake_still_applies(lunar_book):
-    stopped_near_ground = {**dict.fromkeys(FACT_NAMES, False), "near_ground": True, "over_pad": True}
+    stopped_near_ground = {
+        **dict.fromkeys(FACT_NAMES, False),
+        "near_ground": True,
+        "over_pad": True,
+        "descent_underway": True,
+    }
     assert SUBSKILLS["free_fall"].is_done(stopped_near_ground)
-    after = lunar_book.primitives["free_fall"].apply(stopped_near_ground)
-    assert holds(lunar_book.primitives["brake"].requires, after)
+    after = lunar_book.skills["free_fall"].apply(stopped_near_ground)
+    assert holds(lunar_book.skills["brake"].requires, after)

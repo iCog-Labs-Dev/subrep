@@ -10,7 +10,7 @@ or when it reaches its frame limit.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 
 import numpy as np
 
@@ -109,7 +109,7 @@ SUBSKILLS: Dict[str, SubSkill] = {
         SubSkill(
             name="free_fall",
             policy=lambda s: NO_ENGINE,
-            is_done=lambda f: f["falling_fast"] or f["near_ground"],
+            is_done=lambda f: f["descent_underway"],
             max_frames=300,
         ),
         SubSkill(
@@ -128,11 +128,18 @@ SUBSKILLS: Dict[str, SubSkill] = {
 }
 
 
-def run_subskill(env: Any, skill: SubSkill, observation: np.ndarray) -> SubSkillRun:
+def run_subskill(
+    env: Any,
+    skill: SubSkill,
+    observation: np.ndarray,
+    facts: Callable[[np.ndarray], Mapping[str, bool]] = lander_facts,
+    objectives: int = 2,
+) -> SubSkillRun:
     """Run ``skill`` from ``observation`` until it completes, the episode ends,
     or its frame limit is reached.
 
-    ``env`` must be the environment that produced ``observation``.
+    ``env`` must be the environment that produced ``observation``. ``facts`` and
+    ``objectives`` describe that environment's observations and reward vector.
     """
     obs = np.asarray(observation, dtype=np.float32)
     actions = []
@@ -140,7 +147,7 @@ def run_subskill(env: Any, skill: SubSkill, observation: np.ndarray) -> SubSkill
     terminated = truncated = False
     info: Optional[Dict[str, Any]] = None
 
-    while not skill.is_done(lander_facts(obs)) and len(actions) < skill.max_frames:
+    while not skill.is_done(facts(obs)) and len(actions) < skill.max_frames:
         action = int(skill.policy(obs))
         obs, reward, terminated, truncated, info = env.step(action)
         actions.append(action)
@@ -150,10 +157,10 @@ def run_subskill(env: Any, skill: SubSkill, observation: np.ndarray) -> SubSkill
 
     return SubSkillRun(
         skill=skill.name,
-        completed=skill.is_done(lander_facts(obs)),
+        completed=skill.is_done(facts(obs)),
         frames=len(actions),
         actions=tuple(actions),
-        rewards=np.asarray(rewards, dtype=np.float64).reshape(-1, 2),
+        rewards=np.asarray(rewards, dtype=np.float64).reshape(-1, objectives),
         observation=np.asarray(obs, dtype=np.float32),
         terminated=bool(terminated),
         truncated=bool(truncated),

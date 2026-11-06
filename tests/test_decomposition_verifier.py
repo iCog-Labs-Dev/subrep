@@ -10,31 +10,43 @@ from certification.certificate_schema import Certificate
 from decomposition.effects import (
     BASELINE_ID,
     DEFAULT_TABLE_PATH,
-    ENVIRONMENT,
     GAMMA,
-    GROUP_FACTS,
     SCHEMA_VERSION,
     EffectTable,
+    Estimate,
+    Gains,
     group_key,
     plan_key,
     replay,
 )
 from decomposition.planner import CandidatePlan, propose
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
-from decomposition.verifier import CERTIFICATE_VERSION, NOT_MEASURED, MdnRegion, Priorities, best_plan, verify
+from decomposition.verifier import (
+    CERTIFICATE_VERSION,
+    GOAL_TOO_RARE,
+    NOT_MEASURED,
+    MdnRegion,
+    Priorities,
+    best_plan,
+    goal_rate_bound,
+    verify,
+)
+from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
-from env.lunar_subskills import NO_ENGINE, SUBSKILLS
+from env.lunar_subskills import NO_ENGINE
 
 # Level, over the pad and high up: x, y, vx, vy, angle, spin, left leg, right leg.
 OBSERVATION = np.array([0.0, 1.4, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0])
-GROUP = "upright=1,over_pad=1,near_ground=0"
+GROUP = "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0"
 TIMESTAMP = "2026-10-17T00:00:00+00:00"
 EVEN = Priorities(weights=(0.5, 0.5))
 
 
-def candidate(option, skills):
-    return CandidatePlan("land_on_pad", option, (("land", option),), tuple(skills), {"landed": True})
+def candidate(option, skills, success_outcomes=()):
+    return CandidatePlan(
+        "land_on_pad", option, (option,), tuple(skills), {"landed": True}, success_outcomes=success_outcomes
+    )
 
 
 def gains(delta_r, delta_n):
@@ -46,7 +58,7 @@ def gains(delta_r, delta_n):
 
 def table_of(plans, min_samples=30):
     """A table measuring each (skills, Δr, Δn) from states around OBSERVATION; the gains are lower bounds."""
-    assert group_key(lander_facts(OBSERVATION)) == GROUP
+    assert group_key(LUNAR_LANDER, lander_facts(OBSERVATION)) == GROUP
     entries = [
         {
             "name": plan_key(skills),
@@ -71,18 +83,20 @@ def table_of(plans, min_samples=30):
     return EffectTable(
         {
             "schema_version": SCHEMA_VERSION,
-            "environment": ENVIRONMENT,
+            "environment": LUNAR_LANDER.environment,
+            "objectives": list(LUNAR_LANDER.objectives),
             "baseline_id": BASELINE_ID,
             "gamma": GAMMA,
             "confidence": 0.95,
             "bootstrap_resamples": 10,
             "min_samples": min_samples,
             "support_margin": 0.05,
-            "group_facts": list(GROUP_FACTS),
+            "group_facts": list(LUNAR_LANDER.group_facts),
             "seeds": {"start": 7, "stop": 107},
             "steps": [],
             "plans": entries,
-        }
+        },
+        LUNAR_LANDER,
     )
 
 
@@ -109,11 +123,11 @@ def test_cds_admits_a_plan_that_gains_under_every_weighting():
     assert verdict.admitted and verdict.reason == "admitted by the CDS gate"
     assert verdict.cds_margin == pytest.approx(7.0)
     certificate = verdict.entry.certificate
-    assert certificate.skill_id == "plan:land_on_pad/plan"
+    assert certificate.skill_id == "plan:land_on_pad/plan/a>b"
     assert certificate.gate_type == "CDS" and certificate.epsilon == 0.0
     assert certificate.delta_r == 10.0 and certificate.delta_n == (5.0, -3.0)
     assert certificate.admission_margin == pytest.approx(7.0)
-    assert (certificate.baseline_id, certificate.environment, certificate.gamma) == (BASELINE_ID, ENVIRONMENT, GAMMA)
+    assert (certificate.baseline_id, certificate.environment, certificate.gamma) == (BASELINE_ID, LUNAR_LANDER.environment, GAMMA)
     assert (certificate.seed, certificate.episode_length, certificate.timestamp) == (7, 250, TIMESTAMP)
     assert certificate.version == CERTIFICATE_VERSION
     assert certificate.weight_region_type == "FULL_SIMPLEX"
@@ -139,6 +153,28 @@ def test_a_trade_off_beyond_the_budget_is_rejected_with_its_margins():
 def test_the_gates_use_the_lower_bounds_not_the_means():
     # The means are one higher than the lower bounds: CDS would pass on the means.
     assert not verify_one(-0.5, (0.0, 0.0)).admitted
+
+
+def test_a_plan_that_rarely_reaches_its_goal_is_rejected():
+    table = table_of([(("a", "b"), 10.0, (5.0, 5.0))])  # 90 of 100 flights landed on the pad
+    plan = candidate("plan", ["a", "b"], success_outcomes=("landed_on_pad",))
+    [strict] = verify([plan], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.95)
+    assert not strict.admitted and strict.reason == GOAL_TOO_RARE
+    assert strict.goal_rate == pytest.approx(goal_rate_bound(strict.estimate, ("landed_on_pad",)))
+    [lenient] = verify([plan], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.8)
+    assert lenient.admitted
+
+
+def test_a_goal_with_no_final_outcome_has_no_rate_to_check():
+    table = table_of([(("a", "b"), 10.0, (5.0, 5.0))])
+    [verdict] = verify([candidate("plan", ["a", "b"])], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.99)
+    assert verdict.admitted and verdict.goal_rate is None
+
+
+@pytest.mark.parametrize("rate, samples, low, high", [(0.9, 100, 0.83, 0.9), (1.0, 100, 0.97, 1.0), (0.0, 100, 0.0, 0.01)])
+def test_the_goal_rate_bound_is_a_wilson_lower_bound(rate, samples, low, high):
+    estimate = Estimate(samples, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes={"won": rate, "lost": 1.0 - rate})
+    assert low <= goal_rate_bound(estimate, ("won",)) <= high
 
 
 def test_plans_without_enough_measurements_are_not_certified():
@@ -306,12 +342,12 @@ def episode_start(seed, actions=()):
 
 @pytest.fixture(scope="module")
 def lunar_book():
-    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, SUBSKILLS)
+    return load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
 
 
 @pytest.fixture(scope="module")
 def lunar_table():
-    return EffectTable.load(DEFAULT_TABLE_PATH)
+    return EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
 
 
 def test_a_safety_first_region_certifies_a_landing_plan_from_the_air(lunar_book, lunar_table):
@@ -322,7 +358,8 @@ def test_a_safety_first_region_certifies_a_landing_plan_from_the_air(lunar_book,
     best = best_plan(verdicts)
     assert best is not None
     certificate = best.entry.certificate
-    assert certificate.skill_id in {"plan:land_on_pad/careful_landing", "plan:land_on_pad/fuel_saving_landing"}
+    assert certificate.skill_id.startswith("plan:land_on_pad/")
+    assert certificate.skill_id.endswith(">".join(best.candidate.skills))
     assert best.estimate.samples >= lunar_table.min_samples
     assert np.isclose(best.score, certificate.delta_r + np.dot((0.7, 0.3), certificate.delta_n))
 
