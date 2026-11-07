@@ -381,3 +381,62 @@ def test_multi_policy_dataset_size_subsets_reuse_manifest(tmp_path):
     assert not (sets[0] & sets[1] or sets[0] & sets[2] or sets[1] & sets[2])
     assert all(len([r for r in rows if r['context_id'] == context]) == len(POLICY_NAMES)
                for context in sets[0])
+
+def test_multi_policy_report_counts_pds_only_as_certifiable(monkeypatch):
+    from generator import evaluate_generator_report as report_module
+    from generator import multi_policy_pipeline
+    from generator.policy_registry import POLICY_NAMES
+    
+    class MeasuredPDSOnly:
+        return_value = {
+            'delta_r': 1.0,
+            'delta_n': [1.0, 0.0],
+            'cds_admit': False,
+            'pds_admit': True,
+        }
+    class DummyImprovementCalculator:
+        def __init__(self, baseline_stats):
+            pass
+        
+    def fake_evaluate(*args, **kwargs):
+        return {'prediction_metrics_available': True}
+
+    def fake_certify_candidate(*args, **kwargs):
+        return MeasuredPDSOnly.return_value.copy()
+
+    monkeypatch.setattr(multi_policy_pipeline, 'evaluate', fake_evaluate)
+    monkeypatch.setattr(
+        report_module,
+        'certify_candidate',
+        fake_certify_candidate,
+    )
+    monkeypatch.setattr(
+        report_module,
+        'ImprovementCalculator',
+        DummyImprovementCalculator,
+    )
+    test_rows = [
+        {
+            'context_id': 'context:1',
+            'policy': policy,
+            'payoff': 1.0,
+            'motives': np.array([1.0, 0.0]),
+        }
+        for policy in POLICY_NAMES
+    ]
+    train_rows = [{'context_id': 'train:1'}]
+
+    report = report_module.build_multi_policy_report(
+        test_rows=test_rows,
+        train_rows=train_rows,
+        model=object(),
+        observation_baseline=object(),
+        baseline_stats={},
+    )
+
+    certification = report['measured_certification_per_policy']
+
+    for policy in POLICY_NAMES:
+        assert certification[policy]['certifiable_count'] == 1
+        assert certification[policy]['cds_admission_rate'] == 0.0
+        assert certification[policy]['pds_admission_rate'] == 1.0

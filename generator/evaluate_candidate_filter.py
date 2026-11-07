@@ -32,7 +32,7 @@ def assess(groups, selections, baseline_stats):
             decision = {'delta_r': delta_r, 'delta_n': np.asarray(delta_n),
                         'cds_admit': bool(cds.admit(delta_r, delta_n)),
                         'pds_admit': bool(pds.admit(delta_r, delta_n))}
-            certifiable = decision['cds_admit'] and decision['pds_admit']
+            certifiable = decision['cds_admit'] or decision['pds_admit']
             all_count += 1
             all_cert += int(certifiable)
             if r['policy'] in chosen:
@@ -44,9 +44,12 @@ def assess(groups, selections, baseline_stats):
                 motives.append(r['motives'])
                 delta_payoff.append(float(decision['delta_r']))
                 delta_motives.append(np.asarray(decision['delta_n']).tolist())
-    return dict(total_candidates=all_count, executed=selected_count,
-                avoided=all_count-selected_count, execution_savings_fraction=(all_count-selected_count)/all_count,
-                genuinely_certifiable=all_cert, certifiable_found=selected_cert,
+    return dict(total_candidates=all_count, 
+                executed=selected_count,
+                avoided=all_count-selected_count, 
+                execution_savings_fraction=(all_count-selected_count)/all_count,
+                genuinely_certifiable=all_cert, 
+                certifiable_found=selected_cert,
                 certifiable_missed=all_cert-selected_cert,
                 missed_certifiable_fraction=(all_cert-selected_cert)/all_cert if all_cert else None,
                 cds_admission_rate=cds_admit/selected_count,
