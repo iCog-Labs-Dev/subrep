@@ -119,6 +119,9 @@ def test_cli_report_reuses_manifest_and_only_test_contexts(tmp_path, monkeypatch
             payoff=row["payoff"],
             motives=row["motives"],
             context_seed=row["seed"],
+            checkpoint_sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            gamma=0.99,
+            max_steps=-1,
             skill_id=row["policy"],
         )
 
@@ -203,6 +206,9 @@ def test_cli_report_does_not_create_missing_manifest(tmp_path):
             payoff=row["payoff"],
             motives=row["motives"],
             context_seed=row["seed"],
+            checkpoint_sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            gamma=0.99,
+            max_steps=-1,
             skill_id=row["policy"],
         )
 

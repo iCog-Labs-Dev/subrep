@@ -19,6 +19,7 @@ from env.lunar_lander_wrapper import SubRepEnv
 from env.skill_executor import SkillExecutor
 from generator.candidate_filter import execute_selected, select_top_k
 from generator.multi_policy_pipeline import load_model
+from generator.multi_policy_data import build_rollout_provenance
 from generator.policy_registry import POLICY_NAMES
 
 
@@ -162,7 +163,12 @@ def main(argv=None):
 
     started = time.monotonic()
     print("Loading policy-conditioned model ...", flush=True)
-    model, conditioned = load_model(args.model_path)
+    runtime_provenance = build_rollout_provenance(
+        args.pilot_checkpoint, args.gamma, args.max_steps
+    )
+    model, conditioned = load_model(
+        args.model_path, expected_rollout_provenance=runtime_provenance
+    )
     if not conditioned:
         raise ValueError("A policy-conditioned checkpoint is required")
 

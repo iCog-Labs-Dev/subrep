@@ -25,6 +25,9 @@ def make_data(tmp_path, n=16):
                 directory / f"{name}_seed{seed}.npz",
                 obs=obs,
                 context_seed=seed,
+                checkpoint_sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                gamma=0.99,
+                max_steps=-1,
                 skill_id=name,
                 payoff=float(policy_id + seed / 10),
                 motives=np.array(
@@ -226,7 +229,7 @@ def test_manifest_signature_detects_changed_record_contents(tmp_path):
 
 
 def test_checkpoint_without_provenance_is_rejected(tmp_path):
-    checkpoint = tmp_path / "legacy.pt"
+    checkpoint = tmp_path / "checkpoint_without_provenance.pt"
     model = PolicyConditionedSkillGenerator()
 
     torch.save(
@@ -280,4 +283,35 @@ def test_checkpoint_rejects_mismatched_manifest(tmp_path):
         load_model(
             checkpoint,
             expected_manifest=other_manifest,
+        )
+
+def test_loader_rejects_mixed_rollout_provenance(tmp_path):
+    data_dir = make_data(tmp_path)
+    path = data_dir / f"{POLICY_NAMES[0]}_seed0.npz"
+    with np.load(path, allow_pickle=False) as saved:
+        payload = {key: saved[key] for key in saved.files}
+    payload["gamma"] = np.asarray(0.95)
+    np.savez(path, **payload)
+
+    with pytest.raises(ValueError, match="Incompatible rollout provenance"):
+        load_records(str(data_dir))
+
+
+def test_checkpoint_rejects_runtime_rollout_mismatch(tmp_path):
+    rows = load_records(str(make_data(tmp_path)))
+    manifest = load_or_create_manifest(rows, str(tmp_path / "manifest.json"))
+    checkpoint = tmp_path / "model.pt"
+    save_model(
+        PolicyConditionedSkillGenerator(), checkpoint,
+        conditioned=True, manifest=manifest,
+    )
+
+    with pytest.raises(ValueError, match="Runtime policy checkpoint or rollout settings"):
+        load_model(
+            checkpoint,
+            expected_rollout_provenance={
+                "checkpoint_sha256": "b" * 64,
+                "gamma": 0.99,
+                "max_steps": -1,
+            },
         )

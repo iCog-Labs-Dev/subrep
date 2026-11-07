@@ -23,11 +23,14 @@ def load_records(data_dir: str = "data/raw_mixed") -> list[dict]:
     records = []
     for path in paths:
         with np.load(path, allow_pickle=False) as z:
-            needed = {"obs", "payoff", "motives", "skill_id", "context_seed"}
+            needed = {
+                "obs", "payoff", "motives", "skill_id", "context_seed",
+                "checkpoint_sha256", "gamma", "max_steps",
+            }
             if not needed.issubset(z.files):
                 raise ValueError(
                     f"{path}: missing {sorted(needed - set(z.files))}; "
-                    "recollect fresh raw_mixed data"
+                    "recollect raw_mixed data with policy checkpoint and rollout settings"
                 )
 
             obs = np.asarray(z["obs"], dtype=np.float32).reshape(-1)
@@ -45,6 +48,14 @@ def load_records(data_dir: str = "data/raw_mixed") -> list[dict]:
             ):
                 raise ValueError(f"{path}: nonfinite outcome")
 
+            provenance = normalize_rollout_provenance(
+                {
+                    "checkpoint_sha256": str(z["checkpoint_sha256"].item()),
+                    "gamma": float(z["gamma"].item()),
+                    "max_steps": z["max_steps"].item(),
+                }
+            )
+
             records.append(
                 dict(
                     file=path.name,
@@ -56,6 +67,7 @@ def load_records(data_dir: str = "data/raw_mixed") -> list[dict]:
                     payoff=payoff,
                     motives=motives,
                     terminated=bool(z["terminated"]) if "terminated" in z.files else None,
+                    **provenance,
                 )
             )
 
@@ -67,6 +79,8 @@ def load_records(data_dir: str = "data/raw_mixed") -> list[dict]:
                 f"Duplicate context/policy {key}; use a fresh empty collection directory"
             )
         seen.add(key)
+
+    rollout_provenance(records)
 
     groups = group_contexts(records, complete=False)
     for context, rows in groups.items():
@@ -116,6 +130,7 @@ def dataset_signature(records: list[dict]) -> str:
                 for key in (
                     "file", "context_id", "seed", "policy", "policy_id",
                     "obs", "payoff", "motives", "terminated",
+                    "checkpoint_sha256", "gamma", "max_steps",
                 )
             }
         )
@@ -133,6 +148,7 @@ def split_signature(manifest: dict) -> str:
     """Hash the dataset identity and exact context-to-split assignments."""
     identity = {
         "dataset_signature": manifest["dataset_signature"],
+        "rollout_provenance": manifest["rollout_provenance"],
         "assignment": manifest["assignment"],
         "fractions": manifest["fractions"],
         "seed": manifest["seed"],
@@ -150,8 +166,8 @@ def split_signature(manifest: dict) -> str:
 def validate_manifest(records: list[dict], manifest: dict) -> dict:
     """Validate dataset contents, assignments, and the stored split identity."""
     required = {
-        "seed", "fractions", "dataset_signature", "assignment",
-        "policy_names", "split_signature",
+        "seed", "fractions", "dataset_signature", "rollout_provenance",
+        "assignment", "policy_names", "split_signature",
     }
     missing = required - set(manifest)
     if missing:
@@ -162,6 +178,15 @@ def validate_manifest(records: list[dict], manifest: dict) -> dict:
         raise ValueError(
             "Split manifest dataset signature does not match raw_mixed records. "
             "Do not evaluate this dataset with the saved split."
+        )
+
+    actual_rollout_provenance = rollout_provenance(records)
+    saved_rollout_provenance = normalize_rollout_provenance(
+        manifest["rollout_provenance"]
+    )
+    if saved_rollout_provenance != actual_rollout_provenance:
+        raise ValueError(
+            "Split manifest rollout provenance does not match raw_mixed records"
         )
 
     contexts = set(group_contexts(records, complete=True))
@@ -246,6 +271,7 @@ def load_or_create_manifest(
         "seed": seed,
         "fractions": list(fractions),
         "dataset_signature": dataset_signature(records),
+        "rollout_provenance": rollout_provenance(records),
         "assignment": assignment,
         "policy_names": list(POLICY_NAMES),
     }
@@ -272,3 +298,91 @@ def partition(records: list[dict], manifest: dict) -> dict[str, list[dict]]:
             raise ValueError(f"Unknown split assignment {split!r}")
         buckets[split].append(record)
     return buckets
+
+
+def normalize_rollout_provenance(provenance: dict) -> dict:
+    """Validate and normalize the policy checkpoint and rollout settings."""
+    required = {"checkpoint_sha256", "gamma", "max_steps"}
+    if not isinstance(provenance, dict):
+        raise ValueError("Rollout provenance must be a dictionary")
+
+    missing = required - set(provenance)
+    if missing:
+        raise ValueError(f"Rollout provenance is missing fields: {sorted(missing)}")
+
+    checkpoint_sha256 = str(provenance["checkpoint_sha256"]).lower()
+    if (
+        len(checkpoint_sha256) != 64
+        or any(char not in "0123456789abcdef" for char in checkpoint_sha256)
+    ):
+        raise ValueError(
+            "checkpoint_sha256 must be a 64-character hexadecimal SHA-256 hash"
+        )
+
+    try:
+        gamma = float(provenance["gamma"])
+        raw_max_steps = float(provenance["max_steps"])
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("Rollout gamma and max_steps must be valid numeric values") from exc
+
+    if not np.isfinite(gamma) or not 0.0 <= gamma <= 1.0:
+        raise ValueError("Rollout gamma must be finite and between 0 and 1")
+    if not np.isfinite(raw_max_steps) or not raw_max_steps.is_integer():
+        raise ValueError("max_steps must be an integer")
+
+    max_steps = int(raw_max_steps)
+    if max_steps == 0 or max_steps < -1:
+        raise ValueError("max_steps must be -1 or a positive integer")
+
+    return {
+        "checkpoint_sha256": checkpoint_sha256,
+        "gamma": gamma,
+        "max_steps": max_steps,
+    }
+
+
+def rollout_provenance(records: list[dict]) -> dict:
+    """Return the one rollout configuration shared by all records."""
+    if not records:
+        raise ValueError("Cannot determine rollout provenance from empty records")
+
+    identities = {
+        (
+            item["checkpoint_sha256"],
+            item["gamma"],
+            item["max_steps"],
+        )
+        for item in (normalize_rollout_provenance(row) for row in records)
+    }
+    if len(identities) != 1:
+        raise ValueError(
+            "Incompatible rollout provenance: raw_mixed records were generated "
+            "using different policy checkpoints or rollout settings"
+        )
+
+    checkpoint_sha256, gamma, max_steps = next(iter(identities))
+    return {
+        "checkpoint_sha256": checkpoint_sha256,
+        "gamma": gamma,
+        "max_steps": max_steps,
+    }
+
+
+def build_rollout_provenance(
+    policy_checkpoint: str,
+    gamma: float,
+    max_steps: int | None,
+) -> dict:
+    """Hash a policy checkpoint and combine it with its rollout settings."""
+    checkpoint_path = Path(policy_checkpoint)
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"Policy checkpoint not found: {checkpoint_path}")
+
+    checkpoint_sha256 = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
+    return normalize_rollout_provenance(
+        {
+            "checkpoint_sha256": checkpoint_sha256,
+            "gamma": gamma,
+            "max_steps": -1 if max_steps is None else max_steps,
+        }
+    )

@@ -13,10 +13,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from generator.skill_generator import SkillGenerator, PolicyConditionedSkillGenerator
 from generator.multi_policy_data import (
     load_records, load_manifest, load_or_create_manifest, partition,
+    normalize_rollout_provenance,
 )
 from generator.policy_registry import POLICY_NAMES
-
-
 def dataset(rows):
     return TensorDataset(
         torch.tensor(np.stack([r["obs"] for r in rows]), dtype=torch.float32),
@@ -127,6 +126,19 @@ def _manifest_provenance(manifest):
     return {key: manifest[key] for key in required}
 
 
+def _complete_manifest_provenance(manifest):
+    """Return dataset, split, and rollout identities for a model checkpoint."""
+    provenance = _manifest_provenance(manifest)
+    if not manifest.get("rollout_provenance"):
+        raise ValueError(
+            "Cannot save/load checkpoint: manifest lacks rollout_provenance"
+        )
+    provenance["rollout_provenance"] = normalize_rollout_provenance(
+        manifest["rollout_provenance"]
+    )
+    return provenance
+
+
 def save_model(
     model,
     path,
@@ -137,7 +149,7 @@ def save_model(
     embedding_dim=4,
 ):
     """Save model weights together with the exact dataset and split identities."""
-    provenance = _manifest_provenance(manifest)
+    provenance = _complete_manifest_provenance(manifest)
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
 
@@ -154,8 +166,13 @@ def save_model(
     )
 
 
-def load_model(path, *, expected_manifest=None):
-    """Load a checkpoint and optionally verify it against the evaluation manifest."""
+def load_model(
+    path,
+    *,
+    expected_manifest=None,
+    expected_rollout_provenance=None,
+):
+    """Load a checkpoint and verify its dataset, split, and rollout identity."""
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
 
     if checkpoint.get("policy_names") != list(POLICY_NAMES):
@@ -165,19 +182,47 @@ def load_model(path, *, expected_manifest=None):
         key: checkpoint.get(key)
         for key in ("dataset_signature", "split_signature")
     }
+    if any(value is None for value in checkpoint_provenance.values()):
+        raise ValueError(
+            "Checkpoint is missing dataset/split provenance. "
+            "Retrain the model using the current multi-policy pipeline."
+        )
 
     if expected_manifest is not None:
-        if any(value is None for value in checkpoint_provenance.values()):
-            raise ValueError(
-                "Checkpoint is missing dataset/split provenance. "
-                "Retrain the model using the current multi-policy pipeline before evaluation."
-            )
-
         expected = _manifest_provenance(expected_manifest)
         if checkpoint_provenance != expected:
             raise ValueError(
                 "Checkpoint dataset/split identity does not match the saved training "
                 "manifest. Refusing to evaluate on a different split."
+            )
+
+    saved_rollout_provenance = checkpoint.get("rollout_provenance")
+    if saved_rollout_provenance is None:
+        raise ValueError(
+            "Checkpoint is missing rollout provenance. Retrain the generator "
+            "using raw_mixed records with rollout metadata."
+        )
+    saved_rollout_provenance = normalize_rollout_provenance(
+        saved_rollout_provenance
+    )
+
+    if expected_manifest is not None:
+        expected_rollout = _complete_manifest_provenance(
+            expected_manifest
+        )["rollout_provenance"]
+        if saved_rollout_provenance != expected_rollout:
+            raise ValueError(
+                "Checkpoint rollout provenance does not match the saved training manifest"
+            )
+
+    if expected_rollout_provenance is not None:
+        expected_rollout = normalize_rollout_provenance(
+            expected_rollout_provenance
+        )
+        if saved_rollout_provenance != expected_rollout:
+            raise ValueError(
+                "Runtime policy checkpoint or rollout settings do not match "
+                "those used to train the generator"
             )
 
     model = (
@@ -389,5 +434,3 @@ def main(argv=None):
         print(f'Saved {out / "dataset_size_metrics.json"}')
 
 
-if __name__ == "__main__":
-    main()

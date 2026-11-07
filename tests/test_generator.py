@@ -129,6 +129,7 @@ def test_policy_conditioned_embedding_gradients_and_checkpoint(tmp_path):
     test_manifest = {
         "dataset_signature": "unit-test-dataset",
         "split_signature": "unit-test-split",
+        "rollout_provenance": {"checkpoint_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "gamma": 0.99, "max_steps": -1},
     }
 
     save_model(
