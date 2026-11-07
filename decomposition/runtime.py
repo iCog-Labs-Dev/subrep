@@ -17,15 +17,29 @@ The plan in progress is kept unless another admitted plan beats it by more than
 lander change its mind at every subgoal.
 
 Every skill flies under a certificate admitted from the state it starts in. When
-nothing is admitted, the run stops, unless the caller chooses the continuation
-policy ``Continuation.KEEP_UNREJECTED_PLAN``. The plan in progress then goes on
-without a new certificate, but only if priorities were given, its last skill
-completed, and the rest of it was not rejected from this state: nothing was
-measured from states like this one, or it passed the gates but reaches its goal
-less often than a new plan must. A rest the gates reject, a rest the planner no
-longer proposes, and refused priorities stop the run under either policy.
-Decisions taken under the continuation policy are recorded as continued, never
-as re-certified.
+nothing is admitted, ``Continuation`` says what happens:
+
+- ``FALLBACK``, the default: a fallback plan may be flown. It must be measured
+  from states like this one and admitted by the gates under the current
+  priorities and risk settings, so it is better than doing nothing under every
+  weighting the priorities allow, and the lower confidence bound of its gain on
+  the domain's safety objective must be at least zero, so it is no less safe
+  than doing nothing. Only the goal-rate check is waived: that check stops a
+  plan from beating one that reaches the goal more often, and when nothing else
+  is admitted the only other choice is doing nothing. The fallback is checked
+  again before every skill, like any plan, and its decisions are recorded as
+  fallbacks with their certificates. When there is no fallback, the run stops;
+- ``STOP``: the run stops;
+- ``KEEP_UNREJECTED_PLAN``: the plan in progress goes on without a new
+  certificate, but only if priorities were given, its last skill completed, and
+  the rest of it was not rejected from this state: nothing was measured from
+  states like this one, or it passed the gates but reaches its goal less often
+  than a new plan must. Its decisions are recorded as continued, never as
+  re-certified.
+
+A rest the gates reject or the planner no longer proposes is never continued;
+only a fallback admitted from the state can follow it. Refused priorities stop
+the run under every policy, since nothing can be checked without them.
 
 A new plan must reach its goal at least ``DEFAULT_MIN_GOAL_RATE`` of the time
 with 95% confidence, so that a plan cannot be chosen because it ends the episode
@@ -42,9 +56,11 @@ Whether a goal is achieved is confirmed, never assumed:
   hold. A terminal goal, such as landing on the pad, is achieved only by how the
   episode ends.
 
-By default the runtime never acts without a current certificate: when no plan can
-be flown it stops and leaves the lander to the caller. Given a feedback log, it
-also skips plans whose certificates the log has revoked. A source of priorities
+Unless the caller chooses the continuation policy, the runtime never acts without
+a certificate admitted from the current state: when neither a plan nor a
+fallback can be flown it stops and leaves the lander to the caller. Given a
+feedback log, it also skips plans, fallbacks included, whose certificates the
+log has revoked. A source of priorities
 may refuse to give any, as an MDN whose weights lie outside its own region does;
 nothing new is then certified.
 """
@@ -61,7 +77,7 @@ from decomposition.domain import Domain
 from decomposition.effects import EffectTable
 from decomposition.executor import Execution, execute
 from decomposition.feedback import FeedbackLog
-from decomposition.planner import CandidatePlan, Generation, generate, goal_graph
+from decomposition.planner import CandidatePlan, Generation, generate
 from decomposition.recipe_book import Goal, RecipeBook, holds
 from decomposition.verifier import (
     GOAL_TOO_RARE,
@@ -94,7 +110,8 @@ class GoalStatus(str, Enum):
 class Continuation(str, Enum):
     """What the runtime does when no plan is admitted from the current state."""
 
-    STOP = "stop"  # every skill needs a certificate admitted from the state it starts in
+    FALLBACK = "fallback"  # a fallback admitted from the current state may be flown, as the module describes
+    STOP = "stop"  # every skill needs a plan admitted from the state it starts in
     KEEP_UNREJECTED_PLAN = "keep_unrejected_plan"  # the plan in progress may go on, as the module describes
 
 
@@ -111,6 +128,7 @@ class Decision:
     skipped: Tuple[CandidatePlan, ...] = ()  # candidates a measuring limit left out, kept for the record
     weights: Optional[Tuple[float, ...]] = None  # the priorities at this decision; None if refused
     continued: bool = False  # flown under the continuation policy, on a certificate from an earlier state
+    fallback: bool = False  # flown as a fallback, on a certificate admitted from this very state
 
 
 @dataclass(frozen=True)
@@ -153,6 +171,11 @@ class GoalRun:
         return sum(decision.continued for decision in self.decisions)
 
     @property
+    def fallbacks(self) -> int:
+        """Decisions at which no plan was admitted and a fallback was flown."""
+        return sum(decision.fallback for decision in self.decisions)
+
+    @property
     def switches(self) -> int:
         """Times a skill finished and the next one flown was not the next skill of the plan."""
         return sum(
@@ -174,6 +197,7 @@ class GoalRun:
             "rechecks": self.rechecks,
             "recertified_rechecks": self.recertified_rechecks,
             "continued": self.continued,
+            "fallbacks": self.fallbacks,
             "switches": self.switches,
             "replans": self.replans,
             "episode_over": self.episode_over,
@@ -194,14 +218,15 @@ def pursue(
     timestamp: Optional[str] = None,
     min_goal_rate: float = DEFAULT_MIN_GOAL_RATE,
     limit: Optional[int] = None,
-    continuation: Continuation = Continuation.STOP,
+    continuation: Continuation = Continuation.FALLBACK,
 ) -> GoalRun:
     """Pursue ``goals`` from ``observation``, which ``env`` must have just produced.
 
     ``priorities`` are fixed, or a source asked at every decision. ``limit`` caps
     how many candidates are measured at each decision, most promising first under
     the priorities. It is off by default. ``continuation`` says what happens when
-    nothing is admitted; by default the run stops.
+    nothing is admitted; by default a fallback admitted from the current state may
+    be flown, and the run stops when there is none.
     """
     offered = (goals,) if isinstance(goals, str) else tuple(goals)
     unknown = [goal for goal in offered if goal not in book.goals]
@@ -247,13 +272,17 @@ def pursue(
 
             chosen = _choose(verdicts, remaining)
             recertified = chosen is not None
+            fallback = False
+            if chosen is None and continuation is Continuation.FALLBACK and current is not None:
+                chosen = _fallback(domain, verdicts, remaining, obs, facts, table, current, timestamp, feedback)
+                fallback = chosen is not None
             continued = (
-                not recertified
+                chosen is None
                 and continuation is Continuation.KEEP_UNREJECTED_PLAN
                 and current is not None
                 and _may_continue(verdicts, remaining)
             )
-            if recertified:
+            if chosen is not None:
                 in_progress, remaining = chosen, chosen.candidate.skills
             elif not continued:
                 decisions.append(Decision(facts, verdicts, None, (), None, False, skipped, weights))
@@ -262,7 +291,9 @@ def pursue(
 
             execution = execute(domain, env, book, remaining[:1], obs, settle=len(remaining) == 1)
             decisions.append(
-                Decision(facts, verdicts, in_progress, remaining, execution, recertified, skipped, weights, continued)
+                Decision(
+                    facts, verdicts, in_progress, remaining, execution, recertified, skipped, weights, continued, fallback
+                )
             )
             rewards.extend(execution.rewards)
             obs, episode_over = execution.observation, execution.episode_over
@@ -305,6 +336,36 @@ def _choose(verdicts: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> Opti
     return best if best.score > current.score + SWITCH_MARGIN * abs(current.score) else current
 
 
+def _fallback(
+    domain: Domain,
+    verdicts: Sequence[PlanVerdict],
+    remaining: Tuple[str, ...],
+    observation: np.ndarray,
+    facts: Mapping[str, bool],
+    table: EffectTable,
+    priorities: Priorities,
+    timestamp: Optional[str],
+    feedback: Optional[FeedbackLog],
+) -> Optional[PlanVerdict]:
+    """The best fallback from ``observation``, or None when there is none.
+
+    A fallback is a plan the gates admit from there although it reaches its goal
+    too rarely, and whose safety gain over doing nothing has a lower confidence
+    bound of at least zero.
+    """
+    if domain.safety_objective is None:
+        return None
+    too_rare = [verdict.candidate for verdict in verdicts if verdict.reason == GOAL_TOO_RARE]
+    if not too_rare:
+        return None
+    admitted = tuple(verify(too_rare, observation, table, priorities, timestamp))
+    if feedback is not None:
+        admitted = feedback.screen(admitted, facts)
+    safety = domain.objectives.index(domain.safety_objective)
+    safe = [verdict for verdict in admitted if verdict.admitted and verdict.estimate.lower.delta_n[safety] >= 0.0]
+    return _choose(safe, remaining)
+
+
 def _may_continue(verdicts: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> bool:
     """Whether the continuation policy lets the plan in progress go on although nothing was admitted.
 
@@ -325,17 +386,22 @@ def goal_achieved(
 
 
 def _decision_record(decision: Decision) -> Dict[str, object]:
-    chosen, execution = decision.chosen, decision.execution
+    """The decision as JSON, with the evidence and the certificate the skill flew under, kept for audits."""
+    execution = decision.execution
+    chosen = None if decision.chosen is None else decision.chosen.record()
     return {
         "facts": dict(decision.facts),
         "weights": None if decision.weights is None else list(decision.weights),
-        "plan": None if chosen is None else plan_skill_id(chosen.candidate),
-        "goal_graph": None if chosen is None else goal_graph(chosen.candidate),
+        "plan": None if chosen is None else chosen["skill_id"],
+        "goal_graph": None if chosen is None else chosen["goal_graph"],
         "skills_left": list(decision.skills),
         "recertified": decision.recertified,
         "continued": decision.continued,
-        "gate": None if chosen is None else chosen.entry.gate_type,
-        "score": None if chosen is None else chosen.score,
+        "fallback": decision.fallback,
+        "gate": None if chosen is None else chosen["certificate"]["gate_type"],
+        "score": None if chosen is None else chosen["score"],
+        "evidence": None if chosen is None else {key: chosen[key] for key in ("estimate", "gates", "goal_rate")},
+        "certificate": None if chosen is None else chosen["certificate"],
         "rejected": [
             {"plan": plan_skill_id(v.candidate), "reason": v.reason} for v in decision.verdicts if not v.admitted
         ],

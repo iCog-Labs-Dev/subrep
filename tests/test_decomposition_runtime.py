@@ -1,16 +1,18 @@
 """Tests for pursuing goals with planning, certification before every skill and replanning (decomposition/runtime.py)."""
 
 import dataclasses
+import itertools
 import json
 
 import numpy as np
 import pytest
 
-from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, build_table
+from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, Gains, build_table
+from decomposition.feedback import FeedbackLog
 from decomposition.planner import CandidatePlan, plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
 from decomposition.runtime import Continuation, GoalStatus, _choose, _may_continue, goal_achieved, pursue
-from decomposition.verifier import GOAL_TOO_RARE, NOT_MEASURED, MdnRegion, PlanVerdict, Priorities
+from decomposition.verifier import GOAL_TOO_RARE, NOT_MEASURED, MdnRegion, PlanVerdict, Priorities, plan_skill_id
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, landing_outcome, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
@@ -27,6 +29,16 @@ SAFETY_FIRST = Priorities(
         support_values=(1.0, 0.3),
     ),
 )
+BALANCED = Priorities(
+    weights=(0.55, 0.45),
+    region=MdnRegion(
+        context=(1.0,),
+        alpha=(2.0, 2.0),
+        support_directions=((1.0, 0.0), (0.0, 1.0)),
+        support_values=(1.0, 0.5),
+    ),
+)
+NO_PLAN_IS_GOOD_ENOUGH = 1.0  # no measured rate has a lower bound of 1, so every plan fails the goal-rate check
 
 
 @pytest.fixture
@@ -105,16 +117,95 @@ def test_recovering_stability_leaves_the_lander_upright_in_flight(env, book, tab
     assert not run.episode_over and run.frames > 0
 
 
-def test_without_a_certified_plan_nothing_is_flown(env, book, table):
+@pytest.mark.parametrize("continuation", list(Continuation))
+def test_without_measurements_nothing_is_flown_under_any_policy(env, book, table, continuation):
     observation, _ = env.reset(seed=TILTED_START_SEED)
     nothing_measured = EffectTable({**table.data, "plans": []}, LUNAR_LANDER)
-    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, nothing_measured, SAFETY_FIRST)
+    run = pursue(
+        LUNAR_LANDER, env, observation, "land_on_pad", book, nothing_measured, SAFETY_FIRST, continuation=continuation
+    )
     assert run.status is GoalStatus.NO_CERTIFIED_PLAN
     [decision] = run.decisions
-    assert decision.execution is None and decision.chosen is None
+    assert decision.execution is None and decision.chosen is None and not decision.fallback
     assert {verdict.reason for verdict in decision.verdicts} == {NOT_MEASURED}
     assert run.frames == 0
     np.testing.assert_array_equal(run.observation, observation)
+
+
+def test_a_plan_that_fails_only_the_goal_rate_check_is_flown_as_a_fallback(env, book, table):
+    strict = run_goal(
+        env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH, continuation=Continuation.STOP
+    )
+    assert strict.status is GoalStatus.NO_CERTIFIED_PLAN and strict.frames == 0
+    assert GOAL_TOO_RARE in {verdict.reason for verdict in strict.decisions[0].verdicts}
+
+    run = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH)
+    assert run.status is GoalStatus.ACHIEVED
+    assert run.flown and all(d.fallback and not d.recertified and not d.continued for d in run.flown)
+    assert run.fallbacks == len(run.flown)
+    first = run.decisions[0]
+    assert first.chosen.admitted and first.chosen.goal_rate < NO_PLAN_IS_GOOD_ENOUGH
+    assert first.chosen.estimate.lower.delta_n[LUNAR_LANDER.objectives.index("safety")] >= 0.0
+
+
+def test_a_fallback_records_its_evidence_certificate_and_outcome(env, book, table):
+    run = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH)
+    record = json.loads(json.dumps(run.record()))
+    assert record["fallbacks"] == len(run.flown) and record["status"] == "achieved"
+    first = record["decisions"][0]
+    assert first["fallback"] is True and first["recertified"] is False
+    assert first["certificate"]["skill_id"] == first["plan"]
+    assert first["certificate"]["gate_type"] == first["gate"]
+    assert first["evidence"]["goal_rate"] < NO_PLAN_IS_GOOD_ENOUGH
+    assert first["evidence"]["estimate"]["samples"] >= table.min_samples
+    assert first["steps"][0]["status"] == "completed"
+
+
+@pytest.mark.parametrize("safety_objective", ["fuel", None])  # every landing burns fuel that doing nothing saves
+def test_a_fallback_must_be_no_worse_than_doing_nothing_on_the_safety_objective(env, book, table, safety_objective):
+    domain = dataclasses.replace(LUNAR_LANDER, safety_objective=safety_objective)
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(
+        domain, env, observation, "land_on_pad", book, table, SAFETY_FIRST, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH
+    )
+    assert run.status is GoalStatus.NO_CERTIFIED_PLAN
+    assert run.frames == 0 and run.fallbacks == 0
+
+
+def test_a_domain_names_a_safety_objective_it_has():
+    with pytest.raises(ValueError, match="safety objective"):
+        dataclasses.replace(LUNAR_LANDER, safety_objective="comfort")
+
+
+def test_a_fallback_is_checked_under_the_priorities_of_its_own_decision(env, book, table):
+    given = itertools.cycle((BALANCED, SAFETY_FIRST))
+
+    def source(observation):
+        return next(given)
+
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(
+        LUNAR_LANDER, env, observation, "land_on_pad", book, table, source, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH
+    )
+    assert run.flown and run.flown[0].weights == BALANCED.weights
+    regions = {SAFETY_FIRST.weights: SAFETY_FIRST.region, BALANCED.weights: BALANCED.region}
+    for decision in run.flown:
+        certificate = decision.chosen.entry.certificate
+        assert decision.fallback
+        assert tuple(certificate.wx_support_values) == regions[decision.weights].support_values
+
+
+def test_a_revoked_fallback_is_not_flown_again(env, book, table):
+    first = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH).decisions[0]
+    certificate = first.chosen.entry.certificate
+    feedback = FeedbackLog(LUNAR_LANDER, min_samples=2)
+    far_short = Gains(certificate.delta_r - 1000.0, tuple(value - 1000.0 for value in certificate.delta_n))
+    for _ in range(3):
+        feedback.record(first.chosen, first.facts, far_short)
+
+    run = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH, feedback=feedback)
+    again = run.decisions[0]
+    assert again.chosen is None or plan_skill_id(again.chosen.candidate) != plan_skill_id(first.chosen.candidate)
 
 
 def test_the_rest_of_a_plan_without_current_approval_is_not_flown(env, book, starts_only):
@@ -189,7 +280,8 @@ def test_a_crash_is_a_failure(env, book, table, monkeypatch):
 
 
 def test_a_plan_that_ends_quickly_but_misses_the_pad_is_not_chosen(env, book, table):
-    run = next(r for r in (run_goal(env, book, table, seed) for seed in range(2000, 2100)) if r.decisions)
+    runs = (run_goal(env, book, table, seed) for seed in range(2000, 2100))
+    run = next(r for r in runs if r.decisions and r.decisions[0].recertified)
     rushed = [v for v in run.decisions[0].verdicts if v.reason == GOAL_TOO_RARE]
     chosen = run.decisions[0].chosen
     assert all(v.goal_rate < 0.9 for v in rushed)
@@ -274,7 +366,10 @@ def test_the_record_is_json_ready(env, book, table):
     first = record["decisions"][0]
     assert first["plan"].startswith("plan:land_on_pad/")
     assert first["gate"] == "CDS" and first["recertified"] and first["continued"] is False
+    assert first["fallback"] is False and first["certificate"]["skill_id"] == first["plan"]
+    assert first["evidence"]["goal_rate"] >= 0.9
     assert record["continued"] == 0
+    assert record["fallbacks"] == sum(decision["fallback"] for decision in record["decisions"])
     assert first["goal_graph"]["goal"] == "land_on_pad"
     last = record["decisions"][-1]
     assert last["steps"][-1]["skill"] == "touch_down"

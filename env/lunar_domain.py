@@ -39,4 +39,5 @@ LUNAR_LANDER = Domain(
     outcome=landing_outcome,
     final_facts=confirmed_final_facts,
     make_env=lambda seed: SubRepEnv(seed=seed),
+    safety_objective="safety",
 )

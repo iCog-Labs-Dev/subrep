@@ -37,6 +37,12 @@ class Domain:
     final_facts: Callable[[Optional[Mapping[str, Any]], np.ndarray], Optional[Facts]]  # None unless confirmed
     make_env: Callable[[int], Any]
     gamma: float = GAMMA  # the discount of every measurement; its horizon should span the plans it compares
+    # The objective a fallback plan may never make worse than doing nothing; None means no fallback.
+    safety_objective: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.safety_objective is not None and self.safety_objective not in self.objectives:
+            raise ValueError(f"safety objective {self.safety_objective!r} is not one of {self.objectives}")
 
     @property
     def num_objectives(self) -> int:

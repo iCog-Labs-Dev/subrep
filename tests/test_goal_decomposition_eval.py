@@ -53,11 +53,11 @@ def test_every_controller_flies_every_seed(report):
 
 def test_without_a_certified_plan_the_runtime_does_nothing(report):
     runs = report["goal_runs"]["no_region"]["episodes"]
-    uncertified = [run for run in runs if run["status"] == "no_certified_plan"]
-    assert uncertified
+    never_flown = [run for run in runs if run["plan"] is None]
+    assert never_flown
+    assert all(run["status"] == "no_certified_plan" for run in never_flown)
     idle = {e["seed"]: (e["outcome"], e["frames"]) for e in report["controllers"]["idle"]["episodes"]}
-    assert all((run["outcome"], run["frames"]) == idle[run["seed"]] for run in uncertified)
-    assert all(run["plan"] is None for run in uncertified)
+    assert all((run["outcome"], run["frames"]) == idle[run["seed"]] for run in never_flown)
 
 
 def test_the_runtime_flies_the_plan_it_certifies(report):
