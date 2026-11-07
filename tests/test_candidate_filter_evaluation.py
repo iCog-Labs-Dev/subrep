@@ -24,9 +24,38 @@ def test_savings_missed_candidates_and_measured_admissions():
     assert result['measured_payoff_mean'] == 10.
     
 
-
 def test_invalid_selections_are_rejected():
     rows = [dict(policy=name, payoff=1., motives=np.array([1., -1.])) for name in POLICY_NAMES]
     baseline = {'baseline_payoff': 0., 'baseline_motives': [0., -2.]}
     with pytest.raises(ValueError, match='Invalid candidate selection'):
         assess({'seed:1': rows}, {'seed:1': [POLICY_NAMES[0], POLICY_NAMES[0]]}, baseline)
+
+def test_pds_only_admission_counts_as_certifiable_in_filter(monkeypatch):
+    from generator import evaluate_candidate_filter as module
+
+    class RejectCDS:
+        def admit(self, delta_r, delta_n):
+            return False
+
+    class AdmitPDS:
+        def admit(self, delta_r, delta_n):
+            return True
+
+    monkeypatch.setattr(module, 'CDSGate', RejectCDS)
+    monkeypatch.setattr(module, 'PDSGate', AdmitPDS)
+
+    rows = [
+        dict(policy=name, payoff=1.0, motives=np.array([1.0, -1.0]))
+        for name in POLICY_NAMES
+    ]
+    result = module.assess(
+        {'seed:1': rows},
+        {'seed:1': [POLICY_NAMES[0]]},
+        {'baseline_payoff': 0.0, 'baseline_motives': [0.0, -2.0]},
+    )
+
+    assert result['genuinely_certifiable'] == len(POLICY_NAMES)
+    assert result['certifiable_found'] == 1
+    assert result['certifiable_missed'] == len(POLICY_NAMES) - 1
+    assert result['cds_admission_rate'] == 0.0
+    assert result['pds_admission_rate'] == 1.0

@@ -273,7 +273,7 @@ def build_multi_policy_report(test_rows, train_rows, model, observation_baseline
             bucket["executed"] += 1
             bucket["cds_admitted"] += int(measured["cds_admit"])
             bucket["pds_admitted"] += int(measured["pds_admit"])
-            bucket["certifiable"] += int(measured["cds_admit"] and measured["pds_admit"])
+            bucket["certifiable"] += int(measured["cds_admit"] or measured["pds_admit"])
             bucket["payoff_sum"] += float(row["payoff"])
             bucket["motive_sum"] += np.asarray(row["motives"], dtype=np.float64)
             bucket["payoff_improvement_sum"] += float(measured["delta_r"])
@@ -287,7 +287,7 @@ def build_multi_policy_report(test_rows, train_rows, model, observation_baseline
             "cds_rejection_rate": 1 - b["cds_admitted"] / n,
             "pds_admission_rate": b["pds_admitted"] / n,
             "pds_rejection_rate": 1 - b["pds_admitted"] / n,
-            "joint_certifiable_count": b["certifiable"],
+            "certifiable_count": b["certifiable"],
             "measured_payoff_mean": b["payoff_sum"] / n,
             "measured_motives_mean": (b["motive_sum"] / n).tolist(),
             "measured_payoff_improvement_mean": b["payoff_improvement_sum"] / n,
