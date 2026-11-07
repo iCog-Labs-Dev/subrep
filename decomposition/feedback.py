@@ -7,10 +7,14 @@ nothing from the same state, and compares them with what was certified.
 
 A certificate is revoked when the realised gains are significantly below it:
 for Δr or any motive gain, the one-sided upper confidence bound of the realised
-mean falls below the certified value. The runtime skips plans whose
-certificates are revoked until the table is rebuilt. These checks are not
-corrected for being several, which errs towards revoking: a plan is skipped a
-little more often than the confidence level alone would say, never less.
+mean falls below the certified value. The flights of a plan from a group of
+states judge every certificate for that plan from that group, not only the one
+they were flown under. Given the log, the runtime therefore skips a revoked plan
+until new evidence approves it: a rebuilt table whose certificate claims no
+more than the flights support. The report keeps every certificate it judged, for
+audit. These checks are not corrected for being several, which errs towards
+revoking: a plan is skipped a little more often than the confidence level alone
+would say, never less.
 """
 
 from __future__ import annotations
@@ -75,6 +79,11 @@ def _upper_bound(values: np.ndarray, seed: int) -> float:
     return -lower_bound(-values, seed)
 
 
+def _certified(verdict: PlanVerdict) -> Gains:
+    certificate = verdict.entry.certificate
+    return Gains(certificate.delta_r, tuple(certificate.delta_n))
+
+
 class FeedbackLog:
     """Realised outcomes of certified plans, grouped by plan and start state."""
 
@@ -84,72 +93,97 @@ class FeedbackLog:
         self.domain = domain
         self.min_samples = min_samples
         self._outcomes: Dict[Tuple[str, str], List[Outcome]] = {}
-        self._report: Optional[List[Dict[str, object]]] = None  # cleared whenever an outcome is recorded
+        # Both are cleared whenever an outcome is recorded.
+        self._report: Optional[List[Dict[str, object]]] = None
+        self._upper: Dict[Tuple[str, str], Optional[np.ndarray]] = {}
 
     def record(self, verdict: PlanVerdict, facts: Mapping[str, bool], realised: Gains) -> Outcome:
         """Record what an admitted plan, certified from a state with ``facts``, really achieved."""
         if not verdict.admitted:
             raise ValueError("only admitted plans have certificates to check")
-        certificate = verdict.entry.certificate
         outcome = Outcome(
             plan=plan_skill_id(verdict.candidate),
             group=group_key(self.domain, facts),
-            certified=Gains(certificate.delta_r, tuple(certificate.delta_n)),
+            certified=_certified(verdict),
             realised=realised,
         )
-        self._outcomes.setdefault((outcome.plan, outcome.group), []).append(outcome)
+        key = (outcome.plan, outcome.group)
+        self._outcomes.setdefault(key, []).append(outcome)
         self._report = None
+        self._upper.pop(key, None)
         return outcome
 
     def report(self) -> List[Dict[str, object]]:
-        """One entry per plan and start group: certified values, realised means and bounds, status."""
+        """One entry per plan and start group.
+
+        Each entry judges the latest certificate recorded, with its certified
+        values and the realised means and bounds, and lists every certificate
+        recorded for the plan and group, in order, with how it stands now.
+        """
         if self._report is None:
-            self._report = [self._summary(outcomes) for _, outcomes in sorted(self._outcomes.items())]
+            self._report = [self._summary(key, outcomes) for key, outcomes in sorted(self._outcomes.items())]
         return [dict(entry) for entry in self._report]
 
     def revoked(self) -> FrozenSet[Tuple[str, str]]:
-        """(plan, group) pairs whose certificates are revoked."""
+        """(plan, group) pairs whose latest certificates are revoked."""
         return frozenset(
             (entry["plan"], entry["group"])
             for entry in self.report()
             if entry["status"] == CertificateStatus.REVOKED.value
         )
 
+    def status(self, plan: str, group: str, certified: Gains) -> CertificateStatus:
+        """How a certificate claiming ``certified`` for ``plan`` from ``group`` stands against the flights recorded."""
+        upper = self._upper_bounds((plan, group))
+        if upper is None:
+            return CertificateStatus.TOO_FEW_SAMPLES
+        return CertificateStatus.REVOKED if bool(np.any(upper < _vector(certified))) else CertificateStatus.HELD
+
     def screen(self, verdicts: Sequence[PlanVerdict], facts: Mapping[str, bool]) -> Tuple[PlanVerdict, ...]:
-        """The verdicts with revoked plans turned into rejections, order kept."""
-        revoked, group = self.revoked(), group_key(self.domain, facts)
+        """The verdicts with revoked certificates turned into rejections, order kept."""
+        group = group_key(self.domain, facts)
         return tuple(
             replace(verdict, reason=REVOKED_REASON, entry=None, score=None)
-            if verdict.admitted and (plan_skill_id(verdict.candidate), group) in revoked
+            if verdict.admitted
+            and self.status(plan_skill_id(verdict.candidate), group, _certified(verdict)) is CertificateStatus.REVOKED
             else verdict
             for verdict in verdicts
         )
 
-    def _summary(self, outcomes: Sequence[Outcome]) -> Dict[str, object]:
-        first = outcomes[0]
-        certified = _vector(first.certified)
+    def _upper_bounds(self, key: Tuple[str, str]) -> Optional[np.ndarray]:
+        """Upper confidence bounds of the realised mean gains, or None with too few flights to tell."""
+        if key not in self._upper:
+            outcomes = self._outcomes.get(key, [])
+            upper = None
+            if len(outcomes) >= self.min_samples:
+                realised = np.stack([_vector(outcome.realised) for outcome in outcomes])
+                upper = np.array([_upper_bound(realised[:, index], seed=index) for index in range(realised.shape[1])])
+            self._upper[key] = upper
+        return self._upper[key]
+
+    def _summary(self, key: Tuple[str, str], outcomes: Sequence[Outcome]) -> Dict[str, object]:
+        plan, group = key
+        latest = _vector(outcomes[-1].certified)
         realised = np.stack([_vector(outcome.realised) for outcome in outcomes])
-        enough = len(outcomes) >= self.min_samples
-        components = {}
-        short = False
-        for index, name in enumerate(gain_names(self.domain.objectives)):
-            column = realised[:, index]
-            upper = _upper_bound(column, seed=index) if enough else None
-            short = short or (upper is not None and upper < certified[index])
-            components[name] = {
-                "certified": float(certified[index]),
-                "realised_mean": float(column.mean()),
-                "realised_upper": upper,
+        upper = self._upper_bounds(key)
+        components = {
+            name: {
+                "certified": float(latest[index]),
+                "realised_mean": float(realised[:, index].mean()),
+                "realised_upper": None if upper is None else float(upper[index]),
             }
-        if not enough:
-            status = CertificateStatus.TOO_FEW_SAMPLES
-        else:
-            status = CertificateStatus.REVOKED if short else CertificateStatus.HELD
+            for index, name in enumerate(gain_names(self.domain.objectives))
+        }
+        certificates = list(dict.fromkeys(outcome.certified for outcome in outcomes))
         return {
-            "plan": first.plan,
-            "group": first.group,
+            "plan": plan,
+            "group": group,
             "samples": len(outcomes),
             "confidence": CONFIDENCE,
-            "status": status.value,
+            "status": self.status(plan, group, outcomes[-1].certified).value,
             **components,
+            "certificates": [
+                {"certified": _vector(gains).tolist(), "status": self.status(plan, group, gains).value}
+                for gains in certificates
+            ],
         }

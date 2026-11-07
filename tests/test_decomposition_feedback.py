@@ -1,11 +1,12 @@
 """Tests for checking certificates against realised gains (decomposition/feedback.py)."""
 
+import dataclasses
 import json
 
 import numpy as np
 import pytest
 
-from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, Gains, fly_plan, group_key, replay
+from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, Gains, fly_plan, group_key, plan_key, replay
 from decomposition.executor import execute
 from decomposition.feedback import REVOKED_REASON, CertificateStatus, FeedbackLog, realised_gains
 from decomposition.planner import propose
@@ -148,6 +149,69 @@ def test_the_runtime_skips_a_revoked_plan(env, book, table, verdicts, start):
     chosen = run.decisions[0].chosen
     assert chosen is None or chosen.candidate.skills != best.candidate.skills
     assert REVOKED_REASON in {verdict.reason for verdict in run.decisions[0].verdicts}
+
+
+def recertified(verdict, by):
+    """``verdict`` with a certificate claiming ``by`` more on every gain, as a rebuilt table might."""
+    certificate = verdict.entry.certificate
+    claim = dataclasses.replace(
+        certificate,
+        delta_r=certificate.delta_r + by,
+        delta_n=tuple(value + by for value in certificate.delta_n),
+    )
+    return dataclasses.replace(verdict, entry=dataclasses.replace(verdict.entry, certificate=claim))
+
+
+def test_a_revocation_stands_until_a_certificate_claims_no_more_than_the_flights_support(verdicts, start):
+    _, facts = start
+    best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
+    for realised in shifted(certified_gains(best), by=-10.0, count=40):
+        log.record(best, facts, realised)
+    [same, overclaiming, supported] = log.screen([best, recertified(best, 5.0), recertified(best, -20.0)], facts)
+    assert same.reason == REVOKED_REASON and overclaiming.reason == REVOKED_REASON
+    assert supported.admitted and supported.entry.certificate.delta_r == best.entry.certificate.delta_r - 20.0
+
+
+def test_the_report_keeps_every_certificate_it_judged(verdicts, start):
+    _, facts = start
+    best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
+    rebuilt = recertified(best, -20.0)
+    for index, realised in enumerate(shifted(certified_gains(best), by=-10.0, count=40)):
+        log.record(best if index < 20 else rebuilt, facts, realised)
+    [entry] = log.report()
+    assert entry["status"] == CertificateStatus.HELD.value  # the latest certificate holds
+    assert entry["delta_r"]["certified"] == pytest.approx(certified_gains(rebuilt).delta_r)
+    assert [c["status"] for c in entry["certificates"]] == [CertificateStatus.REVOKED.value, CertificateStatus.HELD.value]
+    assert entry["certificates"][0]["certified"][0] == pytest.approx(certified_gains(best).delta_r)
+    assert log.revoked() == frozenset()
+
+
+def with_claim_lowered(table, skills, group, by):
+    """``table`` as if rebuilt with the entry for ``skills`` from ``group`` claiming ``by`` less on every gain."""
+
+    def lowered(entry):
+        if (entry["name"], entry["group"]) != (plan_key(skills), group):
+            return entry
+        return {**entry, **{k: {**v, "lower": v["lower"] - by} for k, v in entry.items() if k.startswith("delta_")}}
+
+    return EffectTable({**table.data, "plans": [lowered(entry) for entry in table.data["plans"]]}, LUNAR_LANDER)
+
+
+def test_the_runtime_flies_a_revoked_plan_again_once_new_evidence_supports_it(env, book, table, verdicts, start):
+    observation, facts = start
+    best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
+    for realised in shifted(certified_gains(best), by=-10.0, count=40):
+        log.record(best, facts, realised)
+    rebuilt = with_claim_lowered(table, best.candidate.skills, group_key(LUNAR_LANDER, facts), by=20.0)
+
+    def verdict_under(current):
+        env.reset(seed=SEED)
+        run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, current, SAFETY_FIRST, feedback=log)
+        [verdict] = [v for v in run.decisions[0].verdicts if v.candidate.skills == best.candidate.skills]
+        return verdict
+
+    assert verdict_under(table).reason == REVOKED_REASON
+    assert verdict_under(rebuilt).admitted
 
 
 def test_the_report_is_json_ready(verdicts, start):
