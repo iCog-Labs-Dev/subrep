@@ -142,7 +142,7 @@ def build_report(
 ) -> dict[str, Any]:
     """
    Track cds_admission_rate and pds_admission_rate per skill --
-      
+
     """
     calculator = ImprovementCalculator(baseline_stats)
     cds_gate = CDSGate()
@@ -303,26 +303,58 @@ def build_multi_policy_report(test_rows, train_rows, model, observation_baseline
 
 def run_multi_policy_report(args):
     """Use the persisted grouped split, never a supplementary MDN dataset."""
-    from generator.multi_policy_data import load_records, load_or_create_manifest, partition
+    from generator.multi_policy_data import (
+        load_records,
+        load_manifest,
+        partition,
+    )
     from generator.multi_policy_pipeline import load_model
 
     rows = load_records(args.data_dir)
-    manifest = load_or_create_manifest(rows, args.split_manifest, seed=args.seed)
+
+    # Evaluation must load the manifest created during training.
+    # It must not create a replacement split.
+    manifest = load_manifest(rows, args.split_manifest)
     parts = partition(rows, manifest)
-    model, conditioned = load_model(args.model_path)
-    baseline, baseline_conditioned = load_model(args.observation_baseline_path)
+
+    # Both checkpoints must match the same training dataset and split.
+    model, conditioned = load_model(
+        args.model_path,
+        expected_manifest=manifest,
+    )
+    baseline, baseline_conditioned = load_model(
+        args.observation_baseline_path,
+        expected_manifest=manifest,
+    )
+
     if not conditioned or baseline_conditioned:
-        raise ValueError("Expected conditioned model and observation-only baseline checkpoints")
+        raise ValueError(
+            "Expected conditioned model and observation-only baseline checkpoints"
+        )
+
     baseline_stats = compute_idle_baseline_stats(
-        episodes=args.baseline_episodes, seed=args.baseline_seed)
-    report = build_multi_policy_report(parts["test"], parts["train"],
-                                       model, baseline, baseline_stats)
+        episodes=args.baseline_episodes,
+        seed=args.baseline_seed,
+    )
+
+    report = build_multi_policy_report(
+        parts["test"],
+        parts["train"],
+        model,
+        baseline,
+        baseline_stats,
+    )
+
     report["split_manifest"] = str(args.split_manifest)
     report["model_path"] = str(args.model_path)
-    report["observation_baseline_path"] = str(args.observation_baseline_path)
+    report["observation_baseline_path"] = str(
+        args.observation_baseline_path
+    )
+
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2))
+
     print(f"Multi-policy held-out report saved -> {out}")
     return report
 
