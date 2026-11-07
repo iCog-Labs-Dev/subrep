@@ -179,6 +179,7 @@ def test_the_report_lists_only_judged_certificates_and_counts_the_rest(mission_r
     assert unjudged > 0
     assert f"{unjudged} more plan and start groups had too few samples and are not listed." in markdown
     assert "the runtime did not apply these revocations during the runs" in markdown
+    assert f"compared with no certificate: mission_first {mission_run['feedback_unchecked_runs']}." in markdown
     assert "| mission_first | current approval |" in markdown and "| mission_first | continuation |" in markdown
 
 

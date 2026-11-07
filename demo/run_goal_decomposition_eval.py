@@ -16,10 +16,12 @@ The evaluation also checks the measurements behind the certificates:
 
 - feedback: for every plan the runtime certified, at the start of an episode or
   in mid-flight, and then flew to the end, the gains it really achieved from that
-  state are compared with its certificate. This happens after every episode has
-  been flown, so a revocation found here was not applied during the runs. A plan
-  and start group with fewer than ``MIN_SAMPLES`` flights is not judged, and a
-  criterion with nothing to judge reports insufficient evidence, never a pass;
+  state are compared with its certificate. A run the runtime stopped in the
+  middle of a plan did not fly that plan as certified, so it is counted but not
+  compared. This happens after every episode has been flown, so a revocation
+  found here was not applied during the runs. A plan and start group with fewer
+  than ``MIN_SAMPLES`` flights is not judged, and a criterion with nothing to
+  judge reports insufficient evidence, never a pass;
 - the effect table: the plans are measured again on the unseen seeds and
   compared with the committed table;
 - ``recover_stability`` is pursued from every tilted start.
@@ -150,6 +152,7 @@ def evaluate_profile(
     first_plans: Counter = Counter()
     stops: Counter = Counter()
     replanned = rechecks = recertified = continued = switches = predictions_checked = predictions_held = 0
+    unchecked = 0
     feedback = FeedbackLog(LUNAR_LANDER)
 
     records: List[Dict[str, Any]] = []
@@ -192,7 +195,8 @@ def evaluate_profile(
             checked = [step.prediction_held for step in decision.execution.steps if step.prediction_held is not None]
             predictions_checked += len(checked)
             predictions_held += sum(checked)
-        record_followed_plans(LUNAR_LANDER, feedback, env, seed, run)
+        if run.flown:
+            unchecked += not record_followed_plans(LUNAR_LANDER, feedback, env, seed, run)
 
     return {
         "summary": summarise(episodes),
@@ -206,12 +210,31 @@ def evaluate_profile(
         "plan_stops": dict(stops),
         "predictions": {"checked": predictions_checked, "held": predictions_held},
         "feedback": feedback.report(),
+        "feedback_unchecked_runs": unchecked,
         "episodes": records,
     }
 
 
-def record_followed_plans(domain: Domain, feedback: FeedbackLog, env: Any, seed: int, run: GoalRun) -> None:
-    """Record what each certified plan really achieved, for those flown to the end from where they were certified."""
+def plan_flown_to_its_end(run: GoalRun) -> bool:
+    """Whether the last plan of ``run`` ended as its measurements end: with the episode or with its last skill.
+
+    A run the runtime stopped in the middle of a plan, because nothing more could
+    be admitted, did not fly that plan as it was certified, so what it achieved
+    says nothing about the certificate.
+    """
+    if not run.flown:
+        return False
+    last = run.flown[-1]
+    return run.episode_over or (last.execution.completed and len(last.skills) == 1)
+
+
+def record_followed_plans(domain: Domain, feedback: FeedbackLog, env: Any, seed: int, run: GoalRun) -> bool:
+    """Record what each certified plan really achieved, for those flown to the end from where they were certified.
+
+    Returns whether the run was recorded: a run stopped in the middle of its plan is not.
+    """
+    if not plan_flown_to_its_end(run):
+        return False
     frames = 0
     followed_from = _last_change(run)
     for index, decision in enumerate(run.flown):
@@ -221,6 +244,7 @@ def record_followed_plans(domain: Domain, feedback: FeedbackLog, env: Any, seed:
                 decision.chosen, decision.facts, realised_gains(domain, env, seed, run.rewards[frames:], start)
             )
         frames += decision.execution.frames
+    return True
 
 
 def _last_change(run: GoalRun) -> int:
@@ -436,6 +460,12 @@ def shortfalls(entry: Mapping[str, Any]) -> str:
     return ", ".join(short) or "-"
 
 
+def unchecked_note(goal_runs: Mapping[str, Mapping[str, Any]]) -> str:
+    """How many runs of each profile stopped in the middle of a plan, so were compared with no certificate."""
+    counts = ", ".join(f"{name} {run['feedback_unchecked_runs']}" for name, run in goal_runs.items())
+    return f"Runs stopped in the middle of a plan, so compared with no certificate: {counts}."
+
+
 def continuation_lines(report: Mapping[str, Any], success: str, label: str) -> List[str]:
     """Markdown comparing current approval with the continuation policy, for the priorities flown under both."""
     runs = report.get("continuation") or {}
@@ -543,6 +573,7 @@ def to_markdown(report: Mapping[str, Any]) -> str:
                 f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} | "
                 f"{shortfalls(entry)} |"
             )
+    lines += ["", unchecked_note(report["goal_runs"])]
 
     lines += [
         "",

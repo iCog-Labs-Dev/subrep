@@ -1,10 +1,14 @@
 """Tests for the goal decomposition evaluation (demo/run_goal_decomposition_eval.py)."""
 
+import dataclasses
 import json
 
 import numpy as np
 import pytest
 
+from decomposition.executor import Execution, StepRecord, StepStatus
+from decomposition.feedback import FeedbackLog
+from decomposition.runtime import Decision, GoalRun, GoalStatus
 from demo.run_goal_decomposition_eval import (
     INSUFFICIENT_EVIDENCE,
     MET,
@@ -13,11 +17,14 @@ from demo.run_goal_decomposition_eval import (
     REPORT_ONLY,
     evaluate,
     finish_episode,
+    plan_flown_to_its_end,
+    record_followed_plans,
     revocation_criterion,
     share_criterion,
     shortfalls,
     to_markdown,
 )
+from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import OUTCOMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 
@@ -62,9 +69,41 @@ def test_the_runtime_flies_the_plan_it_certifies(report):
 
 
 def test_feedback_covers_certified_plans_flown_to_the_end(report):
-    feedback = report["goal_runs"]["safety_first"]["feedback"]
-    assert sum(entry["samples"] for entry in feedback) >= len(SEEDS)
-    assert {entry["status"] for entry in feedback} == {"too_few_samples"}
+    run = report["goal_runs"]["safety_first"]
+    assert sum(entry["samples"] for entry in run["feedback"]) >= len(SEEDS) - run["feedback_unchecked_runs"]
+    assert {entry["status"] for entry in run["feedback"]} == {"too_few_samples"}
+    assert "Runs stopped in the middle of a plan, so compared with no certificate: safety_first " in to_markdown(report)
+
+
+def one_skill_run(skills_left, status, completed=True, episode_over=False):
+    """A run whose only decision flew the first of ``skills_left``."""
+    step = StepRecord(skills_left[0], StepStatus.COMPLETED if completed else StepStatus.OUT_OF_FRAMES, 5, {}, {}, None)
+    execution = Execution(skills_left[:1], (step,), (0,) * 5, np.zeros((5, 2)), 0, np.zeros(8), episode_over, None)
+    decision = Decision({}, (), None, tuple(skills_left), execution, recertified=True)
+    return GoalRun("land_on_pad", status, (decision,), np.zeros((5, 2)), np.zeros(8), episode_over, None)
+
+
+@pytest.mark.parametrize(
+    "skills_left, status, completed, episode_over, flown_to_its_end",
+    [
+        (("touch_down",), GoalStatus.ACHIEVED, True, True, True),
+        (("touch_down",), GoalStatus.FAILED, False, True, True),  # a failed flight is charged until the episode ends
+        (("brake",), GoalStatus.NO_CERTIFIED_PLAN, True, False, True),  # the whole plan was flown
+        (("slow_descent", "touch_down"), GoalStatus.NO_CERTIFIED_PLAN, True, False, False),
+        (("slow_descent", "touch_down"), GoalStatus.PRIORITIES_REFUSED, True, False, False),
+        (("touch_down",), GoalStatus.FAILED, False, False, False),  # given up on before the episode ended
+    ],
+)
+def test_only_plans_flown_as_they_were_measured_are_compared(skills_left, status, completed, episode_over, flown_to_its_end):
+    assert plan_flown_to_its_end(one_skill_run(skills_left, status, completed, episode_over)) is flown_to_its_end
+
+
+def test_a_run_stopped_in_the_middle_of_its_plan_is_not_recorded():
+    feedback = FeedbackLog(LUNAR_LANDER)
+    run = one_skill_run(("slow_descent", "touch_down"), GoalStatus.NO_CERTIFIED_PLAN)
+    assert record_followed_plans(LUNAR_LANDER, feedback, None, SEEDS.start, run) is False
+    assert feedback.report() == []
+    assert not plan_flown_to_its_end(dataclasses.replace(run, decisions=()))
 
 
 def test_the_runtime_rechecks_in_mid_flight(report):

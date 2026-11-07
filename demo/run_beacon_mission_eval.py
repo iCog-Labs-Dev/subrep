@@ -13,7 +13,8 @@ Every controller flies one episode from the start of every seed:
 It also moves the beacon and repeats the mission with the same recipe book, and
 flies with a limit on how many plans are measured at each decision. Certified
 plans are checked against what they really achieved after every episode has been
-flown, so a revocation found there was not applied during the runs. The criteria
+flown, so a revocation found there was not applied during the runs. A run the
+runtime stopped in the middle of a plan is counted but not checked. The criteria
 at the top of this file were written before the evaluation seeds were flown, and
 the report says which of them were met, which were missed and which had too
 little evidence to judge.
@@ -52,6 +53,7 @@ from demo.run_goal_decomposition_eval import (
     revocation_criterion,
     share_criterion,
     shortfalls,
+    unchecked_note,
 )
 from demo.train_lunar_mdn import load_mission_mdn
 from env.lunar_beacon import BEACON_MISSION, MISSION_COMPLETE, beacon_domain
@@ -160,7 +162,7 @@ def evaluate_runtime(
     first_goals: Counter = Counter()
     first_plans: Counter = Counter()
     stops: Counter = Counter()
-    rechecks = recertified = continued = switches = replans = checked = held = 0
+    rechecks = recertified = continued = switches = replans = checked = held = unchecked = 0
     feedback = FeedbackLog(domain)
     records: List[Dict[str, Any]] = []
     for seed in seeds:
@@ -203,8 +205,8 @@ def evaluate_runtime(
                 "goal": run.goal if run.flown else None,
             }
         )
-        if check_certificates:
-            record_followed_plans(domain, feedback, env, seed, run)
+        if check_certificates and run.flown:
+            unchecked += not record_followed_plans(domain, feedback, env, seed, run)
     return {
         "summary": rates(episodes, domain.outcomes),
         "statuses": dict(statuses),
@@ -218,6 +220,7 @@ def evaluate_runtime(
         "plan_stops": dict(stops),
         "predictions": {"checked": checked, "held": held},
         "feedback": feedback.report(),
+        "feedback_unchecked_runs": unchecked,
         "episodes": records,
     }
 
@@ -433,7 +436,12 @@ def to_markdown(report: Mapping[str, Any]) -> str:
                 f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} | "
                 f"{shortfalls(entry)} |"
             )
-    lines += ["", f"{unjudged} more plan and start groups had too few samples and are not listed."]
+    lines += [
+        "",
+        f"{unjudged} more plan and start groups had too few samples and are not listed.",
+        "",
+        unchecked_note(report["goal_runs"]),
+    ]
     lines += ["", "## The beacon moved, the recipe book unchanged", "", "| Beacon | Runtime: mission done | Runtime: crashed | PPO trained on the first beacon: mission done |", "|---|---|---|---|"]
     for moved in report["moved_beacons"]:
         s = moved["runtime"]["summary"]
