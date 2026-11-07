@@ -148,7 +148,7 @@ python -m generator.multi_policy_pipeline evaluate --data-dir data/raw_mixed
 python -m generator.multi_policy_pipeline sizes --data-dir data/raw_mixed --sizes 100 300 500 --epochs 50
 python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 50
 python -m generator.evaluate_generator_report --multi-policy --data-dir data/raw_mixed
-python -u -m data_collector.run_filtered_candidates --contexts  --top-k 3 --baseline-episodes 50
+python -u -m data_collector.run_filtered_candidates --contexts 20 --top-k 3 --baseline-episodes 50
 ```
 
 The outputs are, respectively: `data/raw_mixed/*.npz`; model checkpoints in `models/` and `data/mixed_split_manifest.json`; `reports/multi_policy/prediction_metrics.json`; `reports/multi_policy/dataset_size_metrics.json`; `reports/multi_policy/filter_metrics.json` and `results_summary.md`; `reports/multi_policy/generator_evaluation_report.json`; and `reports/multi_policy/live_filter.json`. The offline filter uses previously measured candidate outcomes, whereas the live filter executes only selected candidates. Both compare with a freshly measured idle baseline and apply the unchanged CDS/PDS gates.
