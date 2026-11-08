@@ -185,7 +185,7 @@ def w_meta(
 
     # Modulators are squashed into (0, 1) by MetaMo (openpsi/appraisal.py:97);
     # clamp defensively because raise_boundary_caution writes M on a different
-    # path (dynamics/stability.py:77-78).
+    # path (dynamics/stability.py:79-80).
     m_clamped = np.clip(m, 0.0, 1.0)
 
     scores = affinity @ g + gain @ (m_clamped - MODULATOR_NEUTRAL)

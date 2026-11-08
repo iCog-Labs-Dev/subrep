@@ -272,7 +272,7 @@ class MetaMoGovernor:
                 if idx < num_goals:
                     correlations[idx] = value
                     # Small nudges: MetaMo damps goal updates near the safety
-                    # boundary (dynamics/stability.py:111-119) and we want the
+                    # boundary (dynamics/stability.py:113-121) and we want the
                     # contractivity machinery to stay in charge.
                     delta_g[idx] = 0.02 * value
             return Action(

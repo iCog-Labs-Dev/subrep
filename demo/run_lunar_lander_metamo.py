@@ -19,8 +19,10 @@ What to watch:
     one flew, and whether it landed.
 
 Current behaviour the summary measures rather than assumes:
-  * MetaMo's caution modulators rise on every step and saturate within a few
-    steps, pinning eps at 0. The cause is in MetaMo's update step.
+  * MetaMo's caution modulators follow the outcomes rather than pinning at 1.0,
+    so eps keeps moving on the ppo candidates. When every episode crashes
+    (the ci candidates), Securing settles above 0.75, where the bridge's
+    budget gain takes eps to 0.
   * eps cannot change a LunarLander admission at the current scale: eps is at
     most 0.5, while the objective changes are in the hundreds.
 """

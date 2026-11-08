@@ -174,15 +174,28 @@ def test_scales_change_appraisal_response():
 def test_extreme_outcomes_saturate_regardless_of_scale():
     """Documents the ceiling: past a point, scaling stops mattering.
 
-    Both configurations clip risk to 1.0, so they converge. This is a real
-    limitation of the tanh+clip stimulus mapping, not a bug -- but it means
-    scale tuning only buys resolution in the moderate range.
+    Both configurations clip risk to 1.0, so the risk channel no longer tells
+    them apart. This is a real limitation of the tanh+clip stimulus mapping,
+    not a bug -- but it means scale tuning only buys resolution in the moderate
+    range.
+
+    Securing ends close together rather than identical: conduciveness and
+    novelty are squashed by the same scales but do not clip here, so they still
+    differ slightly between the two configurations.
     """
     from bridge.governor import MetaMoGovernor
+    from bridge.stimulus import build_stimulus_values
 
     extreme = SkillOutcome(
         delta_r=-8.0, delta_n=np.full(6, -6.0), admitted=False, effort=0.5
     )
+
+    unscaled_risk = build_stimulus_values(extreme).risk
+    scaled_risk = build_stimulus_values(
+        extreme, payoff_scale=10.0, motive_scale=6.0
+    ).risk
+    assert unscaled_risk == pytest.approx(1.0)
+    assert scaled_risk == pytest.approx(1.0)
 
     unscaled = MetaMoGovernor()
     scaled = MetaMoGovernor(payoff_scale=10.0, motive_scale=6.0)
@@ -191,5 +204,5 @@ def test_extreme_outcomes_saturate_regardless_of_scale():
     scaled.step(extreme)
 
     assert unscaled.modulator_summary()["securing"] == pytest.approx(
-        scaled.modulator_summary()["securing"], abs=1e-6
+        scaled.modulator_summary()["securing"], abs=1e-2
     )
