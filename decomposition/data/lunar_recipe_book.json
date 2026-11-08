@@ -1,78 +1,87 @@
 {
-  "schema_version": "subrep.recipe_book.v1",
+  "schema_version": "subrep.recipe_book.v2",
   "environment": "mo-lunar-lander-v3",
   "goals": {
     "land_on_pad": {
-      "task": "land",
       "achieved_when": {"landed": true, "over_pad": true},
-      "terminal": true
+      "terminal": true,
+      "success_outcomes": ["landed_on_pad"]
     },
     "recover_stability": {
-      "task": "recover",
       "achieved_when": {"upright": true}
     }
   },
-  "tasks": {
-    "land": {
-      "methods": [
-        {
-          "name": "careful_landing",
-          "subtasks": ["get_over_pad", "slow_descent", "touch_down"]
-        },
-        {
-          "name": "fuel_saving_landing",
-          "requires": {"near_ground": false},
-          "subtasks": ["get_over_pad", "free_fall", "brake", "touch_down"]
-        }
+  "methods": [
+    {
+      "name": "careful_landing",
+      "subgoals": [
+        {"upright": true},
+        {"over_pad": true},
+        {"near_ground": true, "slow": true},
+        {"landed": true, "over_pad": true}
       ]
     },
-    "get_over_pad": {
-      "methods": [
-        {
-          "name": "stabilise_then_move",
-          "subtasks": ["stabilise", "move_over_pad"]
-        }
+    {
+      "name": "fuel_saving_landing",
+      "requires": {"near_ground": false},
+      "subgoals": [
+        {"upright": true},
+        {"over_pad": true},
+        {"descent_underway": true},
+        {"slow": true},
+        {"landed": true, "over_pad": true}
       ]
     },
-    "recover": {
-      "methods": [
-        {
-          "name": "stabilise_in_place",
-          "subtasks": ["stabilise"]
-        }
+    {
+      "name": "direct_descent",
+      "subgoals": [
+        {"near_ground": true, "slow": true},
+        {"landed": true, "over_pad": true}
       ]
     }
-  },
-  "primitives": {
+  ],
+  "skills": {
     "stabilise": {
       "requires": {},
       "effects": {"upright": true},
-      "may_change": ["slow", "falling_fast"]
+      "may_change": ["over_pad", "near_ground", "slow", "falling_fast", "landed", "descent_underway"]
     },
     "move_over_pad": {
       "requires": {"upright": true},
       "effects": {"over_pad": true},
-      "may_change": ["upright", "slow", "falling_fast"]
+      "may_change": ["upright", "slow", "falling_fast", "descent_underway"]
     },
     "slow_descent": {
-      "requires": {"over_pad": true},
-      "effects": {"near_ground": true, "slow": true, "falling_fast": false},
+      "requires": {},
+      "effects": {"near_ground": true, "slow": true, "falling_fast": false, "descent_underway": true},
       "may_change": ["upright", "over_pad"]
     },
     "free_fall": {
       "requires": {"over_pad": true},
-      "effects": {},
+      "effects": {"descent_underway": true},
       "may_change": ["upright", "over_pad", "near_ground", "slow", "falling_fast"]
     },
     "brake": {
       "requires": {},
       "effects": {"slow": true, "falling_fast": false},
-      "may_change": ["upright", "over_pad"]
+      "may_change": ["upright", "over_pad", "descent_underway"]
     },
     "touch_down": {
       "requires": {"slow": true},
       "effects": {"landed": true},
-      "may_change": ["upright", "over_pad", "near_ground", "slow"]
+      "may_change": ["upright", "over_pad", "near_ground", "slow", "descent_underway"]
+    },
+    "heuristic_pilot": {
+      "whole_episode": true,
+      "requires": {},
+      "effects": {"landed": true, "over_pad": true},
+      "may_change": ["upright", "near_ground", "slow", "falling_fast", "descent_underway"]
+    },
+    "ppo_pilot": {
+      "whole_episode": true,
+      "requires": {},
+      "effects": {"landed": true, "over_pad": true},
+      "may_change": ["upright", "near_ground", "slow", "falling_fast", "descent_underway"]
     }
   }
 }

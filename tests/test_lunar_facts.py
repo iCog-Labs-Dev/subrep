@@ -58,6 +58,12 @@ def test_near_ground():
     assert lander_facts(observation(y=NEAR_GROUND_HEIGHT + 0.01))["near_ground"] is False
 
 
+def test_descent_is_underway_when_falling_fast_or_near_the_ground():
+    assert lander_facts(observation(vy=-FAST_FALL_SPEED - 0.01))["descent_underway"] is True
+    assert lander_facts(observation(y=0.1, vy=0.0))["descent_underway"] is True
+    assert lander_facts(observation(y=1.0, vy=0.0))["descent_underway"] is False
+
+
 def test_slow_and_falling_fast():
     assert lander_facts(observation(vy=-SLOW_DESCENT_SPEED + 0.01))["slow"] is True
     assert lander_facts(observation(vy=-SLOW_DESCENT_SPEED - 0.01))["slow"] is False

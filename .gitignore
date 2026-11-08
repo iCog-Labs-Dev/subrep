@@ -22,6 +22,9 @@ data/safety_gymnasium_rollouts*_lagrangian/
 # Trained model weights (run train_generator locally to regenerate)
 models/*
 !models/pilot_ppo.pt
+!models/mission_pilot_ppo.pt
+!models/lunar_mdn.pth
+!models/lunar_beacon_mdn.pth
 # Generated training plots
 plots/
 data/library.json

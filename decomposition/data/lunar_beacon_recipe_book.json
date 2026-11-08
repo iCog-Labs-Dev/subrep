@@ -1,0 +1,94 @@
+{
+  "schema_version": "subrep.recipe_book.v2",
+  "environment": "mo-lunar-lander-v3+beacon",
+  "goals": {
+    "scan_then_land": {
+      "achieved_when": {"beacon_scanned": true, "landed": true, "over_pad": true},
+      "terminal": true,
+      "success_outcomes": ["mission_complete"]
+    },
+    "land_on_pad": {
+      "achieved_when": {"landed": true, "over_pad": true},
+      "terminal": true,
+      "success_outcomes": ["mission_complete", "landed_on_pad"]
+    }
+  },
+  "methods": [
+    {
+      "name": "scan_then_careful_landing",
+      "subgoals": [
+        {"beacon_scanned": true},
+        {"centred_over_pad": true},
+        {"near_ground": true, "slow": true},
+        {"beacon_scanned": true, "landed": true, "over_pad": true}
+      ]
+    },
+    {
+      "name": "scan_then_fuel_saving_landing",
+      "subgoals": [
+        {"beacon_scanned": true},
+        {"centred_over_pad": true},
+        {"descent_underway": true},
+        {"slow": true},
+        {"beacon_scanned": true, "landed": true, "over_pad": true}
+      ]
+    },
+    {
+      "name": "direct_descent",
+      "subgoals": [
+        {"near_ground": true, "slow": true},
+        {"landed": true, "over_pad": true}
+      ]
+    }
+  ],
+  "skills": {
+    "go_to_beacon": {
+      "requires": {},
+      "effects": {"beacon_scanned": true},
+      "may_change": ["upright", "over_pad", "centred_over_pad", "near_ground", "slow", "falling_fast", "descent_underway"]
+    },
+    "cruise_to_pad": {
+      "requires": {},
+      "effects": {"centred_over_pad": true, "over_pad": true},
+      "may_change": ["upright", "near_ground", "slow", "falling_fast", "descent_underway"]
+    },
+    "slow_descent": {
+      "requires": {},
+      "effects": {"near_ground": true, "slow": true, "falling_fast": false, "descent_underway": true},
+      "may_change": ["upright", "over_pad", "centred_over_pad"]
+    },
+    "free_fall": {
+      "requires": {"over_pad": true},
+      "effects": {"descent_underway": true},
+      "may_change": ["upright", "over_pad", "centred_over_pad", "near_ground", "slow", "falling_fast"]
+    },
+    "brake": {
+      "requires": {},
+      "effects": {"slow": true, "falling_fast": false},
+      "may_change": ["upright", "over_pad", "centred_over_pad", "descent_underway"]
+    },
+    "touch_down": {
+      "requires": {"slow": true},
+      "effects": {"landed": true},
+      "may_change": ["upright", "over_pad", "centred_over_pad", "near_ground", "slow", "falling_fast", "descent_underway"]
+    },
+    "heuristic_pilot": {
+      "whole_episode": true,
+      "requires": {},
+      "effects": {"landed": true, "over_pad": true},
+      "may_change": ["upright", "centred_over_pad", "near_ground", "slow", "falling_fast", "descent_underway"]
+    },
+    "ppo_pilot": {
+      "whole_episode": true,
+      "requires": {},
+      "effects": {"landed": true, "over_pad": true},
+      "may_change": ["upright", "centred_over_pad", "near_ground", "slow", "falling_fast", "descent_underway"]
+    },
+    "mission_pilot": {
+      "whole_episode": true,
+      "requires": {},
+      "effects": {"beacon_scanned": true, "landed": true, "over_pad": true},
+      "may_change": ["upright", "centred_over_pad", "near_ground", "slow", "falling_fast", "descent_underway"]
+    }
+  }
+}
