@@ -13,14 +13,18 @@ def main():
     p.add_argument('--training-seeds', type=int, nargs='+', default=[42])
     p.add_argument('--seed', type=int, default=90000)
     p.add_argument('--epsilon', type=float, default=.2)
+    p.add_argument('--ppo-template', default=Config.ppo_template)
+    p.add_argument('--lagrangian-template', default=Config.lagrangian_template)
+    p.add_argument('--resume', action='store_true')
     p.add_argument('--scales-file')
     p.add_argument('--mdn-checkpoint')
     p.add_argument('--mdn-contract')
     args = vars(p.parse_args())
     checkpoint, contract = args.pop('mdn_checkpoint'), args.pop('mdn_contract')
     scales_file = args.pop('scales_file')
+    resume = args.pop('resume')
     args['training_seeds'] = tuple(args['training_seeds'])
-    run_contextual(Config(**args), checkpoint, contract, scales_file)
+    run_contextual(Config(**args), checkpoint, contract, scales_file, resume=resume)
 
 
 if __name__ == '__main__':
