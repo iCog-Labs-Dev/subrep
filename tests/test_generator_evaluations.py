@@ -371,16 +371,44 @@ def test_multi_policy_metrics_are_per_policy_and_per_motive():
 def test_multi_policy_dataset_size_subsets_reuse_manifest(tmp_path):
     from generator.multi_policy_data import load_or_create_manifest, partition
     from generator.policy_registry import POLICY_NAMES
-    rows = [dict(context_id=f'seed:{seed}', file=f'{seed}_{name}.npz', policy=name)
-            for seed in range(16) for name in POLICY_NAMES]
-    path = tmp_path / 'manifest.json'
+
+    provenance = {
+        "checkpoint_sha256":  "0" * 64,
+        "gamma": 0.99,
+        "max_steps": -1,
+    }
+
+    rows = [
+        dict(
+            context_id=f"seed:{seed}",
+            file=f"{seed}_{name}.npz",
+            policy=name,
+            **provenance,
+        )
+        for seed in range(16)
+        for name in POLICY_NAMES
+    ]
+
+    path = tmp_path / "manifest.json"
     manifest = load_or_create_manifest(rows, str(path), seed=9)
+
     assert load_or_create_manifest(rows, str(path), seed=99) == manifest
+
     splits = partition(rows, manifest)
-    sets = [{r['context_id'] for r in splits[k]} for k in ('train', 'val', 'test')]
-    assert not (sets[0] & sets[1] or sets[0] & sets[2] or sets[1] & sets[2])
-    assert all(len([r for r in rows if r['context_id'] == context]) == len(POLICY_NAMES)
-               for context in sets[0])
+    sets = [
+        {r["context_id"] for r in splits[k]}
+        for k in ("train", "val", "test")
+    ]
+
+    assert not (
+        sets[0] & sets[1]
+        or sets[0] & sets[2]
+        or sets[1] & sets[2]
+    )
+    assert all(
+        len([r for r in rows if r["context_id"] == context]) == len(POLICY_NAMES)
+        for context in sets[0]
+    )
 
 def test_multi_policy_report_counts_pds_only_as_certifiable(monkeypatch):
     from generator import evaluate_generator_report as report_module

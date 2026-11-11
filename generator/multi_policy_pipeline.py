@@ -432,5 +432,5 @@ def main(argv=None):
             json.dumps(results, indent=2)
         )
         print(f'Saved {out / "dataset_size_metrics.json"}')
-
-
+if __name__ == "__main__":
+    main()
