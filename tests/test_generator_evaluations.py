@@ -352,3 +352,119 @@ def test_report_aggregates_certification_and_prediction_metrics():
     assert report["generator_avg_predicted_payoff"] == pytest.approx(1.5)
     assert report["generator_avg_actual_payoff"] == pytest.approx(2.5)
     assert "noop" in report["baseline_comparison"]
+
+def test_multi_policy_metrics_are_per_policy_and_per_motive():
+    from generator.multi_policy_pipeline import metric_report
+    from generator.policy_registry import POLICY_NAMES
+    rows = [dict(policy=name) for name in POLICY_NAMES]
+    target = np.zeros((len(rows), 3))
+    prediction = np.zeros_like(target)
+    prediction[0] = [2., -3., 4.]
+    report = metric_report(target, prediction, rows)
+    assert report['per_policy'][POLICY_NAMES[0]]['payoff_mae'] == 2.
+    assert report['per_policy'][POLICY_NAMES[0]]['safety_mse'] == 9.
+    assert report['per_policy'][POLICY_NAMES[0]]['fuel_mae'] == 4.
+    assert report['per_policy'][POLICY_NAMES[1]]['fuel_mse'] == 0.
+    assert report['overall']['payoff_mae'] == pytest.approx(2 / len(rows))
+
+
+def test_multi_policy_dataset_size_subsets_reuse_manifest(tmp_path):
+    from generator.multi_policy_data import load_or_create_manifest, partition
+    from generator.policy_registry import POLICY_NAMES
+
+    provenance = {
+        "checkpoint_sha256":  "0" * 64,
+        "gamma": 0.99,
+        "max_steps": -1,
+    }
+
+    rows = [
+        dict(
+            context_id=f"seed:{seed}",
+            file=f"{seed}_{name}.npz",
+            policy=name,
+            **provenance,
+        )
+        for seed in range(16)
+        for name in POLICY_NAMES
+    ]
+
+    path = tmp_path / "manifest.json"
+    manifest = load_or_create_manifest(rows, str(path), seed=9)
+
+    assert load_or_create_manifest(rows, str(path), seed=99) == manifest
+
+    splits = partition(rows, manifest)
+    sets = [
+        {r["context_id"] for r in splits[k]}
+        for k in ("train", "val", "test")
+    ]
+
+    assert not (
+        sets[0] & sets[1]
+        or sets[0] & sets[2]
+        or sets[1] & sets[2]
+    )
+    assert all(
+        len([r for r in rows if r["context_id"] == context]) == len(POLICY_NAMES)
+        for context in sets[0]
+    )
+
+def test_multi_policy_report_counts_pds_only_as_certifiable(monkeypatch):
+    from generator import evaluate_generator_report as report_module
+    from generator import multi_policy_pipeline
+    from generator.policy_registry import POLICY_NAMES
+    
+    class MeasuredPDSOnly:
+        return_value = {
+            'delta_r': 1.0,
+            'delta_n': [1.0, 0.0],
+            'cds_admit': False,
+            'pds_admit': True,
+        }
+    class DummyImprovementCalculator:
+        def __init__(self, baseline_stats):
+            pass
+        
+    def fake_evaluate(*args, **kwargs):
+        return {'prediction_metrics_available': True}
+
+    def fake_certify_candidate(*args, **kwargs):
+        return MeasuredPDSOnly.return_value.copy()
+
+    monkeypatch.setattr(multi_policy_pipeline, 'evaluate', fake_evaluate)
+    monkeypatch.setattr(
+        report_module,
+        'certify_candidate',
+        fake_certify_candidate,
+    )
+    monkeypatch.setattr(
+        report_module,
+        'ImprovementCalculator',
+        DummyImprovementCalculator,
+    )
+    test_rows = [
+        {
+            'context_id': 'context:1',
+            'policy': policy,
+            'payoff': 1.0,
+            'motives': np.array([1.0, 0.0]),
+        }
+        for policy in POLICY_NAMES
+    ]
+    train_rows = [{'context_id': 'train:1'}]
+
+    report = report_module.build_multi_policy_report(
+        test_rows=test_rows,
+        train_rows=train_rows,
+        model=object(),
+        observation_baseline=object(),
+        baseline_stats={},
+    )
+
+    certification = report['measured_certification_per_policy']
+
+    for policy in POLICY_NAMES:
+        assert certification[policy]['certifiable_count'] == 1
+        assert certification[policy]['cds_admission_rate'] == 0.0
+        assert certification[policy]['pds_admission_rate'] == 1.0
