@@ -44,9 +44,12 @@ class Config:
     max_steps: int = 200
     epsilon: float = 0.2
     gamma: float = 0.99
+    objectives: int = 3
     bootstrap_samples: int = 2000
 
     def validate(self):
+        if self.objectives not in (3,4):
+            raise ValueError('Expected three or four objectives')
         if not self.training_seeds or len(set(self.training_seeds)) != len(self.training_seeds):
             raise ValueError('Training seeds must be nonempty and unique')
         if any(s < 0 for s in self.training_seeds) or self.seed < 0:
@@ -166,13 +169,18 @@ class Collector:
                 elif not np.allclose(obs, reference):
                     raise RuntimeError('Environment seed did not reproduce initial observation')
                 self.rng = np.random.default_rng(np.random.SeedSequence([seed, index, repeat]))
-                motives, totals = np.zeros(3), np.zeros(3)
+                motives, totals = np.zeros(self.config.objectives), np.zeros(self.config.objectives)
+                previous_action = None
                 goals = 0
                 for step in range(self.config.max_steps):
                     action = np.asarray(policy(obs), dtype=np.float32)
                     effort = control_effort(action, self.low, self.high)
                     obs, reward, cost, terminated, truncated, info = self.env.step(action)
                     vector = np.array([-float(cost), float(reward), -effort])
+                    if self.config.objectives == 4:
+                        from utils.safety_objectives import action_change
+                        vector = np.append(vector, -action_change(action, previous_action, self.low, self.high))
+                    previous_action = action.copy()
                     if not np.isfinite(vector).all():
                         raise ValueError('Nonfinite environment measurement')
                     motives += self.config.gamma**step * vector

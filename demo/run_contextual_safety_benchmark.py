@@ -7,6 +7,7 @@ from utils.contextual_safety_benchmark import run_contextual
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output', required=True)
+    p.add_argument('--objectives', type=int, choices=[3,4], default=3)
     p.add_argument('--contexts', type=int, default=4)
     p.add_argument('--development-contexts', type=int, default=10)
     p.add_argument('--max-steps', type=int, default=200)

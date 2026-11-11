@@ -41,6 +41,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--max-episode-steps", type=int, default=200)
+    parser.add_argument("--effort-penalty", type=float, default=0.)
+    parser.add_argument("--smoothness-penalty", type=float, default=0.)
     parser.add_argument("--cost-penalty", type=float, default=1.0)
     parser.add_argument("--use-lagrangian", action="store_true")
     parser.add_argument("--cost-limit", type=float, default=1.0)
@@ -68,6 +70,8 @@ def main() -> None:
         max_grad_norm=args.max_grad_norm,
         total_updates=args.total_updates,
         max_episode_steps=args.max_episode_steps,
+        effort_penalty=args.effort_penalty,
+        smoothness_penalty=args.smoothness_penalty,
         cost_penalty=args.cost_penalty,
         use_lagrangian=args.use_lagrangian,
         cost_limit=args.cost_limit,
@@ -150,6 +154,9 @@ def train_safety_ppo(
         else float(config.cost_penalty)
     )
 
+    if not np.isfinite([config.effort_penalty, config.smoothness_penalty]).all() or min(config.effort_penalty, config.smoothness_penalty) < 0:
+        raise ValueError("Action penalties must be finite and nonnegative")
+    previous_action = None
     for update in range(1, config.total_updates + 1):
         rollout = _collect_rollout(
             env=env,
@@ -162,9 +169,11 @@ def train_safety_ppo(
             episode_length=episode_length,
             completed_returns=completed_returns,
             completed_costs=completed_costs,
+            previous_action=previous_action,
             current_cost_penalty=lagrange_multiplier,
             cost_critic=cost_critic,
         )
+        previous_action = rollout.pop("previous_action")
         obs = rollout.pop("next_obs")
         episode_return = rollout.pop("episode_return")
         episode_cost = rollout.pop("episode_cost")
@@ -209,7 +218,7 @@ def train_safety_ppo(
                 "evaluation": evaluation, "evaluation_role": "development checkpoint selection, not final test",
                 "evaluation_seeds": list(range(eval_seed, eval_seed+eval_episodes)),
                 "update": update, "final_lagrange_multiplier": lagrange_multiplier if config.use_lagrangian else None,
-                "selection_rule": "PPO: goal rate then return; Lagrangian: budget feasibility first, then goal rate/return; if infeasible, lower cost first."}
+                "selection_rule": "PPO: goal rate then action-penalized return; Lagrangian: budget feasibility first, then goal rate/action-penalized return; if infeasible, lower cost first."}
             model.save(run_dir / f"update_{update:05d}.pt", metadata=metadata)
             key = _checkpoint_rank(evaluation, config)
             if best_key is None or key > best_key:
@@ -239,8 +248,16 @@ def train_safety_ppo(
     return {"evaluation": best_metadata["evaluation"], "metadata": best_metadata}
 
 
+def action_penalty(action, previous, low, high, config):
+    from utils.safety_objectives import control_effort, action_change
+    return (config.effort_penalty * control_effort(action, low, high)
+            + config.smoothness_penalty * action_change(action, previous, low, high))
+
+
 def _checkpoint_rank(evaluation, config):
     goal, reward, cost = (evaluation[k] for k in ("goal_reached_rate", "mean_return", "mean_cost"))
+    if config.effort_penalty or config.smoothness_penalty:
+        reward -= config.effort_penalty * evaluation["mean_effort"] + config.smoothness_penalty * evaluation["mean_action_change"]
     if config.use_lagrangian:
         if cost <= config.cost_limit:
             return (1., goal, reward, -cost)
@@ -273,6 +290,7 @@ def _collect_rollout(
     completed_costs: list[float],
     current_cost_penalty: float,
     cost_critic=None,
+    previous_action=None,
 ) -> dict[str, Any]:
     observations: list[np.ndarray] = []
     raw_actions: list[np.ndarray] = []
@@ -295,6 +313,9 @@ def _collect_rollout(
         next_obs, reward, cost, terminated, truncated, _ = env.step(env_action)
         next_obs = np.asarray(next_obs, dtype=np.float32).reshape(-1)
         reward_value = float(reward) if config.use_lagrangian else float(reward) - float(current_cost_penalty) * float(cost)
+        if config.effort_penalty or config.smoothness_penalty:
+            reward_value -= action_penalty(env_action, previous_action, model.action_low.cpu().numpy(), model.action_high.cpu().numpy(), config)
+        previous_action = np.array(env_action, copy=True)
         cost_value = 0.
         cost_reward = float(cost)
         if cost_critic is not None:
@@ -339,6 +360,7 @@ def _collect_rollout(
             episode_return = 0.0
             episode_cost = 0.0
             episode_length = 0
+            previous_action = None
 
     with torch.no_grad():
         _, next_value = model.distribution(
@@ -379,6 +401,7 @@ def _collect_rollout(
             if rollout_completed_costs
             else None
         ),
+        "previous_action": previous_action,
         "next_obs": current_obs,
         "episode_return": episode_return,
         "episode_cost": episode_cost,
@@ -512,15 +535,22 @@ def evaluate_safety_ppo(
     costs: list[float] = []
     lengths: list[int] = []
     goals: list[int] = []
+    efforts, changes = [], []
     try:
         for episode in range(episodes):
             obs, _ = env.reset(seed=seed + episode)
             obs = np.asarray(obs, dtype=np.float32).reshape(-1)
+            previous_action = None
+            total_effort = total_change = 0.
             total_return = 0.0
             total_cost = 0.0
             episode_goals = 0
             for step in range(1, max_episode_steps + 1):
                 action = model.predict(obs, deterministic=True)
+                from utils.safety_objectives import control_effort, action_change
+                total_effort += control_effort(action, env.action_space.low, env.action_space.high)
+                total_change += action_change(action, previous_action, env.action_space.low, env.action_space.high)
+                previous_action = np.array(action, copy=True)
                 obs, reward, cost, terminated, truncated, info = env.step(action)
                 episode_goals += int(bool(info.get("goal_met", False)))
                 obs = np.asarray(obs, dtype=np.float32).reshape(-1)
@@ -528,6 +558,8 @@ def evaluate_safety_ppo(
                 total_cost += float(cost)
                 if terminated or truncated:
                     break
+            efforts.append(total_effort)
+            changes.append(total_change)
             returns.append(total_return)
             costs.append(total_cost)
             lengths.append(step)
@@ -536,6 +568,8 @@ def evaluate_safety_ppo(
         env.close()
 
     return {
+        "mean_effort": float(np.mean(efforts)) if efforts else 0.,
+        "mean_action_change": float(np.mean(changes)) if changes else 0.,
         "episodes": float(episodes),
         "goal_reached_rate": float(np.mean(np.asarray(goals)>0)) if goals else 0.,
         "mean_goals": float(np.mean(goals)) if goals else 0.,

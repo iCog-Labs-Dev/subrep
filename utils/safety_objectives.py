@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 OBJECTIVE_NAMES = ('Safety', 'Task', 'ControlEfficiency')
+SCALING_OBJECTIVE_NAMES = OBJECTIVE_NAMES + ('ActionSmoothness',)
 
 
 def control_effort(action, low, high):
@@ -82,25 +83,41 @@ class FrozenObjectiveScales:
 
 def rollout_metadata(data, motives):
     """Validate objective schema without fabricating missing measurements."""
-    if motives.ndim != 2 or motives.shape[1] not in (2,3) or not np.all(np.isfinite(motives)):
+    if motives.ndim != 2 or motives.shape[1] not in (2,3,4) or not np.all(np.isfinite(motives)):
         raise ValueError('Expected finite (candidates, 2 or 3) motives')
     n = motives.shape[1]
     version = int(np.asarray(data['schema_version']).item()) if 'schema_version' in data else 1
-    if version not in (1,2) or (n == 3 and version != 2):
+    if version not in (1,2,3) or (n == 3 and version != 2) or (n == 4 and version != 3):
         raise ValueError('Three objectives require freshly collected schema-2 rollouts')
     required = ('objective_names','measurement_definitions','objective_scales','scaling_source','values_are_raw','gamma')
-    if version == 2 and any(k not in data for k in required):
+    if version >= 2 and any(k not in data for k in required):
         raise ValueError('Incomplete rollout metadata')
-    names = list(map(str,data['objective_names'])) if version == 2 else list(OBJECTIVE_NAMES[:n])
-    scales = np.asarray(data['objective_scales'],dtype=float) if version == 2 else np.ones(n)
-    if names != list(OBJECTIVE_NAMES[:n]) or scales.shape != (n,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
+    names = list(map(str,data['objective_names'])) if version >= 2 else list(SCALING_OBJECTIVE_NAMES[:n])
+    scales = np.asarray(data['objective_scales'],dtype=float) if version >= 2 else np.ones(n)
+    if names != list(SCALING_OBJECTIVE_NAMES[:n]) or scales.shape != (n,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
         raise ValueError('Invalid objective names or scales')
-    if version == 2 and not bool(np.asarray(data['values_are_raw']).item()):
+    if version >= 2 and not bool(np.asarray(data['values_are_raw']).item()):
         raise ValueError('Rollout measurements must be raw')
-    definitions = list(map(str,data['measurement_definitions'])) if version == 2 else ['negative environment cost','environment task reward']
+    definitions = list(map(str,data['measurement_definitions'])) if version >= 2 else ['negative environment cost','environment task reward']
     if len(definitions) != n:
         raise ValueError('Measurement definition count mismatch')
     return {'schema_version': version,'objective_names': names, 'objective_scales': scales.tolist(),
             'measurement_definitions': definitions,
-            'scaling_source': str(np.asarray(data['scaling_source']).item()) if version == 2 else 'legacy-identity',
-            'gamma': float(np.asarray(data['gamma']).item()) if version == 2 else None}
+            'scaling_source': str(np.asarray(data['scaling_source']).item()) if version >= 2 else 'legacy-identity',
+            'gamma': float(np.asarray(data['gamma']).item()) if version >= 2 else None}
+
+
+def action_change(action, previous, low, high):
+    """Squared change of normalized applied actions; first action has no penalty.
+
+    Each normalized coordinate lies in [-1,1]; divide the difference by 2
+    so the per-step mean lies in [0,1]. This is action smoothness, not jerk.
+    """
+    control_effort(action, low, high)
+    if previous is None:
+        return 0.
+    control_effort(previous, low, high)
+    a, b, lo, hi = (np.asarray(x, dtype=float) for x in (action, previous, low, high))
+    u = a / np.where(a >= 0, hi, -lo)
+    v = b / np.where(b >= 0, hi, -lo)
+    return float(np.mean(((u-v)/2)**2))

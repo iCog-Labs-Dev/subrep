@@ -45,7 +45,7 @@ def eligible(library, stored_key, current_key, weight):
     if stored_key != current_key:
         return []
     weight = np.asarray(weight, dtype=float)
-    if weight.shape != (3,) or not np.isfinite(weight).all() or np.any(weight < 0) or not np.isclose(weight.sum(), 1.):
+    if weight.ndim != 1 or len(weight) not in (3,4) or not np.isfinite(weight).all() or np.any(weight < 0) or not np.isclose(weight.sum(), 1.):
         raise ValueError('Expected three finite simplex weights')
     result = []
     for entry in library.get_admitted_skills():
@@ -67,12 +67,12 @@ def run_contextual(config, mdn_checkpoint=None, mdn_contract=None, scales_file=N
             raise ValueError('Supply --mdn-contract describing the model input and objective order')
         contract = json.loads(Path(mdn_contract).read_text())
         expected = {'environment': config.env_id, 'observation_schema': 'native_flat_v1',
-                    'objectives': ['safety', 'task', 'control_efficiency']}
+                    'objectives': ['safety', 'task', 'control_efficiency', 'action_smoothness'][:config.objectives]}
         if any(contract.get(k) != v for k, v in expected.items()):
             raise ValueError('MDN contract does not match this environment/observation/objective schema')
         model = load_mdn_checkpoint(mdn_checkpoint)
-        if model.num_objectives != 3:
-            raise ValueError('MDN must have three objectives')
+        if model.num_objectives != config.objectives:
+            raise ValueError('MDN objective dimension mismatch')
     models, provenance = load_models(config)
     manifest = {'config': vars(config), 'checkpoints': provenance,
         'scope': 'Exact reset seed and observation only; same-start re-execution, not unseen-context transfer',
@@ -101,7 +101,15 @@ def run_contextual(config, mdn_checkpoint=None, mdn_contract=None, scales_file=N
             dev = json.loads(dev_path.read_text()) if resume and dev_path.exists() else collector.collect(dev_seeds)
             if scales_file:
                 from utils.safety_objectives import FrozenObjectiveScales
-                scales = np.asarray(FrozenObjectiveScales.load(scales_file).divisors)
+                if config.objectives == 3:
+                    scales = np.asarray(FrozenObjectiveScales.load(scales_file).divisors)
+                else:
+                    payload = json.loads(Path(scales_file).read_text())
+                    if payload['objective_names'] != ['Safety','Task','ControlEfficiency','ActionSmoothness']:
+                        raise ValueError('Four-objective scale schema mismatch')
+                    scales = np.asarray(payload['divisors'])
+                if scales.shape != (config.objectives,) or not np.isfinite(scales).all() or np.any(scales <= 0):
+                    raise ValueError('Invalid scales')
             else:
                 scales = fit_scales([dev])
             if resume and (folder/'scales.json').exists():
@@ -145,7 +153,7 @@ def run_contextual(config, mdn_checkpoint=None, mdn_contract=None, scales_file=N
                         meta = {}
                         if decision['region'] == 'MDN_WX':
                             meta = dict(certification_context=tuple(context), mdn_alpha=tuple(alpha),
-                                wx_support_directions=tuple(map(tuple, np.eye(3))), wx_support_values=tuple(support))
+                                wx_support_directions=tuple(map(tuple, np.eye(config.objectives))), wx_support_values=tuple(support))
                         cert = Certificate(skill_id, decision['gate'], dr, tuple(dn), decision['margin'],
                             0. if decision['gate'] == 'CDS' else config.epsilon,
                             datetime.now(timezone.utc).isoformat(), seed, config.gamma, 'zero_action',
@@ -161,8 +169,7 @@ def run_contextual(config, mdn_checkpoint=None, mdn_contract=None, scales_file=N
                 # Check the actual reset observation before selecting, not future outcomes.
                 obs, _ = collector.env.reset(seed=record['context_seed'])
                 current = {**record, 'initial_observation': np.asarray(obs).tolist()}
-                for label, w in [('balanced', [1/3]*3), ('safety', [.8,.1,.1]),
-                                 ('task', [.1,.8,.1]), ('effort', [.1,.1,.8])]:
+                for label, w in priority_queries(config.objectives):
                     entries = eligible(library, key, context_key(current, config), w)
                     chosen = select_best_skill_entry(entries, np.asarray(w))[0] if entries else None
                     selections.append({'scenario': label, 'weight': w, 'skill_id': chosen,
@@ -192,7 +199,21 @@ def run_contextual(config, mdn_checkpoint=None, mdn_contract=None, scales_file=N
               '| Seed | Context | Priority | Policy | Fallback | Safety cost | Task return | Effort | Goals |',
               '|---|---|---|---|---|---|---|---|---|']
     for row in results:
-        safety, task, effort = row['actual_motives']
+        safety, task, effort = row['actual_motives'][:3]
         lines.append(f"| {row['training_seed']} | {row['context_seed']} | {row['scenario']} | {row['policy']} | {row['fallback']} | {-safety:.4f} | {task:.4f} | {-effort:.4f} | {row['goals']} |")
+    if config.objectives == 4:
+        lines += ['', '## Action smoothness (discounted change penalty; lower is better)', '', '| Seed | Context | Priority | Action change |', '|---|---|---|---:|']
+        for row in results:
+            lines.append(f"| {row['training_seed']} | {row['context_seed']} | {row['scenario']} | {-row['actual_motives'][3]:.6f} |")
     (root/'report.md').write_text('\n'.join(lines)+'\n')
     print(f'Results: {root}/report.md')
+
+
+def priority_queries(dimensions):
+    labels = ['safety','task','effort','smoothness'][:dimensions]
+    result = [('balanced', [1/dimensions]*dimensions)]
+    for i,label in enumerate(labels):
+        weight = [(1-.8)/(dimensions-1)]*dimensions
+        weight[i] = .8
+        result.append((label,weight))
+    return result

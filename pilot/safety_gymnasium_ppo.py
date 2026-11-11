@@ -28,6 +28,8 @@ class SafetyPPOConfig:
     max_grad_norm: float = 0.5
     total_updates: int = 25
     max_episode_steps: int = 200
+    effort_penalty: float = 0.0
+    smoothness_penalty: float = 0.0
     cost_penalty: float = 1.0
     use_lagrangian: bool = False
     cost_limit: float = 1.0
