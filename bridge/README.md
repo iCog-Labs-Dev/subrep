@@ -111,7 +111,7 @@ To pin it as a submodule:
 
 ```bash
 git submodule add https://github.com/iCog-Labs-Dev/MetaMo-Python external/metamo
-git -C external/metamo checkout ceb108eba92ff2f2c7e0ce9bf2d073e78044669b
+git -C external/metamo checkout 4171b1d459aba897dc17489e2e8a6a31cc9ac4f2
 ```
 
 No new dependencies: the modules actually imported —
@@ -325,9 +325,11 @@ because nothing else could reach the band.
 ### What the demo shows — and what it can't yet
 
 With the estimation fixed, the demo's selection changes over a run. It also
-shows a current limitation: under threat, Securing still rails to 1.0
-within two decisions, pinning ε at 0 — and with every margin negative, PDS then
-admits nothing, so the agent abstains until threat eases. Bounding MetaMo's
-step size is not addressed here. With ε held at its 0.1 baseline instead,
+shows a current limitation: under threat, Securing jumps to about 0.94 at the
+first threat and stays between 0.93 and 0.98. MetaMo no longer pins it at 1.0,
+but anything above 0.75 at neutral Approach already takes ε to 0 under
+`a1_securing = 0.4` — and with every margin negative, PDS then admits nothing,
+so the agent abstains until threat eases. Retuning the budget gains is not
+addressed here. With ε held at its 0.1 baseline instead,
 selection tracks threat: trade when calm, defend as threat peaks, trade again
 as it falls.

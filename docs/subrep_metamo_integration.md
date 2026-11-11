@@ -125,7 +125,7 @@ git -C external/metamo rev-parse HEAD
 
 ```bash
 git submodule add https://github.com/iCog-Labs-Dev/MetaMo-Python external/metamo
-git -C external/metamo checkout ceb108eba92ff2f2c7e0ce9bf2d073e78044669b
+git -C external/metamo checkout 4171b1d459aba897dc17489e2e8a6a31cc9ac4f2
 ```
 
 On a fresh clone, use `--recurse-submodules`, or run `git submodule update
@@ -251,6 +251,93 @@ should be revisited against real episode outcomes.
   is wired correctly, not that a certificate holds on unseen starts.
 - **CVaR is off.** The MDN is untrained, and an untrained MDN makes the CVaR
   gate admit nearly everything, so the loop certifies with PDS only.
+
+### Running the LunarLander demo
+
+`demo/run_lunar_lander_metamo.py` runs the full loop on MO-LunarLander, one
+episode per decision step (step *k* uses seed `seed + k`):
+
+```bash
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo
+python demo/run_lunar_lander_metamo.py --steps 10 --candidates ci      # no PPO checkpoint needed
+```
+
+| Option | Meaning |
+|---|---|
+| `--steps`, `--seed` | number of decision steps, and the first seed |
+| `--candidates ci\|ppo\|extended` | the candidate set; defaults to `ppo` when `models/pilot_ppo.pt` exists, otherwise `ci` |
+| `--no-selection noop\|stop` | when nothing is admitted: fly the noop baseline, or fly nothing. Both feed MetaMo a zero-Δ outcome with `admitted=False` |
+| `--cvar`, `--cvar-samples` | also apply the CVaR gate (OR semantics); a `pds` column then shows the PDS-only count |
+| `--verbose` | print every candidate's Δr, Δn, PDS margin and verdict |
+| `--json-out PATH` | save the configuration, every step and the summary as JSON |
+
+Example rows (`--candidates ci`, seeds 1–2):
+
+```
+step seed  secur thresh   appr     eps  alpha Safety   Fuel   adm  selected               result        d_r   min d_n
+   0    1  0.500  0.500  0.500  0.1000  0.100  0.632  0.368  0/4   -                      crashed      +0.0      +0.0
+   1    2  0.693  0.666  0.489  0.0207  0.050  0.718  0.282  0/4   -                      crashed      +0.0      +0.0
+```
+
+- `secur`, `thresh`, `appr`: Securing, Threshold and Approach at decision time.
+- `eps`, `alpha`, `Safety`, `Fuel`: the signal SubRep certified and selected
+  under. Without `--cvar`, no gate reads `alpha`.
+- `adm`: admitted/scored candidates, as the pipeline decided them.
+- `selected`: the chosen skill; `-` when nothing was admitted and the noop
+  baseline flew; `STOP` when nothing flew.
+- `result`, `d_r`, `min d_n`: how the flown episode ended, and the realised
+  outcome fed back to MetaMo.
+
+The summary reports measured diagnostics: the ε and α ranges, the first and
+last weights, admissions, selections and flown results, the first step where
+Securing reaches 0.95, and the number of steps where ε anywhere in [0, 0.5]
+would change a PDS admission.
+
+**Comparing two runs.** Save each run with `--json-out`, using the same options
+and seeds, for example before and after updating the MetaMo submodule. Then
+compare the `summary` blocks, or the per-step `signal` and `modulators`. The
+demo is deterministic, so any difference comes from the change, not from
+sampling.
+
+### Before and after the MetaMo saturation fix
+
+MetaMo `ceb108e` raised Securing and Threshold by 0.1 every time it projected a
+state into the safe region, including states that were already safe. Caution
+therefore climbed on every step, whatever the outcome. MetaMo `4171b1d` leaves
+safe states unchanged, and when it does project, it shrinks the boost as the
+modulator approaches 1 (`dynamics/stability.py`, `project_to_safe_region`).
+
+The same demo run on both commits (`--steps 16 --candidates ppo`, seeds 1–16):
+
+| | MetaMo `ceb108e` | MetaMo `4171b1d` |
+|---|---|---|
+| Securing at decision time | 0.500–1.000 | 0.500–0.955 |
+| First step with Securing ≥ 0.95 | 3 | 8 (once, then back down) |
+| Securing pinned at 1.0 | step 3 to the end | never |
+| ε range | 0–0.100 | 0–0.132 |
+| Steps with ε = 0 | 13/16 | 1/16 |
+| Admitted / landed | 30/96, 16/16 | 30/96, 16/16 |
+| Selections | ppo_deterministic 10, ppo_stochastic 6 | identical, step for step |
+
+With the fix, caution follows the outcomes. Securing rose after the landings
+with the largest objective losses (min Δn of −144, −174 and −121 at steps 5, 7
+and 12) and eased after most of the others, so ε stays an active signal
+through the run. What SubRep admits, selects and flies is unchanged, because ε does not
+decide any admission at this scale (see the known limitations above).
+
+On the `ci` candidates, where every episode crashes, Securing now settles at
+about 0.925 instead of 1.0. ε still reaches 0 from step 2: above 0.75 at neutral
+Approach, `a1_securing = 0.4` takes ε to 0 on its own. That is the bridge's
+budget gain, not MetaMo.
+
+To reproduce the `ceb108e` column without moving the submodule, export that
+commit and point the loader at it:
+
+```bash
+git -C external/metamo archive ceb108e | (mkdir -p /tmp/metamo_ceb108e && tar -x -C /tmp/metamo_ceb108e)
+SUBREP_METAMO_PATH=/tmp/metamo_ceb108e \
+  python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo
+```
 
 ---
 
@@ -525,25 +612,28 @@ result of "13 skipped" means the submodule is not resolving — check §3.
 
 Recorded from a full run of the suite and the demo, seed 42.
 
-**Suite:** `pytest tests/ -q` → **727 passed, 2 xfailed, 0 failed.**
-`test_bridge_e2e.py` alone: 10 passed.
+**Suite:** `pytest tests/ -q` → **1154 passed, 2 xfailed, 0 failed**
+(MetaMo `4171b1d`). `test_bridge_e2e.py` alone: 11 passed.
 
 **Budgets tighten together, never diverge.** Over a threatening run (the e2e
 `run_loop`: synthetic threatening outcomes, CVaR off) the governor's modulators
-saturate within two steps, and both budgets fall with them:
+climb to their ceiling within two steps, and both budgets fall with them:
 
 | step | securing | ε | α | Safety w | admitted |
 |---:|---:|---:|---:|---:|---:|
 | 0 | 0.500 | 0.1000 | 0.1000 | 0.323 | 5/5 |
-| 1 | 0.850 | 0.0000 | 0.0500 | 0.678 | 0/5 |
-| 2+ | 1.000 | 0.0000 | 0.0500 | 0.800 → 0.833 | 0/5 |
+| 1 | 0.744 | 0.0000 | 0.0500 | 0.597 | 0/5 |
+| 2+ | 0.996 → 0.999 | 0.0000 | 0.0500 | 0.816 → 0.853 | 0/5 |
+
+Every outcome in this run is a rejected option with a collapsing Safety
+motive, so a caution level near its ceiling is the expected response.
 
 ε reaches its floor of 0.0; α reaches its sampling floor of 0.05 (`min_tail_samples
 / n_samples` at 1000 samples). At no step do they move in opposite directions. Under
 the reference formula as published, α would have *risen* here while ε fell.
 
-**Safety priority adapts.** The Safety weight climbs from 0.323 to 0.833 over ten
-steps; Reputation, the initially competing objective, falls from 0.133 to 0.010.
+**Safety priority adapts.** The Safety weight climbs from 0.323 to 0.853 over ten
+steps; Reputation, the initially competing objective, falls from 0.133 to 0.009.
 
 **Budgets reach certification.** With CVaR disabled so the PDS verdict is
 observable, every calibrated option is admitted at ε = 0.10 and rejected at
@@ -571,11 +661,14 @@ does not stall the loop.
 **Determinism.** Two runs at the same seed produce identical ε, α, weights, and
 selections at every step, and two demo runs produce byte-identical output.
 
-**What the demo shows that needs fixing next.** Securing rails to 1.0 within two
-decisions and pins ε at 0. With every margin negative, PDS then admits nothing,
-and the agent abstains until threat eases and the CVaR gate admits
-DiscountChain. The coupling is doing what it is told; MetaMo's state simply moves
-too far per step. Bounding that step is not addressed here.
+**What the demo shows that needs fixing next.** At the first threat Securing
+jumps from 0.500 to about 0.94, then stays between 0.93 and 0.98 for the rest of
+the run; it no longer pins at 1.0. ε is still 0 from step 1, but the cause is
+now the budget gain rather than MetaMo: with `a1_securing = 0.4`
+(`bridge/budget.py`), ε reaches 0 once Securing passes 0.75 at neutral Approach.
+With every margin negative, PDS then admits nothing, and the agent abstains
+until threat eases and the CVaR gate admits DiscountChain. Retuning the budget
+gains is not addressed here.
 
 > Results from the stub environment are **controlled test evidence** that the
 > coupling behaves as designed. They are not real-environment validation — no
@@ -607,9 +700,12 @@ too far per step. Bounding that step is not addressed here.
 6. **The stub is not Minecraft** (§10). Rollouts on a deep copy also carry its
    RNG, so candidate Δ values are *exact forecasts* of what execution will
    produce; a real environment would give noisy estimates.
-7. **MetaMo's state rails within two decisions under threat**, pinning ε at 0
-   and α at its floor (§11, Observed behavior). Bounding its step size is
-   not addressed here.
+7. **ε reaches 0 under sustained threat.** MetaMo no longer pins Securing at
+   1.0 (its safe-region projection leaves already-safe states unchanged), but
+   under threat Securing still settles above 0.75. There, with neutral
+   Approach, `a1_securing = 0.4` takes ε to 0, and the b-coefficients hold α
+   at its floor (§11, Observed behavior). Retuning the budget gains is not
+   addressed here.
 
 ---
 
