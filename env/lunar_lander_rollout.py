@@ -13,10 +13,14 @@ Three rules hold throughout:
   (`info["terminal_reward"]`, +100 landed / -100 crashed), not the sum of the
   objectives. n_hat stays the [Safety, Fuel] vector. The PDS gate
   (delta_r + min(delta_n) >= -eps) needs the two signals apart.
-  This removes the full objective sum from the payoff, but not every overlap:
-  the wrapper's Safety already includes the terminal landing reward
-  (env/lunar_lander_wrapper.py, `_map_rewards`), so a landing or crash still
-  shows up in both delta_r and delta_n[Safety]. The wrapper is left unchanged.
+  Safety also contains the landing result (env/lunar_lander_wrapper.py,
+  `_map_rewards`), so a landing or crash counts in both delta_r and
+  delta_n[Safety]. This is deliberate: counting it once, in the payoff only,
+  leaves every admission and selection unchanged, because Fuel is the
+  objective that binds and the double count shifts every landing by the same
+  amount. Revisit it if a rule makes decisions depend on the size of Safety,
+  for example per-objective scaling. The wrapper is left unchanged; see
+  "Payoff and Safety" in docs/subrep_metamo_integration.md for why.
 * Replay, not copy. Execution re-runs the chosen policy from the seed rather
   than deep-copying the environment: Box2D state does not copy cleanly, and
   `reset(seed)` is already proven to reproduce the start

@@ -239,10 +239,8 @@ should be revisited against real episode outcomes.
 **Known limitations of the LunarLander loop**
 (`env/lunar_lander_rollout.py`, `tests/test_lunar_lander_integration.py`):
 
-- **The landing result is counted twice.** The task reward Δr is the landing
-  result alone, but the wrapper's Safety objective also includes the terminal
-  landing reward (`env/lunar_lander_wrapper.py`, `_map_rewards`). So a landing
-  or crash shows up in both Δr and Δn_Safety.
+- **The landing result counts in both Δr and Δn_Safety, by decision.** See
+  "Payoff and Safety" below for why, and what counting it once would change.
 - **ε cannot decide an admission at the current scale.** ε is at most 0.5,
   while Δn values are in the hundreds, so crash-only candidates are rejected
   and landings admitted whatever ε is.
@@ -251,6 +249,78 @@ should be revisited against real episode outcomes.
   is wired correctly, not that a certificate holds on unseen starts.
 - **CVaR is off.** The MDN is untrained, and an untrained MDN makes the CVaR
   gate admit nearly everything, so the loop certifies with PDS only.
+
+### Payoff and Safety
+
+**The convention.** The payoff r̂ is the landing result alone (+100 landed,
+−100 crashed; `env/lunar_lander_rollout.py:174`). Safety is the landing result
+plus the dense shaping (`env/lunar_lander_wrapper.py:73`). So a landing or crash
+counts in both Δr and Δn_Safety. This is kept on purpose, and
+`tests/test_lunar_lander_rollout.py::test_safety_includes_the_landing_result`
+pins it.
+
+**Why it is harmless.** The two conventions were compared on the same rollouts.
+With γ = 1, the count-once Safety delta is exactly ΔSafety − Δr, so no second set
+of episodes is needed. Measured with MetaMo `4171b1d`:
+
+| | Landing counted twice (kept) | Counted once |
+|---|---|---|
+| PDS admissions, ε in [0, 0.5], 800 candidate–seed pairs (seeds 1–40) | — | identical |
+| Selected skill, weights (0.8, 0.2), (0.7, 0.3), (0.6, 0.4), 40 seeds | — | identical |
+| Objective that binds min Δn | Fuel 592, Safety 208 | identical |
+| Motive scale from `appraisal_scales`, seeds 1–20 | 250.9 | 226.0 |
+| Demo, `--candidates ppo`, seeds 1–16: steps with ε = 0 | 1/16 | 3/16 |
+| Demo, `--candidates extended`, seeds 1–16: steps with ε = 0 | 2/16 | 6/16 |
+| Demo, `--candidates ci` | — | identical (nothing is admitted) |
+
+Fuel is the objective that binds in most pairs, and the double count shifts
+every landing's Safety by the same amount, so no admission or selection moves.
+
+**The alternative: counting the landing once,** in the payoff only and in this
+rollout only.
+
+*Benefits:*
+- **A cleaner meaning for Safety.** It would measure only how the flight went
+  (the shaping: distance, speed, tilt and leg contact), and the payoff alone
+  would carry the landing result.
+- **No shared term.** Δr and Δn_Safety would be independent, so the PDS sum
+  Δr + min Δn would never count the landing twice when Safety is the objective
+  that binds.
+- **Safer for rules that depend on the size of Safety,** for example
+  per-objective scaling: the landing would not inflate it.
+
+*Downsides:*
+- **No measured decision gain:** admissions and selections are identical (table
+  above). The only change is the smaller motive scale, which moves any rule
+  built on it.
+- **More caution with the current risk signal.** A median landing's risk rises
+  from 0.393 to 0.435, and its novelty falls from 0.760 to 0.461 (novelty lowers
+  Securing, `openpsi/appraisal.py:79-84`). The demo has more steps with ε = 0
+  (table above), and after 30 identical landings fed to the real governor,
+  Securing ends at 0.943 instead of 0.896.
+- **Two meanings of Safety in one codebase:** shaping only in this rollout, and
+  landing plus shaping everywhere else.
+- **Every documented LunarLander number changes,** and a flag is needed to
+  reproduce the current ones.
+- **More code and tests to maintain:** the flag has to pass through
+  `run_episode`, `evaluate_candidates`, `execute_candidate` and the demo, and be
+  recorded in its JSON.
+
+Under sustained crashes, Securing reaches 0.998–0.999 under both conventions, so
+the choice does not change how MetaMo behaves under threat.
+
+**Why the wrapper is not changed instead.** `SkillExecutor` builds its payoff
+as the sum of the objective vector (`env/skill_executor.py:44`), and goal
+decomposition follows it (`decomposition/effects.py:109-125`). Removing the
+landing from Safety in the wrapper would remove it from their payoff altogether.
+With the wrapper patched that way, four tests fail: the PPO pilot's payoff gain
+over idling becomes −9.5 and it no longer passes any gate. The committed effect
+tables in `decomposition/data/` would also no longer match the objectives they
+were measured with.
+
+**When to revisit.** Recheck this choice if a rule makes decisions depend on the
+size of Safety, for example per-objective scaling, or if the risk signal fed
+back to MetaMo changes.
 
 ### Running the LunarLander demo
 
