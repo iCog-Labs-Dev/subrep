@@ -8,10 +8,19 @@ import numpy as np
 import pytest
 
 from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, Gains, build_table
-from decomposition.feedback import FeedbackLog
+from decomposition.feedback import REVOKED_REASON, FeedbackLog
 from decomposition.planner import CandidatePlan, plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
-from decomposition.runtime import Continuation, GoalStatus, _choose, _may_continue, goal_achieved, pursue
+from decomposition.runtime import (
+    LESS_SAFE_THAN_NOTHING,
+    Continuation,
+    GoalStatus,
+    _choose,
+    _choose_fallback,
+    _may_continue,
+    goal_achieved,
+    pursue,
+)
 from decomposition.verifier import GOAL_TOO_RARE, NOT_MEASURED, MdnRegion, PlanVerdict, Priorities, plan_skill_id
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, landing_outcome, lander_facts
@@ -159,6 +168,9 @@ def test_a_fallback_records_its_evidence_certificate_and_outcome(env, book, tabl
     assert first["evidence"]["goal_rate"] < NO_PLAN_IS_GOOD_ENOUGH
     assert first["evidence"]["estimate"]["samples"] >= table.min_samples
     assert first["steps"][0]["status"] == "completed"
+    chosen = first["fallbacks_considered"][0]
+    assert chosen["plan"] == first["plan"] and chosen["admitted"] is True
+    assert chosen["goal_rate"] == first["evidence"]["goal_rate"]
 
 
 @pytest.mark.parametrize("safety_objective", ["fuel", None])  # every landing burns fuel that doing nothing saves
@@ -170,6 +182,12 @@ def test_a_fallback_must_be_no_worse_than_doing_nothing_on_the_safety_objective(
     )
     assert run.status is GoalStatus.NO_CERTIFIED_PLAN
     assert run.frames == 0 and run.fallbacks == 0
+    considered = run.decisions[0].fallback_verdicts
+    if safety_objective is None:
+        assert considered == ()  # a domain without a safety objective has no fallback to consider
+    else:
+        assert considered and {verdict.reason for verdict in considered} == {LESS_SAFE_THAN_NOTHING}
+        assert not any(verdict.admitted for verdict in considered)
 
 
 def test_a_domain_names_a_safety_objective_it_has():
@@ -206,6 +224,8 @@ def test_a_revoked_fallback_is_not_flown_again(env, book, table):
     run = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH, feedback=feedback)
     again = run.decisions[0]
     assert again.chosen is None or plan_skill_id(again.chosen.candidate) != plan_skill_id(first.chosen.candidate)
+    [revoked] = [v for v in again.fallback_verdicts if v.candidate.skills == first.chosen.candidate.skills]
+    assert revoked.reason == REVOKED_REASON and not revoked.admitted
 
 
 def test_the_rest_of_a_plan_without_current_approval_is_not_flown(env, book, starts_only):
@@ -379,10 +399,27 @@ def test_the_record_is_json_ready(env, book, table):
 # Choosing between plans at a decision
 
 
-def verdict(skills, score=None, reason="rejected by the CDS and PDS gates"):
+def verdict(skills, score=None, reason="rejected by the CDS and PDS gates", goal_rate=None):
     candidate = CandidatePlan("g", "m", ("m",), tuple(skills), {})
     entry = object() if score is not None else None
-    return PlanVerdict(candidate, reason=reason, entry=entry, score=score)
+    return PlanVerdict(candidate, reason=reason, entry=entry, score=score, goal_rate=goal_rate)
+
+
+def test_the_fallback_flown_is_the_one_that_reaches_its_goal_most_often():
+    lands_at_once = verdict(["touch_down"], score=330.0, goal_rate=0.63)
+    goes_to_the_pad = verdict(["cruise_to_pad", "touch_down"], score=270.0, goal_rate=0.89)
+    assert _choose_fallback([lands_at_once, goes_to_the_pad], ()) is goes_to_the_pad
+    as_often = verdict(["slow_descent", "touch_down"], score=300.0, goal_rate=0.89)
+    assert _choose_fallback([goes_to_the_pad, as_often], ()) is as_often  # equal rates: the better score
+    assert _choose_fallback([verdict(["a"], goal_rate=0.95), lands_at_once], ()) is lands_at_once  # only admitted
+
+
+def test_a_fallback_in_progress_goes_on_unless_another_reaches_its_goal_more_often():
+    current = verdict(["b"], score=100.0, goal_rate=0.8)
+    assert _choose_fallback([verdict(["a"], score=500.0, goal_rate=0.8), current], ("b",)) is current
+    more_often = verdict(["a"], score=50.0, goal_rate=0.85)
+    assert _choose_fallback([more_often, current], ("b",)) is more_often
+    assert _choose_fallback([verdict(["a"], goal_rate=0.9)], ()) is None
 
 
 def test_the_plan_in_progress_is_kept_unless_clearly_beaten():

@@ -26,9 +26,15 @@ nothing is admitted, ``Continuation`` says what happens:
   the domain's safety objective must be at least zero, so it is no less safe
   than doing nothing. Only the goal-rate check is waived: that check stops a
   plan from beating one that reaches the goal more often, and when nothing else
-  is admitted the only other choice is doing nothing. The fallback is checked
-  again before every skill, like any plan, and its decisions are recorded as
-  fallbacks with their certificates. When there is no fallback, the run stops;
+  is admitted the only other choice is doing nothing. Of the admitted fallbacks
+  the one closest to passing that check is flown: the one with the highest lower
+  bound on its goal rate, then the best score. The score alone would not do: it
+  can favour a plan that lands at once, often beside the pad. The plan in
+  progress goes on unless another fallback reaches its goal more often. The
+  fallback is checked again before every skill, like any plan. Its decisions are
+  recorded as fallbacks with their certificates, beside every fallback
+  considered and why each refused one was refused. When there is no fallback,
+  the run stops;
 - ``STOP``: the run stops;
 - ``KEEP_UNREJECTED_PLAN``: the plan in progress goes on without a new
   certificate, but only if priorities were given, its last skill completed, and
@@ -67,7 +73,7 @@ nothing new is then certified.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -93,6 +99,7 @@ DEFAULT_MAX_ATTEMPTS = 3  # skills that may fail before the run gives up
 DEFAULT_MIN_GOAL_RATE = 0.9
 MAX_DECISIONS = 30
 SWITCH_MARGIN = 0.1  # another plan must score this fraction higher to replace the plan in progress
+LESS_SAFE_THAN_NOTHING = "less safe than doing nothing"
 
 PrioritySource = Callable[[np.ndarray], Optional[Priorities]]
 
@@ -129,6 +136,7 @@ class Decision:
     weights: Optional[Tuple[float, ...]] = None  # the priorities at this decision; None if refused
     continued: bool = False  # flown under the continuation policy, on a certificate from an earlier state
     fallback: bool = False  # flown as a fallback, on a certificate admitted from this very state
+    fallback_verdicts: Tuple[PlanVerdict, ...] = ()  # the fallbacks considered, admitted or not, kept for audits
 
 
 @dataclass(frozen=True)
@@ -272,10 +280,11 @@ def pursue(
 
             chosen = _choose(verdicts, remaining)
             recertified = chosen is not None
-            fallback = False
+            considered: Tuple[PlanVerdict, ...] = ()
             if chosen is None and continuation is Continuation.FALLBACK and current is not None:
-                chosen = _fallback(domain, verdicts, remaining, obs, facts, table, current, timestamp, feedback)
-                fallback = chosen is not None
+                considered = _fallbacks(domain, verdicts, obs, facts, table, current, timestamp, feedback)
+                chosen = _choose_fallback(considered, remaining)
+            fallback = chosen is not None and not recertified
             continued = (
                 chosen is None
                 and continuation is Continuation.KEEP_UNREJECTED_PLAN
@@ -285,14 +294,26 @@ def pursue(
             if chosen is not None:
                 in_progress, remaining = chosen, chosen.candidate.skills
             elif not continued:
-                decisions.append(Decision(facts, verdicts, None, (), None, False, skipped, weights))
+                decisions.append(
+                    Decision(facts, verdicts, None, (), None, False, skipped, weights, fallback_verdicts=considered)
+                )
                 status = GoalStatus.NO_CERTIFIED_PLAN if current is not None else GoalStatus.PRIORITIES_REFUSED
                 break
 
             execution = execute(domain, env, book, remaining[:1], obs, settle=len(remaining) == 1)
             decisions.append(
                 Decision(
-                    facts, verdicts, in_progress, remaining, execution, recertified, skipped, weights, continued, fallback
+                    facts,
+                    verdicts,
+                    in_progress,
+                    remaining,
+                    execution,
+                    recertified,
+                    skipped,
+                    weights,
+                    continued,
+                    fallback,
+                    considered,
                 )
             )
             rewards.extend(execution.rewards)
@@ -336,34 +357,55 @@ def _choose(verdicts: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> Opti
     return best if best.score > current.score + SWITCH_MARGIN * abs(current.score) else current
 
 
-def _fallback(
+def _fallbacks(
     domain: Domain,
     verdicts: Sequence[PlanVerdict],
-    remaining: Tuple[str, ...],
     observation: np.ndarray,
     facts: Mapping[str, bool],
     table: EffectTable,
     priorities: Priorities,
     timestamp: Optional[str],
     feedback: Optional[FeedbackLog],
-) -> Optional[PlanVerdict]:
-    """The best fallback from ``observation``, or None when there is none.
+) -> Tuple[PlanVerdict, ...]:
+    """Every fallback considered from ``observation``, admitted ones first, closest to approval first.
 
-    A fallback is a plan the gates admit from there although it reaches its goal
-    too rarely, and whose safety gain over doing nothing has a lower confidence
-    bound of at least zero.
+    The plans refused only because they reach their goal too rarely are certified
+    again without that check. One stays admitted as a fallback only if the
+    feedback log has not revoked it and the lower confidence bound of its safety
+    gain over doing nothing is at least zero; the others say why they were refused.
+    Admitted fallbacks are ordered by the lower bound of their goal rate, then by
+    score.
     """
-    if domain.safety_objective is None:
-        return None
     too_rare = [verdict.candidate for verdict in verdicts if verdict.reason == GOAL_TOO_RARE]
-    if not too_rare:
-        return None
-    admitted = tuple(verify(too_rare, observation, table, priorities, timestamp))
+    if domain.safety_objective is None or not too_rare:
+        return ()
+    considered = tuple(verify(too_rare, observation, table, priorities, timestamp))
     if feedback is not None:
-        admitted = feedback.screen(admitted, facts)
+        considered = feedback.screen(considered, facts)
     safety = domain.objectives.index(domain.safety_objective)
-    safe = [verdict for verdict in admitted if verdict.admitted and verdict.estimate.lower.delta_n[safety] >= 0.0]
-    return _choose(safe, remaining)
+    checked = [
+        verdict
+        if not verdict.admitted or verdict.estimate.lower.delta_n[safety] >= 0.0
+        else replace(verdict, reason=LESS_SAFE_THAN_NOTHING, entry=None, score=None)
+        for verdict in considered
+    ]
+    return tuple(sorted(checked, key=_closest_to_approval))
+
+
+def _closest_to_approval(verdict: PlanVerdict) -> Tuple[int, float, float]:
+    if not verdict.admitted:
+        return (1, 0.0, 0.0)
+    return (0, -verdict.goal_rate, -verdict.score)
+
+
+def _choose_fallback(considered: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> Optional[PlanVerdict]:
+    """The admitted fallback closest to approval, unless the plan in progress reaches its goal as often."""
+    admitted = [verdict for verdict in considered if verdict.admitted]
+    if not admitted:
+        return None
+    best = min(admitted, key=_closest_to_approval)
+    current = _verdict_for(admitted, remaining)
+    return current if current is not None and current.goal_rate >= best.goal_rate else best
 
 
 def _may_continue(verdicts: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> bool:
@@ -404,6 +446,10 @@ def _decision_record(decision: Decision) -> Dict[str, object]:
         "certificate": None if chosen is None else chosen["certificate"],
         "rejected": [
             {"plan": plan_skill_id(v.candidate), "reason": v.reason} for v in decision.verdicts if not v.admitted
+        ],
+        "fallbacks_considered": [
+            {"plan": plan_skill_id(v.candidate), "admitted": v.admitted, "reason": v.reason, "goal_rate": v.goal_rate}
+            for v in decision.fallback_verdicts
         ],
         "not_measured_by_limit": [plan_skill_id(candidate) for candidate in decision.skipped],
         "steps": []
