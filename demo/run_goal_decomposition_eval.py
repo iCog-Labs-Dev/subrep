@@ -6,11 +6,14 @@ Every controller flies one episode from the start of every seed:
 - the two fixed landing sequences, flown with the runtime checks but without
   certification or replanning;
 - the goal runtime for ``land_on_pad`` under several priority profiles, which
-  re-certifies the rest of the plan after every skill. When it ends without
-  achieving the goal and the episode goes on, the lander does nothing for the
-  rest of the episode, as SubRep does without a certificate. Safety-first
-  priorities are also flown under the continuation policy, reported apart from
-  the criteria.
+  re-certifies the rest of the plan after every skill and, when no plan is
+  admitted, may fly a fallback admitted from the current state. When it ends
+  without achieving the goal and the episode goes on, the lander does nothing
+  for the rest of the episode, as SubRep does without a certificate. Safety-first
+  priorities are also flown under the strict policy, which never falls back,
+  and under the continuation policy, and once more with revocations applied
+  during the runs. These are reported apart from the criteria, which judge the
+  runtime as it runs by default.
 
 The evaluation also checks the measurements behind the certificates:
 
@@ -42,21 +45,30 @@ import json
 import operator
 import sys
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
 from decomposition.domain import Domain
-from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, build_table
+from decomposition.effects import DEFAULT_TABLE_PATH, MAX_STATES_PER_SEED, EffectTable, gain_names
 from decomposition.executor import execute
-from decomposition.feedback import MIN_SAMPLES, CertificateStatus, FeedbackLog, realised_gains
+from decomposition.feedback import MIN_SAMPLES, REVOKED_REASON, CertificateStatus, FeedbackLog, realised_gains
 from decomposition.mdn_priorities import priorities_from_weights
-from decomposition.planner import plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, RecipeBook, load_recipe_book
-from decomposition.runtime import Continuation, GoalRun, GoalStatus, pursue
+from decomposition.runtime import (
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_MIN_GOAL_RATE,
+    MAX_DECISIONS,
+    SWITCH_MARGIN,
+    Continuation,
+    GoalRun,
+    GoalStatus,
+    pursue,
+)
 from decomposition.verifier import Priorities
+from demo.build_lunar_effect_table import build
 from demo.run_lunar_baseline import CONTROLLERS, EpisodeResult, run_episode, summarise
 from demo.run_lunar_subskill_reliability import SEQUENCES
 from demo.train_lunar_mdn import load_landing_mdn
@@ -66,13 +78,20 @@ from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import NO_ENGINE
 
 GOAL = "land_on_pad"
-_GAINS = ("delta_r", "delta_safety", "delta_fuel")
 # The table was built from seeds 0-1999. Seeds 2000-2499 and 6000-6499 were looked at
-# while reviewing the plans, 3000-3199 while tuning skills, and 8000-8499 and 9000-9499
-# by earlier evaluations, so these are fresh.
-DEFAULT_START_SEED = 10000
+# while reviewing the plans, 3000-3199 while tuning skills, and 8000-8499, 9000-9499 and
+# 10000-10499 by earlier evaluations, so these are fresh.
+DEFAULT_START_SEED = 11000
 DEFAULT_SEEDS = 500
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
+# The policies for when no plan is admitted, as the reports name them; the first is the default.
+POLICY_NAMES = {
+    Continuation.FALLBACK: "fallback",
+    Continuation.STOP: "stop",
+    Continuation.KEEP_UNREJECTED_PLAN: "continuation",
+}
+OTHER_POLICIES = (Continuation.STOP, Continuation.KEEP_UNREJECTED_PLAN)
+ABSTAINING = (GoalStatus.NO_CERTIFIED_PLAN, GoalStatus.PRIORITIES_REFUSED)
 
 # Written before the evaluation seeds were flown.
 MIN_ON_PAD = 0.95
@@ -138,21 +157,79 @@ def fixed_sequence_episode(env: SubRepEnv, book: RecipeBook, skills: Sequence[st
     )
 
 
+NOTHING_PROPOSED = "no plan proposed"
+
+
+@dataclass
+class Safeguards:
+    """What the runtime did over many runs when no plan was admitted, and how often revocations stopped a plan.
+
+    Every run that flew a fallback or abstained is kept whole, with each decision's
+    evidence, certificate and outcome, so that it can be audited.
+    """
+
+    fallbacks: int = 0  # decisions flown as a fallback
+    runs_with_fallback: int = 0
+    continued: int = 0  # decisions flown under the continuation policy, without current approval
+    abstained: int = 0  # runs that ended with nothing admitted, or with priorities refused
+    revoked_refusals: int = 0  # decisions at which a plan was refused because the log had revoked its certificate
+    fallback_outcomes: Counter = field(default_factory=Counter)  # how the runs that flew a fallback ended
+    # For each reason, the abstaining runs in which some plan was refused for it at the last decision.
+    abstention_reasons: Counter = field(default_factory=Counter)
+    audited: List[Dict[str, Any]] = field(default_factory=list)
+
+    def add(self, run: GoalRun, outcome: str, seed: int) -> None:
+        self.fallbacks += run.fallbacks
+        self.runs_with_fallback += run.fallbacks > 0
+        self.continued += run.continued
+        self.revoked_refusals += sum(
+            any(verdict.reason == REVOKED_REASON for verdict in decision.verdicts + decision.fallback_verdicts)
+            for decision in run.decisions
+        )
+        if run.fallbacks:
+            self.fallback_outcomes[outcome] += 1
+        if run.status in ABSTAINING:
+            self.abstained += 1
+            self.abstention_reasons.update(abstention_reasons(run))
+        if run.fallbacks or run.status in ABSTAINING:
+            self.audited.append({"seed": seed, "outcome": outcome, **run.record()})
+
+    def record(self) -> Dict[str, Any]:
+        return {
+            **asdict(self),
+            "fallback_outcomes": dict(self.fallback_outcomes),
+            "abstention_reasons": dict(self.abstention_reasons),
+        }
+
+
+def abstention_reasons(run: GoalRun) -> List[str]:
+    """Why a run that abstained found nothing to fly: the reasons its last decision refused plans and fallbacks."""
+    if run.status is GoalStatus.PRIORITIES_REFUSED:
+        return [GoalStatus.PRIORITIES_REFUSED.value]
+    last = run.decisions[-1]
+    return sorted({verdict.reason for verdict in last.verdicts + last.fallback_verdicts}) or [NOTHING_PROPOSED]
+
+
 def evaluate_profile(
     env: SubRepEnv,
     book: RecipeBook,
     table: EffectTable,
     priorities: Any,
     seeds: Sequence[int],
-    continuation: Continuation = Continuation.STOP,
+    continuation: Continuation = Continuation.FALLBACK,
+    revoke_live: bool = False,
 ) -> Dict[str, Any]:
-    """Pursue the goal from every seed under one source of priorities."""
+    """Pursue the goal from every seed under one source of priorities.
+
+    With ``revoke_live``, the runtime is given the feedback log, so a certificate
+    the flights so far have revoked is refused during the later runs.
+    """
     episodes: List[EpisodeResult] = []
     statuses: Counter = Counter()
     first_plans: Counter = Counter()
     stops: Counter = Counter()
-    replanned = rechecks = recertified = continued = switches = predictions_checked = predictions_held = 0
-    unchecked = 0
+    replanned = rechecks = recertified = switches = predictions_checked = predictions_held = unchecked = 0
+    safeguards = Safeguards()
     feedback = FeedbackLog(LUNAR_LANDER)
 
     records: List[Dict[str, Any]] = []
@@ -166,6 +243,7 @@ def evaluate_profile(
             book,
             table,
             priorities,
+            feedback=feedback if revoke_live else None,
             timestamp=TIMESTAMP,
             continuation=continuation,
         )
@@ -176,8 +254,8 @@ def evaluate_profile(
         replanned += run.replans > 0
         rechecks += run.rechecks
         recertified += run.recertified_rechecks
-        continued += run.continued
         switches += run.switches
+        safeguards.add(run, episode.outcome, seed)
         first = run.decisions[0].chosen if run.decisions else None
         first_plans[first.entry.skill_id if first else "none"] += 1
         records.append(
@@ -186,6 +264,7 @@ def evaluate_profile(
                 "status": run.status.value,
                 "plan": first.entry.skill_id if first else None,
                 "replans": run.replans,
+                "fallbacks": run.fallbacks,
             }
         )
         for decision in run.flown:
@@ -205,8 +284,8 @@ def evaluate_profile(
         "episodes_with_replans": replanned,
         "rechecks": rechecks,
         "recertified_rechecks": recertified,
-        "continued": continued,
         "switches": switches,
+        **safeguards.record(),
         "plan_stops": dict(stops),
         "predictions": {"checked": predictions_checked, "held": predictions_held},
         "feedback": feedback.report(),
@@ -231,14 +310,17 @@ def plan_flown_to_its_end(run: GoalRun) -> bool:
 def record_followed_plans(domain: Domain, feedback: FeedbackLog, env: Any, seed: int, run: GoalRun) -> bool:
     """Record what each certified plan really achieved, for those flown to the end from where they were certified.
 
-    Returns whether the run was recorded: a run stopped in the middle of its plan is not.
+    Fallbacks are certified from the state they start in too, so they are recorded
+    like any plan; a plan flown under the continuation policy has no certificate
+    of its own and is not. Returns whether the run was recorded: a run stopped in
+    the middle of its plan is not.
     """
     if not plan_flown_to_its_end(run):
         return False
     frames = 0
     followed_from = _last_change(run)
     for index, decision in enumerate(run.flown):
-        if decision.recertified and index >= followed_from:
+        if (decision.recertified or decision.fallback) and index >= followed_from:
             start = run.actions[:frames]
             feedback.record(
                 decision.chosen, decision.facts, realised_gains(domain, env, seed, run.rewards[frames:], start)
@@ -261,10 +343,17 @@ def _last_change(run: GoalRun) -> int:
 # ---------------------------------------------------------------------------
 
 
-def check_table(committed: EffectTable, book: RecipeBook, seeds: range) -> List[Dict[str, Any]]:
-    """Measure the plans again on ``seeds`` and compare each group with the committed table."""
-    unseen = build_table(LUNAR_LANDER, seeds, plans_for(book), min_samples=1)
+def check_table(
+    committed: EffectTable, seeds: range, beacon: Optional[Tuple[float, float]] = None
+) -> List[Dict[str, Any]]:
+    """Measure the plans again on ``seeds``, as the committed table was built, and compare each group with it.
+
+    ``beacon`` is the mission's beacon, or None for landing. Every gain whose mean on
+    the new seeds falls below the committed lower bound is named.
+    """
+    unseen = build(seeds, beacon, min_samples=1)
     fresh = {(entry["name"], entry["group"]): entry for entry in unseen.data["plans"]}
+    gains = gain_names(committed.data["objectives"])
     rows = []
     for entry in committed.data["plans"]:
         if entry["samples"] < committed.min_samples or (entry["name"], entry["group"]) not in fresh:
@@ -278,10 +367,33 @@ def check_table(committed: EffectTable, book: RecipeBook, seeds: range) -> List[
                 "committed_mean_delta_r": entry["delta_r"]["mean"],
                 "committed_lower_delta_r": entry["delta_r"]["lower"],
                 "unseen_mean_delta_r": new["delta_r"]["mean"],
-                "below_committed_lower": [name for name in _GAINS if new[name]["mean"] < entry[name]["lower"]],
+                "below_committed_lower": [name for name in gains if new[name]["mean"] < entry[name]["lower"]],
             }
         )
     return rows
+
+
+def table_check_lines(rows: Sequence[Mapping[str, Any]]) -> List[str]:
+    """Markdown comparing the committed table with the same plans measured on the evaluation seeds."""
+    below = sum(bool(row["below_committed_lower"]) for row in rows)
+    lines = [
+        "",
+        "## Effect table on unseen seeds",
+        "",
+        f"The plans measured again on the evaluation seeds: {below} of {len(rows)} entries had a mean below the "
+        "committed lower bound on some gain. An entry with few samples here is a noisy check.",
+        "",
+        "| Plan | Start group | Samples | Committed mean Δr | Committed lower Δr | Unseen mean Δr "
+        "| Unseen mean below lower |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['plan']} | {row['group']} | {row['samples']} | "
+            f"{row['committed_mean_delta_r']:.1f} | {row['committed_lower_delta_r']:.1f} | "
+            f"{row['unseen_mean_delta_r']:.1f} | {', '.join(row['below_committed_lower']) or 'none'} |"
+        )
+    return lines
 
 
 def check_recovery(
@@ -317,12 +429,13 @@ def evaluate(
     profiles: Mapping[str, Priorities] = PROFILES,
     baselines: Sequence[str] = tuple(CONTROLLERS),
     use_mdn: bool = True,
-    continuing: Sequence[str] = ("safety_first",),
+    compared: Sequence[str] = ("safety_first",),
 ) -> Dict[str, Any]:
     """Fly every controller from every seed and check the measurements behind the certificates.
 
-    The profiles named in ``continuing`` are also flown under the continuation policy,
-    for comparison only: the criteria judge the runtime as it runs by default.
+    The profiles named in ``compared`` are also flown under the other policies for
+    when no plan is admitted, and with revocations applied during the runs, for
+    comparison only: the criteria judge the runtime as it runs by default.
     """
     table = EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
     measured = range(table.data["seeds"]["start"], table.data["seeds"]["stop"])
@@ -351,11 +464,18 @@ def evaluate(
         if use_mdn:
             goal_runs["mdn"] = evaluate_profile(env, book, table, load_landing_mdn(), int_seeds)
             controllers["runtime_mdn"] = {"summary": goal_runs["mdn"]["summary"]}
-        continued_runs = {
-            name: evaluate_profile(env, book, table, profiles[name], int_seeds, Continuation.KEEP_UNREJECTED_PLAN)
-            for name in continuing
-            if name in profiles
+        names = [name for name in compared if name in profiles]
+        policies = {
+            name: {
+                POLICY_NAMES[policy]: evaluate_profile(env, book, table, profiles[name], int_seeds, policy)
+                for policy in OTHER_POLICIES
+            }
+            for name in names
         }
+        for name, runs in policies.items():
+            for policy, run in runs.items():
+                controllers[f"runtime_{name}_{policy}"] = {"summary": run["summary"]}
+        live = {name: evaluate_profile(env, book, table, profiles[name], int_seeds, revoke_live=True) for name in names}
         recovery = check_recovery(env, book, table, PROFILES["safety_first"], int_seeds)
     finally:
         env.close()
@@ -363,11 +483,13 @@ def evaluate(
     report = {
         "seeds": {"start": int(seeds[0]), "count": len(seeds)},
         "goal": GOAL,
+        "settings": frozen_settings(table),
         "profiles": {name: _profile_record(p) for name, p in profiles.items()},
         "controllers": controllers,
         "goal_runs": goal_runs,
-        "continuation": continued_runs,
-        "table_check": check_table(table, book, seeds),
+        "policies": policies,
+        "live_revocation": live,
+        "table_check": check_table(table, seeds),
         "recover_stability": recovery,
     }
     report["criteria"] = check_criteria(report)
@@ -466,28 +588,88 @@ def unchecked_note(goal_runs: Mapping[str, Mapping[str, Any]]) -> str:
     return f"Runs stopped in the middle of a plan, so compared with no certificate: {counts}."
 
 
-def continuation_lines(report: Mapping[str, Any], success: str, label: str) -> List[str]:
-    """Markdown comparing current approval with the continuation policy, for the priorities flown under both."""
-    runs = report.get("continuation") or {}
-    if not runs:
+def policy_lines(report: Mapping[str, Any], success: str, label: str) -> List[str]:
+    """Markdown comparing the policies for when no plan is admitted, for the priorities flown under each."""
+    policies = report.get("policies") or {}
+    if not policies:
         return []
     lines = [
         "",
-        "## Continuation policy",
+        "## When no plan is admitted",
         "",
-        "The same priorities under `Continuation.KEEP_UNREJECTED_PLAN`: when nothing is admitted, the plan in "
-        "progress may go on without a new certificate. For comparison only; the criteria judge current approval.",
+        "`fallback` is the default, and the one the criteria judge: it may fly a fallback admitted from the current "
+        "state under the current priorities, no less safe than doing nothing, and reaching the goal less often than "
+        "a new plan must; of those, the one that reaches the goal most often. `stop` flies only plans admitted from "
+        "the current state. `continuation` "
+        "(`Continuation.KEEP_UNREJECTED_PLAN`) lets the plan in progress go on without a new certificate. A run "
+        "abstains when it ends with nothing admitted, and the lander then does nothing.",
         "",
-        f"| Priorities | Policy | {label} | Crashed | Decisions flown without current approval | Statuses |",
-        "|---|---|---|---|---|---|",
+        f"| Priorities | Policy | {label} | Crashed | Abstained | Fallback decisions (runs) | "
+        "Decisions without current approval | Statuses |",
+        "|---|---|---|---|---|---|---|---|",
     ]
-    for name, continued in runs.items():
-        for policy, run in (("current approval", report["goal_runs"][name]), ("continuation", continued)):
+    reasons = []
+    for name, others in policies.items():
+        for policy, run in ((POLICY_NAMES[Continuation.FALLBACK], report["goal_runs"][name]), *others.items()):
             summary = run["summary"]
             lines.append(
-                f"| {name} | {policy} | {summary[success]:.3f} | {summary['crashed_rate']:.3f} | "
-                f"{run['continued']} | {_counts(run['statuses'])} |"
+                f"| {name} | {policy} | {summary[success]:.3f} | {summary['crashed_rate']:.3f} | {run['abstained']} | "
+                f"{run['fallbacks']} ({run['runs_with_fallback']}) | {run['continued']} | {_counts(run['statuses'])} |"
             )
+            reasons.append(f"- {name}, {policy}: {_counts(run['abstention_reasons']) or 'none abstained'}")
+    lines += [
+        "",
+        "Why runs abstained: for each reason, the runs in which a plan or fallback was refused for it at the last "
+        "decision. A run counts once under every reason it met.",
+        "",
+        *reasons,
+    ]
+    return lines
+
+
+def reliability_lines(goal_runs: Mapping[str, Mapping[str, Any]]) -> List[str]:
+    """Markdown counting, for each set of priorities, how the certificates its runs relied on stood up."""
+    lines = [
+        "",
+        "## Certificate reliability",
+        "",
+        f"Plan and start groups whose certificates held, were revoked, or had fewer than {MIN_SAMPLES} flights to "
+        "judge them, and the runs stopped in the middle of a plan, which were not compared.",
+        "",
+        "| Priorities | Held | Revoked | Too few flights | Runs not compared |",
+        "|---|---|---|---|---|",
+    ]
+    for name, run in goal_runs.items():
+        statuses = Counter(entry["status"] for entry in run["feedback"])
+        counts = " | ".join(str(statuses[status.value]) for status in CertificateStatus)
+        lines.append(f"| {name} | {counts} | {run['feedback_unchecked_runs']} |")
+    return lines
+
+
+def live_revocation_lines(report: Mapping[str, Any], success: str, label: str) -> List[str]:
+    """Markdown for the runs flown with revocations applied while they were flown."""
+    live = report.get("live_revocation") or {}
+    if not live:
+        return []
+    lines = [
+        "",
+        "## Revocations applied during the runs",
+        "",
+        "Apart from the benchmark: the same priorities, with the runtime given the feedback log. A certificate the "
+        "flights so far have revoked is refused at every later decision, fallbacks included, until a certificate "
+        "the flights support replaces it.",
+        "",
+        f"| Priorities | {label} | Crashed | Abstained | Decisions refusing a revoked plan | Revoked at the end | "
+        "Statuses |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for name, run in live.items():
+        summary = run["summary"]
+        revoked = sum(entry["status"] == CertificateStatus.REVOKED.value for entry in run["feedback"])
+        lines.append(
+            f"| {name} | {summary[success]:.3f} | {summary['crashed_rate']:.3f} | {run['abstained']} | "
+            f"{run['revoked_refusals']} | {revoked} | {_counts(run['statuses'])} |"
+        )
     return lines
 
 
@@ -499,6 +681,34 @@ def _value(value: Optional[float]) -> str:
 
 def _results(episodes: Sequence[EpisodeResult]) -> Dict[str, Any]:
     return {"summary": summarise(episodes), "episodes": [asdict(episode) for episode in episodes]}
+
+
+def frozen_settings(table: EffectTable) -> Dict[str, Any]:
+    """The settings an evaluation ran with, so that a later run can be checked against them."""
+    return {
+        "default_policy": POLICY_NAMES[Continuation.FALLBACK],
+        "min_goal_rate": DEFAULT_MIN_GOAL_RATE,
+        "switch_margin": SWITCH_MARGIN,
+        "max_attempts": DEFAULT_MAX_ATTEMPTS,
+        "max_decisions": MAX_DECISIONS,
+        "feedback_min_samples": MIN_SAMPLES,
+        "table": {
+            key: table.data[key]
+            for key in ("schema_version", "environment", "seeds", "gamma", "confidence", "min_samples", "support_margin")
+        },
+        "max_states_per_seed": MAX_STATES_PER_SEED,
+    }
+
+
+def settings_line(settings: Mapping[str, Any]) -> str:
+    """The frozen settings as one markdown sentence."""
+    table = settings["table"]
+    return (
+        f"Settings: `{settings['default_policy']}` policy, goal rate at least {settings['min_goal_rate']}, "
+        f"switch margin {settings['switch_margin']}, table {table['schema_version']} from seeds "
+        f"{table['seeds']['start']}-{table['seeds']['stop'] - 1} (at least {table['min_samples']} samples per entry, "
+        f"{settings['max_states_per_seed']} states per episode at most)."
+    )
 
 
 def _profile_record(priorities: Priorities) -> Dict[str, Any]:
@@ -525,6 +735,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         f"Goal `{report['goal']}`, seeds {seeds['start']}-{seeds['start'] + seeds['count'] - 1} "
         f"({seeds['count']} episodes per controller).",
         "",
+        settings_line(report["settings"]),
+        "",
         "## Criteria written before the evaluation",
         "",
         *criteria_table(report["criteria"]),
@@ -544,8 +756,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "## Goal runtime",
         "",
         "| Profile | Statuses | First plan | Mid-flight re-checks | Re-certified | Switches | "
-        "Episodes with replans | Predictions held | Plan stops |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "Episodes with replans | Predictions held | Plan stops | Fallback decisions (runs) | Runs with a fallback ended |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for name, run in report["goal_runs"].items():
         predictions = run["predictions"]
@@ -553,9 +765,12 @@ def to_markdown(report: Mapping[str, Any]) -> str:
             f"| {name} | {_counts(run['statuses'])} | {_counts(run['first_plans'])} | "
             f"{run['rechecks']} | {run['recertified_rechecks']} | {run['switches']} | "
             f"{run['episodes_with_replans']} | {predictions['held']}/{predictions['checked']} | "
-            f"{_counts(run['plan_stops']) or '-'} |"
+            f"{_counts(run['plan_stops']) or '-'} | {run['fallbacks']} ({run['runs_with_fallback']}) | "
+            f"{_counts(run['fallback_outcomes']) or '-'} |"
         )
-    lines += continuation_lines(report, "landed_on_pad_rate", "On pad")
+    lines += policy_lines(report, "landed_on_pad_rate", "On pad")
+    lines += reliability_lines(report["goal_runs"])
+    lines += live_revocation_lines(report, "landed_on_pad_rate", "On pad")
 
     lines += [
         "",
@@ -574,21 +789,7 @@ def to_markdown(report: Mapping[str, Any]) -> str:
                 f"{shortfalls(entry)} |"
             )
     lines += ["", unchecked_note(report["goal_runs"])]
-
-    lines += [
-        "",
-        "## Effect table on unseen seeds",
-        "",
-        "| Plan | Start group | Samples | Committed mean Δr | Committed lower Δr | Unseen mean Δr "
-        "| Unseen mean below lower |",
-        "|---|---|---|---|---|---|---|",
-    ]
-    for row in report["table_check"]:
-        lines.append(
-            f"| {row['plan']} | {row['group']} | {row['samples']} | {row['committed_mean_delta_r']:.1f} | "
-            f"{row['committed_lower_delta_r']:.1f} | {row['unseen_mean_delta_r']:.1f} | "
-            f"{', '.join(row['below_committed_lower']) or 'none'} |"
-        )
+    lines += table_check_lines(report["table_check"])
 
     recovery = report["recover_stability"]
     lines += [

@@ -26,6 +26,7 @@ from decomposition.effects import (
     DEFAULT_TABLE_PATH,
     LUNAR_BEACON_TABLE,
     MAX_STATES_PER_SEED,
+    MIN_SAMPLES,
     EffectTable,
     SeedMeasurement,
     measure_seeds,
@@ -40,6 +41,7 @@ from env.lunar_pilots import mission_pilots
 
 DEFAULT_WORKERS = max(1, (os.cpu_count() or 2) // 2)
 _CHUNK = 20  # seeds handed to a process at a time
+_THREAD_SETTINGS = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
 
 
 def landing_book() -> RecipeBook:
@@ -64,17 +66,24 @@ def _measure(job: Tuple[Sequence[int], Optional[Tuple[float, float]]]) -> List[S
 
 
 def build(
-    seeds: range, beacon: Optional[Tuple[float, float]] = None, workers: int = DEFAULT_WORKERS
+    seeds: range,
+    beacon: Optional[Tuple[float, float]] = None,
+    workers: int = DEFAULT_WORKERS,
+    min_samples: int = MIN_SAMPLES,
 ) -> EffectTable:
     """Build the table for ``seeds``, in order whatever the number of processes.
 
     With a ``beacon``, the table is for the scan-then-land mission with the beacon there.
     """
+    # Each process runs one small network at a time. One BLAS thread each also keeps
+    # the memory every process reserves at start small, so many processes fit.
+    for name in _THREAD_SETTINGS:
+        os.environ.setdefault(name, "1")
     jobs = [(list(seeds[start : start + _CHUNK]), beacon) for start in range(0, len(seeds), _CHUNK)]
     with ProcessPoolExecutor(max_workers=workers) as pool:
         measured = [measurement for chunk in pool.map(_measure, jobs) for measurement in chunk]
     domain, _ = _setup(beacon)
-    return table_from_measurements(domain, seeds, measured)
+    return table_from_measurements(domain, seeds, measured, min_samples)
 
 
 def build_mission_table(seeds: range, beacon: Tuple[float, float] = DEFAULT_BEACON) -> EffectTable:

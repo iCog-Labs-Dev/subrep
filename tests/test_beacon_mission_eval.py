@@ -22,7 +22,7 @@ from demo.run_beacon_mission_eval import (
     to_markdown,
     wilson_interval,
 )
-from demo.run_goal_decomposition_eval import INSUFFICIENT_EVIDENCE, MET, MISSED
+from demo.run_goal_decomposition_eval import INSUFFICIENT_EVIDENCE, MET, MISSED, frozen_settings
 from env.lunar_beacon import BEACON_MISSION, MISSION_COMPLETE
 
 SEEDS = list(range(3200, 3204))
@@ -163,12 +163,15 @@ def test_criteria_without_evidence_are_neither_met_nor_missed():
     }
 
 
-def test_the_report_lists_only_judged_certificates_and_counts_the_rest(mission_run, continuing_run):
+def test_the_report_lists_only_judged_certificates_and_counts_the_rest(table, mission_run, continuing_run):
     report = {
         "seeds": {"start": SEEDS[0], "count": len(SEEDS)},
+        "settings": frozen_settings(table),
+        "table_check": [],
         "controllers": {},
         "goal_runs": {"mission_first": mission_run},
-        "continuation": {"mission_first": continuing_run},
+        "policies": {"mission_first": {"continuation": continuing_run}},
+        "live_revocation": {"mission_first": mission_run},
         "criteria": check_criteria(fake_report(0.95)),
         "moved_beacons": [],
         "limit": {"limit": 5, "same_first_plan_rate": 1.0, "same_outcome_rate": 1.0, "limited_completion_rate": 1.0},
@@ -179,8 +182,23 @@ def test_the_report_lists_only_judged_certificates_and_counts_the_rest(mission_r
     assert unjudged > 0
     assert f"{unjudged} more plan and start groups had too few samples and are not listed." in markdown
     assert "the runtime did not apply these revocations during the runs" in markdown
+    assert "Settings: `fallback` policy, goal rate at least 0.9" in markdown
+    assert "## Effect table on unseen seeds" in markdown
     assert f"compared with no certificate: mission_first {mission_run['feedback_unchecked_runs']}." in markdown
-    assert "| mission_first | current approval |" in markdown and "| mission_first | continuation |" in markdown
+    assert "| mission_first | fallback |" in markdown and "| mission_first | continuation |" in markdown
+    assert "| runtime_mission_first_continuation |" in markdown
+    for heading in ("## Certificate reliability", "## Revocations applied during the runs", "Why runs abstained"):
+        assert heading in markdown
+
+
+def test_fallbacks_are_counted_and_traceable_to_their_seeds(mission_run):
+    assert mission_run["fallbacks"] == sum(episode["fallbacks"] for episode in mission_run["episodes"])
+    assert mission_run["runs_with_fallback"] == sum(episode["fallbacks"] > 0 for episode in mission_run["episodes"])
+    assert sum(mission_run["fallback_outcomes"].values()) == mission_run["runs_with_fallback"]
+    abstaining = ("no_certified_plan", "priorities_refused")
+    kept = [e["seed"] for e in mission_run["episodes"] if e["fallbacks"] or e["status"] in abstaining]
+    assert [run["seed"] for run in mission_run["audited"]] == kept
+    assert all(run["decisions"] for run in mission_run["audited"])
 
 
 def test_only_the_continuation_policy_flies_without_current_approval(mission_run, continuing_run):

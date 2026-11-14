@@ -6,16 +6,25 @@ import json
 import numpy as np
 import pytest
 
+from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable
 from decomposition.executor import Execution, StepRecord, StepStatus
-from decomposition.feedback import FeedbackLog
-from decomposition.runtime import Decision, GoalRun, GoalStatus
+from decomposition.feedback import REVOKED_REASON, FeedbackLog
+from decomposition.planner import CandidatePlan
+from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
+from decomposition.runtime import Continuation, Decision, GoalRun, GoalStatus, pursue
+from decomposition.verifier import GOAL_TOO_RARE, PlanVerdict, plan_skill_id
 from demo.run_goal_decomposition_eval import (
+    GOAL,
     INSUFFICIENT_EVIDENCE,
     MET,
     MISSED,
+    NOTHING_PROPOSED,
     PROFILES,
     REPORT_ONLY,
+    Safeguards,
+    abstention_reasons,
     evaluate,
+    evaluate_profile,
     finish_episode,
     plan_flown_to_its_end,
     record_followed_plans,
@@ -25,7 +34,7 @@ from demo.run_goal_decomposition_eval import (
     to_markdown,
 )
 from env.lunar_domain import LUNAR_LANDER
-from env.lunar_facts import OUTCOMES, lander_facts
+from env.lunar_facts import FACT_NAMES, OUTCOMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 
 SEEDS = range(8000, 8004)
@@ -44,6 +53,8 @@ def test_every_controller_flies_every_seed(report):
         "fixed_fuel_saving_landing",
         "runtime_safety_first",
         "runtime_no_region",
+        "runtime_safety_first_stop",
+        "runtime_safety_first_continuation",
     ]
     for data in report["controllers"].values():
         summary = data["summary"]
@@ -52,8 +63,12 @@ def test_every_controller_flies_every_seed(report):
 
 
 def test_without_a_certified_plan_the_runtime_does_nothing(report):
-    runs = report["goal_runs"]["no_region"]["episodes"]
-    never_flown = [run for run in runs if run["plan"] is None]
+    env = SubRepEnv(seed=0)
+    book = load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
+    table = EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
+    strict = evaluate_profile(env, book, table, PROFILES["no_region"], list(SEEDS), Continuation.STOP)
+    env.close()
+    never_flown = [run for run in strict["episodes"] if run["plan"] is None]
     assert never_flown
     assert all(run["status"] == "no_certified_plan" for run in never_flown)
     idle = {e["seed"]: (e["outcome"], e["frames"]) for e in report["controllers"]["idle"]["episodes"]}
@@ -106,6 +121,22 @@ def test_a_run_stopped_in_the_middle_of_its_plan_is_not_recorded():
     assert not plan_flown_to_its_end(dataclasses.replace(run, decisions=()))
 
 
+def test_fallbacks_are_compared_with_their_certificates():
+    env = SubRepEnv(seed=0)
+    book = load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
+    table = EffectTable.load(DEFAULT_TABLE_PATH, LUNAR_LANDER)
+    observation, _ = env.reset(seed=SEEDS.start)
+    every_plan_too_rare = 1.0  # no plan passes the goal-rate check, so every skill flies as a fallback
+    safety_first = PROFILES["safety_first"]
+    run = pursue(LUNAR_LANDER, env, observation, GOAL, book, table, safety_first, min_goal_rate=every_plan_too_rare)
+    feedback = FeedbackLog(LUNAR_LANDER)
+    recorded = record_followed_plans(LUNAR_LANDER, feedback, env, SEEDS.start, run)
+    env.close()
+    assert run.flown and all(decision.fallback for decision in run.flown)
+    assert recorded and feedback.report()
+    assert {entry["plan"] for entry in feedback.report()} <= {plan_skill_id(d.chosen.candidate) for d in run.flown}
+
+
 def test_the_runtime_rechecks_in_mid_flight(report):
     run = report["goal_runs"]["safety_first"]
     assert run["rechecks"] > 0
@@ -117,6 +148,8 @@ def test_the_table_is_checked_on_the_evaluation_seeds(report):
     assert rows
     assert all(row["samples"] >= 1 for row in rows)
     assert all(set(row["below_committed_lower"]) <= {"delta_r", "delta_safety", "delta_fuel"} for row in rows)
+    below = sum(bool(row["below_committed_lower"]) for row in rows)
+    assert f"{below} of {len(rows)} entries had a mean below the committed lower bound" in to_markdown(report)
 
 
 def test_recovery_is_tried_from_every_tilted_start(report):
@@ -132,14 +165,67 @@ def test_the_report_says_which_criteria_were_met(report):
     assert "## Criteria written before the evaluation" in to_markdown(report)
 
 
-def test_the_continuation_policy_is_compared_apart_from_the_criteria(report):
+def test_the_other_policies_are_compared_apart_from_the_criteria(report):
     assert all(run["continued"] == 0 for run in report["goal_runs"].values())
-    continued = report["continuation"]["safety_first"]
-    assert continued["summary"]["episodes"] == len(SEEDS)
-    assert "safety_first_continuing" not in report["goal_runs"]
+    others = report["policies"]["safety_first"]
+    assert set(others) == {"stop", "continuation"}
+    assert others["stop"]["fallbacks"] == others["stop"]["continued"] == 0
+    assert others["continuation"]["fallbacks"] == 0
+    assert all(run["summary"]["episodes"] == len(SEEDS) for run in others.values())
     markdown = to_markdown(report)
-    assert "## Continuation policy" in markdown
-    assert "| safety_first | current approval |" in markdown and "| safety_first | continuation |" in markdown
+    assert "## When no plan is admitted" in markdown
+    assert all(f"| safety_first | {policy} |" in markdown for policy in ("fallback", "stop", "continuation"))
+
+
+def test_reliability_and_live_revocation_are_reported(report):
+    live = report["live_revocation"]["safety_first"]
+    assert live["summary"]["episodes"] == len(SEEDS) and live["revoked_refusals"] >= 0
+    markdown = to_markdown(report)
+    assert "## Certificate reliability" in markdown and "| safety_first | 0 | 0 |" in markdown
+    assert "## Revocations applied during the runs" in markdown
+
+
+def with_last_decision(run, **changes):
+    *earlier, last = run.decisions
+    return dataclasses.replace(run, decisions=(*earlier, dataclasses.replace(last, **changes)))
+
+
+def test_safeguards_count_fallbacks_abstentions_and_refused_revocations():
+    candidate = CandidatePlan("land_on_pad", "m", ("m",), ("touch_down",), {})
+    stopped = one_skill_run(("slow_descent", "touch_down"), GoalStatus.NO_CERTIFIED_PLAN)
+    too_rare = with_last_decision(stopped, verdicts=(PlanVerdict(candidate, reason=GOAL_TOO_RARE),))
+    refused = dataclasses.replace(stopped, status=GoalStatus.PRIORITIES_REFUSED)
+    revoked = PlanVerdict(candidate, reason=REVOKED_REASON)
+    fell_back = with_last_decision(
+        dataclasses.replace(stopped, status=GoalStatus.ACHIEVED), fallback=True, verdicts=(revoked,)
+    )
+    safeguards = Safeguards()
+    for seed, (run, outcome) in enumerate(((too_rare, "crashed"), (refused, "crashed"), (fell_back, "landed_on_pad"))):
+        safeguards.add(run, outcome, seed)
+    record = safeguards.record()
+    audited = record.pop("audited")
+    assert record == {
+        "fallbacks": 1,
+        "runs_with_fallback": 1,
+        "continued": 0,
+        "abstained": 2,
+        "revoked_refusals": 1,
+        "fallback_outcomes": {"landed_on_pad": 1},
+        "abstention_reasons": {GOAL_TOO_RARE: 1, GoalStatus.PRIORITIES_REFUSED.value: 1},
+    }
+    assert [(entry["seed"], entry["outcome"], entry["fallbacks"]) for entry in audited] == [
+        (0, "crashed", 0),
+        (1, "crashed", 0),
+        (2, "landed_on_pad", 1),
+    ]
+    assert json.loads(json.dumps(audited))[0]["decisions"][0]["rejected"] == [
+        {"plan": plan_skill_id(candidate), "reason": GOAL_TOO_RARE}
+    ]
+
+
+def test_a_run_that_abstained_with_nothing_proposed_says_so():
+    stopped = one_skill_run(("slow_descent", "touch_down"), GoalStatus.NO_CERTIFIED_PLAN)
+    assert abstention_reasons(stopped) == [NOTHING_PROPOSED]
 
 
 def test_revocations_with_too_few_samples_are_insufficient_evidence_not_a_pass(report):
@@ -187,6 +273,10 @@ def test_the_report_is_json_and_markdown_ready(report):
     markdown = to_markdown(report)
     for heading in ("## Controllers", "## Goal runtime", "## Certificates", "## Effect table", "## Recover stability"):
         assert heading in markdown
+    settings = report["settings"]
+    assert settings["default_policy"] == "fallback" and settings["min_goal_rate"] == 0.9
+    assert settings["table"]["seeds"] == {"start": 0, "stop": 2000}
+    assert "Settings: `fallback` policy, goal rate at least 0.9, switch margin 0.1" in markdown
     assert all(f"| {name} |" in markdown for name in report["controllers"])
 
 
