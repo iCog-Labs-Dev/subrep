@@ -64,6 +64,7 @@ def table_of(plans, min_samples=30):
             "name": plan_key(skills),
             "group": GROUP,
             "samples": 100,
+            "episodes": 100,
             "completion_rate": 0.98,
             "mean_frames": 250.4,
             "support": {"low": list(OBSERVATION - 0.05), "high": list(OBSERVATION + 0.05)},
@@ -173,8 +174,15 @@ def test_a_goal_with_no_final_outcome_has_no_rate_to_check():
 
 @pytest.mark.parametrize("rate, samples, low, high", [(0.9, 100, 0.83, 0.9), (1.0, 100, 0.97, 1.0), (0.0, 100, 0.0, 0.01)])
 def test_the_goal_rate_bound_is_a_wilson_lower_bound(rate, samples, low, high):
-    estimate = Estimate(samples, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes={"won": rate, "lost": 1.0 - rate})
+    estimate = Estimate(samples, samples, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes={"won": rate, "lost": 1.0 - rate})
     assert low <= goal_rate_bound(estimate, ("won",)) <= high
+
+
+def test_the_goal_rate_bound_counts_episodes_not_flights():
+    outcomes = {"won": 0.9, "lost": 0.1}
+    repeated = Estimate(1000, 100, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes=outcomes)
+    once = Estimate(100, 100, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes=outcomes)
+    assert goal_rate_bound(repeated, ("won",)) == goal_rate_bound(once, ("won",))
 
 
 def test_plans_without_enough_measurements_are_not_certified():
@@ -365,10 +373,11 @@ def test_a_safety_first_region_certifies_a_landing_plan_from_the_air(lunar_book,
 
 
 def test_plans_from_unmeasured_states_are_not_certified(lunar_book, lunar_table):
-    near_ground = np.array([0.0, 0.2, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0])
+    spinning = np.array([0.0, 0.2, 0.0, -0.1, 0.0, 3.0, 0.0, 0.0])  # near the ground and spinning fast
+    assert not any(lunar_table.supports(entry, spinning) for entry in lunar_table.data["plans"])
     priorities = Priorities(weights=(0.7, 0.3), pds_epsilon=1000.0)
-    candidates = propose(lunar_book, "land_on_pad", lander_facts(near_ground))
-    verdicts = verify(candidates, near_ground, lunar_table, priorities, TIMESTAMP)
+    candidates = propose(lunar_book, "land_on_pad", lander_facts(spinning))
+    verdicts = verify(candidates, spinning, lunar_table, priorities, TIMESTAMP)
     assert verdicts
     assert best_plan(verdicts) is None
 

@@ -356,7 +356,7 @@ def check_table(
     gains = gain_names(committed.data["objectives"])
     rows = []
     for entry in committed.data["plans"]:
-        if entry["samples"] < committed.min_samples or (entry["name"], entry["group"]) not in fresh:
+        if entry["episodes"] < committed.min_samples or (entry["name"], entry["group"]) not in fresh:
             continue
         new = fresh[(entry["name"], entry["group"])]
         rows.append(
@@ -364,6 +364,7 @@ def check_table(
                 "plan": entry["name"],
                 "group": entry["group"],
                 "samples": new["samples"],
+                "episodes": new["episodes"],
                 "committed_mean_delta_r": entry["delta_r"]["mean"],
                 "committed_lower_delta_r": entry["delta_r"]["lower"],
                 "unseen_mean_delta_r": new["delta_r"]["mean"],
@@ -381,15 +382,15 @@ def table_check_lines(rows: Sequence[Mapping[str, Any]]) -> List[str]:
         "## Effect table on unseen seeds",
         "",
         f"The plans measured again on the evaluation seeds: {below} of {len(rows)} entries had a mean below the "
-        "committed lower bound on some gain. An entry with few samples here is a noisy check.",
+        "committed lower bound on some gain. An entry with few episodes here is a noisy check.",
         "",
-        "| Plan | Start group | Samples | Committed mean Δr | Committed lower Δr | Unseen mean Δr "
+        "| Plan | Start group | Samples (episodes) | Committed mean Δr | Committed lower Δr | Unseen mean Δr "
         "| Unseen mean below lower |",
         "|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         lines.append(
-            f"| {row['plan']} | {row['group']} | {row['samples']} | "
+            f"| {row['plan']} | {row['group']} | {row['samples']} ({row['episodes']}) | "
             f"{row['committed_mean_delta_r']:.1f} | {row['committed_lower_delta_r']:.1f} | "
             f"{row['unseen_mean_delta_r']:.1f} | {', '.join(row['below_committed_lower']) or 'none'} |"
         )
@@ -706,7 +707,7 @@ def settings_line(settings: Mapping[str, Any]) -> str:
     return (
         f"Settings: `{settings['default_policy']}` policy, goal rate at least {settings['min_goal_rate']}, "
         f"switch margin {settings['switch_margin']}, table {table['schema_version']} from seeds "
-        f"{table['seeds']['start']}-{table['seeds']['stop'] - 1} (at least {table['min_samples']} samples per entry, "
+        f"{table['seeds']['start']}-{table['seeds']['stop'] - 1} (at least {table['min_samples']} episodes per entry, "
         f"{settings['max_states_per_seed']} states per episode at most)."
     )
 

@@ -146,7 +146,7 @@ def test_the_runtime_rechecks_in_mid_flight(report):
 def test_the_table_is_checked_on_the_evaluation_seeds(report):
     rows = report["table_check"]
     assert rows
-    assert all(row["samples"] >= 1 for row in rows)
+    assert all(1 <= row["episodes"] <= row["samples"] for row in rows)
     assert all(set(row["below_committed_lower"]) <= {"delta_r", "delta_safety", "delta_fuel"} for row in rows)
     below = sum(bool(row["below_committed_lower"]) for row in rows)
     assert f"{below} of {len(rows)} entries had a mean below the committed lower bound" in to_markdown(report)

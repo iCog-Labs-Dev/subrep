@@ -22,22 +22,25 @@ its steps' effects. Every plan flight also records how the episode really ended
 that completes, such as legs touching down, is not a landing until the final
 result confirms it.
 
-The table measures every plan the planner proposes at the states where the
-runtime decides: the start of the episode and the state after each skill of each
-plan flown from it. The rest of a plan can therefore be certified from the real
-state in mid-flight, from measurements on other seeds. Replaying the seed being
-flown would answer more exactly, but it would show the lander its own future,
-which nothing outside a simulator can do. A plan the lander could switch to in
-mid-flight is measured too, but the states along it are not visited in turn: the
-number of such paths grows with every skill, and a plan flown past the measured
-states goes on under the certificate it already holds.
+The table measures every plan the planner proposes at every state where the
+runtime could decide: the start of the episode and, breadth first, the state
+after each skill of every plan flown, so the states along a plan the lander
+switches to in mid-flight are measured as well as those along the plans it
+starts with. ``MAX_STATES_PER_SEED`` bounds how many states one episode adds.
+The rest of a plan can therefore be certified from the real state in mid-flight,
+from measurements on other seeds. Replaying the seed being flown would answer
+more exactly, but it would show the lander its own future, which nothing outside
+a simulator can do.
 
 Samples are grouped by the facts of the state they start from and summarised
 by their mean, spread, count and a one-sided bootstrap lower confidence bound.
-Each group also records its support: the lowest and highest value of every
-observation number among the states it was measured from. States that share
-facts can still differ a lot: a lander at the start of an episode and one
-falling fast halfway down can both be not upright, not over the pad and not
+One episode can add several samples to a group, from different states, and they
+share its start and its terrain, so the bootstrap resamples whole episodes and
+each entry records how many episodes it holds; an entry needs ``MIN_SAMPLES``
+episodes to answer. Each group also records its support: the lowest and highest
+value of every observation number among the states it was measured from. States
+that share facts can still differ a lot: a lander at the start of an episode and
+one falling fast halfway down can both be not upright, not over the pad and not
 near the ground. A lookup therefore answers only for states inside the support,
 widened by a small margin, and treats every other state as unmeasured.
 """
@@ -46,6 +49,7 @@ from __future__ import annotations
 
 import json
 import zlib
+from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TypeVar, Union
@@ -55,7 +59,7 @@ import numpy as np
 from baseline.improvement_calculator import ImprovementCalculator
 from decomposition.domain import GAMMA, Domain
 
-SCHEMA_VERSION = "subrep.effects.v3"
+SCHEMA_VERSION = "subrep.effects.v4"
 BASELINE_ID = "idle_policy_v1"
 CONFIDENCE = 0.95
 BOOTSTRAP_RESAMPLES = 2000
@@ -146,6 +150,7 @@ class Sample:
     frames: int
     completed: bool
     start: Tuple[float, ...]  # the observation the measurement started from
+    seed: int  # the episode it was measured in
 
     @property
     def gains(self) -> np.ndarray:
@@ -173,6 +178,7 @@ class PlanFlight:
 
 def _sample(
     domain: Domain,
+    seed: int,
     name: str,
     start: np.ndarray,
     delta_r: float,
@@ -182,7 +188,7 @@ def _sample(
 ) -> Sample:
     group = group_key(domain, domain.facts(start))
     observation = tuple(float(value) for value in np.asarray(start, dtype=np.float64).reshape(-1))
-    return Sample(name, group, delta_r, delta_n, frames, completed, observation)
+    return Sample(name, group, delta_r, delta_n, frames, completed, observation, seed)
 
 
 def fly_plan(
@@ -237,13 +243,13 @@ def fly_plan(
     plan_rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives)
     replay(env, seed, prefix)
     delta_r, delta_n = improvement(plan_rewards, idle_rewards(domain, env, len(plan_rewards)), domain.gamma)
-    plan = _sample(domain, plan_key(skills), plan_start, delta_r, delta_n, len(plan_rewards), completed)
+    plan = _sample(domain, seed, plan_key(skills), plan_start, delta_r, delta_n, len(plan_rewards), completed)
 
     steps = []
     for frames_before, start, run in runs if not prefix else ():
         replay(env, seed, tuple(actions[:frames_before]))
         delta_r, delta_n = improvement(run.rewards, idle_rewards(domain, env, run.frames), domain.gamma)
-        steps.append(_sample(domain, run.skill, start, delta_r, delta_n, run.frames, run.completed))
+        steps.append(_sample(domain, seed, run.skill, start, delta_r, delta_n, run.frames, run.completed))
 
     return PlanFlight(
         seed=seed,
@@ -263,18 +269,24 @@ def measure_seed(
     plans_at: PlansAt,
     max_states: int = MAX_STATES_PER_SEED,
 ) -> List[PlanFlight]:
-    """Fly every plan proposed at the start of episode ``seed`` and at the states where the runtime decides along them."""
-    flights = [
-        fly_plan(domain, env, seed, skills) for skills in plans_at(domain.facts(replay(env, seed, ())), True)
-    ]
-    seen = {()}
-    for flight in tuple(flights):
-        for state in flight.next_states:
-            if state in seen or len(seen) >= max_states:
-                continue
-            seen.add(state)
-            for skills in plans_at(domain.facts(replay(env, seed, state)), False):
-                flights.append(fly_plan(domain, env, seed, skills, state))
+    """Fly every plan proposed at every state of episode ``seed`` where the runtime could decide.
+
+    The states are the start of the episode and then, breadth first, the state
+    after each skill of every plan flown, until ``max_states`` states, the start
+    included, have been measured.
+    """
+    flights: List[PlanFlight] = []
+    seen = set()
+    waiting = deque([()])  # states as the actions that reach them from the start
+    while waiting and len(seen) < max_states:
+        state = waiting.popleft()
+        if state in seen:
+            continue
+        seen.add(state)
+        for skills in plans_at(domain.facts(replay(env, seed, state)), not state):
+            flight = fly_plan(domain, env, seed, skills, state)
+            flights.append(flight)
+            waiting.extend(flight.next_states)
     return flights
 
 
@@ -283,13 +295,26 @@ def measure_seed(
 # ---------------------------------------------------------------------------
 
 
-def lower_bound(values: Sequence[float], seed: int) -> float:
-    """One-sided bootstrap lower confidence bound of the mean of ``values``."""
+def lower_bound(values: Sequence[float], seed: int, episodes: Optional[Sequence[int]] = None) -> float:
+    """One-sided bootstrap lower confidence bound of the mean of ``values``.
+
+    ``episodes`` names the episode each value was measured in. Values from one
+    episode are not independent, so whole episodes are resampled; resampling
+    the values one by one would claim more certainty than they give.
+    """
     data = np.asarray(values, dtype=np.float64)
     if data.size == 0:
         raise ValueError("cannot bound the mean of no values")
     rng = np.random.default_rng(seed)
-    means = data[rng.integers(0, data.size, size=(BOOTSTRAP_RESAMPLES, data.size))].mean(axis=1)
+    if episodes is None:
+        means = data[rng.integers(0, data.size, size=(BOOTSTRAP_RESAMPLES, data.size))].mean(axis=1)
+    else:
+        _, episode = np.unique(np.asarray(episodes), return_inverse=True)
+        if episode.size != data.size:
+            raise ValueError("every value needs the episode it was measured in")
+        sums, counts = np.bincount(episode, weights=data), np.bincount(episode).astype(np.float64)
+        picks = rng.integers(0, sums.size, size=(BOOTSTRAP_RESAMPLES, sums.size))
+        means = sums[picks].sum(axis=1) / counts[picks].sum(axis=1)
     return float(np.quantile(means, 1.0 - CONFIDENCE))
 
 
@@ -297,16 +322,26 @@ def _bootstrap_seed(*parts: str) -> int:
     return zlib.crc32("|".join(parts).encode("utf-8"))
 
 
-def summarise_gains(gains: np.ndarray, objectives: Sequence[str], seed: int) -> Dict[str, Dict[str, float]]:
-    """Mean, spread and lower bound of each column of a ``(samples, 1 + objectives)`` gains array."""
+def summarise_gains(
+    gains: np.ndarray, objectives: Sequence[str], seed: int, episodes: Optional[Sequence[int]] = None
+) -> Dict[str, Dict[str, float]]:
+    """Mean, spread and lower bound of each column of a ``(samples, 1 + objectives)`` gains array.
+
+    ``episodes`` names the episode of each row, so the bound resamples whole episodes.
+    """
     summary = {}
     for name, column in zip(gain_names(objectives), np.asarray(gains, dtype=np.float64).T):
         summary[name] = {
             "mean": round(float(column.mean()), _DECIMALS),
             "std": round(float(column.std()), _DECIMALS),
-            "lower": round(lower_bound(column, seed), _DECIMALS),
+            "lower": round(lower_bound(column, seed, episodes), _DECIMALS),
         }
     return summary
+
+
+def episode_count(samples: Iterable[Sample]) -> int:
+    """How many distinct episodes ``samples`` were measured in."""
+    return len({sample.seed for sample in samples})
 
 
 def summarise(samples: Sequence[Sample], objectives: Sequence[str]) -> Dict[str, object]:
@@ -314,14 +349,16 @@ def summarise(samples: Sequence[Sample], objectives: Sequence[str]) -> Dict[str,
     name, group = samples[0].name, samples[0].group
     if any(s.name != name or s.group != group for s in samples):
         raise ValueError("samples to summarise must share one name and one group")
+    episodes = [s.seed for s in samples]
     return {
         "name": name,
         "group": group,
         "samples": len(samples),
+        "episodes": episode_count(samples),
         "completion_rate": round(float(np.mean([s.completed for s in samples])), _DECIMALS),
         "mean_frames": round(float(np.mean([s.frames for s in samples])), _DECIMALS),
         "support": _support([s.start for s in samples]),
-        **summarise_gains(np.stack([s.gains for s in samples]), objectives, _bootstrap_seed(name, group)),
+        **summarise_gains(np.stack([s.gains for s in samples]), objectives, _bootstrap_seed(name, group), episodes),
     }
 
 
@@ -394,8 +431,8 @@ def table_from_measurements(
 ) -> "EffectTable":
     """Summarise measurements of ``seeds``.
 
-    Entries with fewer than ``min_samples`` samples could never answer a lookup,
-    so they are left out.
+    Entries measured in fewer than ``min_samples`` episodes could never answer a
+    lookup, so they are left out.
     """
     flights = [flight for measurement in measurements for flight in measurement.flights]
     step_samples = [step for measurement in measurements for step in measurement.steps]
@@ -404,11 +441,11 @@ def table_from_measurements(
     steps = [
         summarise(group, objectives)
         for group in _by_name_and_group(step_samples, lambda s: s)
-        if len(group) >= min_samples
+        if episode_count(group) >= min_samples
     ]
     plans_summary = []
     for group in _by_name_and_group(flights, lambda f: f.plan):
-        if len(group) < min_samples:
+        if episode_count(flight.plan for flight in group) < min_samples:
             continue
         entry = summarise([flight.plan for flight in group], objectives)
         entry["skills"] = list(group[0].skills)
@@ -416,10 +453,13 @@ def table_from_measurements(
             name: round(sum(flight.outcome == name for flight in group) / len(group), _DECIMALS)
             for name in (*domain.outcomes, IN_FLIGHT)
         }
-        interactions = [flight.interaction for flight in group if flight.steps]
-        if interactions:
+        stepped = [flight for flight in group if flight.steps]
+        if stepped:
             entry["interaction"] = summarise_gains(
-                np.stack(interactions), objectives, _bootstrap_seed(entry["name"], entry["group"], "interaction")
+                np.stack([flight.interaction for flight in stepped]),
+                objectives,
+                _bootstrap_seed(entry["name"], entry["group"], "interaction"),
+                [flight.seed for flight in stepped],
             )
         plans_summary.append(entry)
 
@@ -461,6 +501,7 @@ class Estimate:
     """The measured effect of a sub-skill or a plan from one group of states."""
 
     samples: int
+    episodes: int  # the distinct episodes the samples come from, at most ``samples``
     completion_rate: float
     mean_frames: float
     mean: Gains
@@ -480,7 +521,7 @@ class EffectTable:
     """Measured effects of sub-skills and plans, looked up by the observation of a start state.
 
     A lookup finds the group of the observation's facts and answers only if
-    the group has at least ``min_samples`` samples and the observation lies
+    the group was measured in at least ``min_samples`` episodes and the observation lies
     inside the group's support, widened on each side by ``support_margin``
     times its range. Every other state is treated as unmeasured.
     """
@@ -566,11 +607,12 @@ class EffectTable:
         return group_key(self.domain, self.domain.facts(observation))
 
     def _estimate(self, entry: Optional[Mapping[str, object]], observation: np.ndarray) -> Optional[Estimate]:
-        if entry is None or int(entry["samples"]) < self.min_samples or not self.supports(entry, observation):
+        if entry is None or int(entry["episodes"]) < self.min_samples or not self.supports(entry, observation):
             return None
         objectives = self.domain.objectives
         return Estimate(
             samples=int(entry["samples"]),
+            episodes=int(entry["episodes"]),
             completion_rate=float(entry["completion_rate"]),
             mean_frames=float(entry["mean_frames"]),
             mean=_gains(entry, objectives, "mean"),

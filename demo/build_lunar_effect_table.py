@@ -93,7 +93,7 @@ def build_mission_table(seeds: range, beacon: Tuple[float, float] = DEFAULT_BEAC
 def to_text(table: EffectTable) -> str:
     """A plain-text overview of the table: one row per plan or step and group."""
     header = (
-        f"{'name':<62} {'group':<60} {'n':>4} {'done':>5} {'on pad':>6} "
+        f"{'name':<62} {'group':<60} {'n':>5} {'eps':>4} {'done':>5} {'on pad':>6} "
         f"{'Δr':>8} {'Δr low':>8} {'ΔSafety':>8} {'ΔFuel':>8}"
     )
     lines = []
@@ -102,7 +102,7 @@ def to_text(table: EffectTable) -> str:
         for entry in table.data[kind]:
             on_pad = f"{entry['outcomes']['landed_on_pad']:.2f}" if "outcomes" in entry else "-"
             lines.append(
-                f"{entry['name']:<62} {entry['group']:<60} {entry['samples']:>4} "
+                f"{entry['name']:<62} {entry['group']:<60} {entry['samples']:>5} {entry['episodes']:>4} "
                 f"{entry['completion_rate']:>5.2f} {on_pad:>6} {entry['delta_r']['mean']:>8.2f} "
                 f"{entry['delta_r']['lower']:>8.2f} {entry['delta_safety']['mean']:>8.2f} "
                 f"{entry['delta_fuel']['mean']:>8.2f}"

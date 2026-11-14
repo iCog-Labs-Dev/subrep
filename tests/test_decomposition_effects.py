@@ -54,6 +54,15 @@ def both_plans(facts, at_start):
     return [CAREFUL, FUEL_SAVING]
 
 
+def last_two_skills(facts, at_start):
+    return [CAREFUL[-2:]]
+
+
+def switch_to_fuel_saving(facts, at_start):
+    """The careful landing at the start, and the rest of the fuel-saving landing in mid-flight."""
+    return [CAREFUL] if at_start else [FUEL_SAVING[1:]]
+
+
 @pytest.fixture
 def env():
     environment = SubRepEnv(seed=0)
@@ -154,8 +163,20 @@ def test_measuring_a_seed_visits_the_states_along_each_plan(env):
     flights = measure_seed(LUNAR_LANDER, env, TILTED_START_SEED, lambda facts, at_start: [CAREFUL[-2:]])
     assert flights[0].prefix == () and flights[0].skills == tuple(CAREFUL[-2:])
     assert flights[0].next_states
-    assert {flight.prefix for flight in flights} == {(), *flights[0].next_states}
+    assert {(), *flights[0].next_states} <= {flight.prefix for flight in flights}
     assert all(flight.steps == () for flight in flights if flight.prefix)
+
+
+def test_measuring_a_seed_visits_the_states_along_plans_flown_in_mid_flight(env):
+    flights = measure_seed(LUNAR_LANDER, env, TILTED_START_SEED, switch_to_fuel_saving)
+    after_a_switch = {flight.prefix for flight in flights} - {(), *flights[0].next_states}
+    assert after_a_switch
+    assert after_a_switch <= {state for flight in flights if flight.prefix for state in flight.next_states}
+
+
+def test_measuring_a_seed_visits_states_breadth_first_up_to_its_limit(env):
+    flights = measure_seed(LUNAR_LANDER, env, TILTED_START_SEED, last_two_skills, max_states=2)
+    assert {flight.prefix for flight in flights} == {(), flights[0].next_states[0]}
 
 
 def test_a_flight_from_mid_flight_measures_only_the_whole_plan(env):
@@ -217,11 +238,38 @@ def test_lower_bound_needs_values():
         lower_bound([], seed=0)
 
 
+def test_lower_bound_resamples_whole_episodes():
+    values = np.random.default_rng(0).normal(5.0, 2.0, size=40)
+    assert lower_bound(values, seed=1, episodes=range(40)) == lower_bound(values, seed=1)
+    repeated = np.repeat(values, 5)  # every episode measured five times over
+    episodes = np.repeat(np.arange(40), 5)
+    assert lower_bound(repeated, seed=1, episodes=episodes) < lower_bound(repeated, seed=1)
+    with pytest.raises(ValueError, match="episode"):
+        lower_bound(values, seed=1, episodes=range(39))
+
+
+UPRIGHT_OVER_PAD = "upright=1,over_pad=1,near_ground=0"
+
+
+def sample(group=UPRIGHT_OVER_PAD, seed=0):
+    return Sample("brake", group, 1.0, (1.0, 0.0), 5, True, (0.0,) * 8, seed)
+
+
 def test_summarise_rejects_samples_from_different_groups():
-    first = Sample("brake", "upright=1,over_pad=1,near_ground=0", 1.0, (1.0, 0.0), 5, True, (0.0,) * 8)
-    second = Sample("brake", "upright=0,over_pad=1,near_ground=0", 1.0, (1.0, 0.0), 5, True, (0.0,) * 8)
     with pytest.raises(ValueError, match="one group"):
-        summarise([first, second], LUNAR_LANDER.objectives)
+        summarise([sample(), sample("upright=0,over_pad=1,near_ground=0")], LUNAR_LANDER.objectives)
+
+
+def test_an_entry_counts_the_episodes_its_samples_come_from():
+    entry = summarise([sample(seed=0), sample(seed=0), sample(seed=3)], LUNAR_LANDER.objectives)
+    assert entry["samples"] == 3 and entry["episodes"] == 2
+
+
+def test_an_entry_needs_enough_episodes_not_just_samples():
+    table = build_table(LUNAR_LANDER, range(2), both_plans, min_samples=1)
+    assert any(entry["samples"] >= 3 > entry["episodes"] for entry in table.data["plans"])
+    assert all(entry["episodes"] <= 2 for entry in table.data["plans"] + table.data["steps"])
+    assert build_table(LUNAR_LANDER, range(2), both_plans, min_samples=3).data["plans"] == []
 
 
 # The table
@@ -245,7 +293,7 @@ def test_the_table_round_trips_through_json(small_table, tmp_path):
 def test_lookup_returns_the_entry_for_the_state(small_table):
     entry = small_table.data["plans"][0]
     estimate = small_table.plan(entry["skills"], episode_start(entry["group"], range(4)))
-    assert estimate.samples == entry["samples"]
+    assert estimate.samples == entry["samples"] and estimate.episodes == entry["episodes"]
     assert estimate.mean.delta_r == entry["delta_r"]["mean"]
     assert estimate.lower.delta_n == (entry["delta_safety"]["lower"], entry["delta_fuel"]["lower"])
     assert estimate.interaction.delta_r == entry["interaction"]["delta_r"]["mean"]

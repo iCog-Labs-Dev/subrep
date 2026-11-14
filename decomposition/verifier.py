@@ -193,9 +193,13 @@ def verify(
 
 
 def goal_rate_bound(estimate: Estimate, success_outcomes: Sequence[str]) -> float:
-    """One-sided Wilson lower confidence bound of the rate at which flights reached the goal."""
+    """One-sided Wilson lower confidence bound of the rate at which flights reached the goal.
+
+    The flights are counted as the episodes they come from, because flights from
+    one episode are not independent.
+    """
     rate = sum((estimate.outcomes or {}).get(outcome, 0.0) for outcome in success_outcomes)
-    n, z = estimate.samples, _WILSON_Z
+    n, z = estimate.episodes, _WILSON_Z
     centre = rate + z * z / (2 * n)
     margin = z * math.sqrt(rate * (1 - rate) / n + z * z / (4 * n * n))
     return (centre - margin) / (1 + z * z / n)
@@ -314,6 +318,7 @@ def _gains_record(gains: Gains) -> Dict[str, object]:
 def _estimate_record(estimate: Estimate) -> Dict[str, object]:
     return {
         "samples": estimate.samples,
+        "episodes": estimate.episodes,
         "completion_rate": estimate.completion_rate,
         "mean_frames": estimate.mean_frames,
         "mean": _gains_record(estimate.mean),
