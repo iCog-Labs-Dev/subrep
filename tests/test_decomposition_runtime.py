@@ -7,12 +7,15 @@ import json
 import numpy as np
 import pytest
 
+from decomposition import runtime
 from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, Gains, build_table
+from decomposition.executor import Execution, StepRecord, StepStatus
 from decomposition.feedback import REVOKED_REASON, FeedbackLog
 from decomposition.planner import CandidatePlan, plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
 from decomposition.runtime import (
     LESS_SAFE_THAN_NOTHING,
+    MAX_DECISIONS,
     Continuation,
     GoalStatus,
     _choose,
@@ -281,6 +284,19 @@ def test_failures_run_out(env, book, table, monkeypatch):
     run = next(r for r in runs if r.status is GoalStatus.FAILED)
     assert len(run.flown) == 2 and run.replans == 1
     assert not run.episode_over
+
+
+def test_a_run_that_never_gets_anywhere_ends_after_the_decision_cap(env, book, table, monkeypatch):
+    def going_nowhere(domain, env, book, skills, observation, settle=False):
+        facts = domain.facts(observation)
+        step = StepRecord(skills[0], StepStatus.COMPLETED, 0, facts, facts, True)
+        rewards = np.zeros((0, domain.num_objectives))
+        return Execution(tuple(skills), (step,), (), rewards, 0, observation, False, None)
+
+    monkeypatch.setattr(runtime, "execute", going_nowhere)
+    run = run_goal(env, book, table, TILTED_START_SEED)
+    assert run.status is GoalStatus.FAILED and not run.episode_over
+    assert len(run.decisions) == MAX_DECISIONS and run.frames == 0
 
 
 def test_a_landing_beside_the_pad_is_not_achieved(env, book, table):
