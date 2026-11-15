@@ -1,9 +1,10 @@
 """Certify and rank candidate plans with SubRep's existing admission gates.
 
-Each candidate is looked up in the effect table by the current observation,
-which answers only where its measurements apply, and the one-sided lower
-confidence bounds of its measured gains
-(Δr, Δn) go through the gates the rest of SubRep uses:
+Each candidate is looked up in the effect table by the current state: the
+observation and how many frames of the episode have been flown, since a plan
+started late may run out of time. The table answers only where its measurements
+apply, and the one-sided lower confidence bounds of the measured gains (Δr, Δn)
+go through the gates the rest of SubRep uses:
 
 - the CDS gate first, as the stronger guarantee;
 - the PDS gate with the priorities' ε when CDS fails;
@@ -182,13 +183,15 @@ def verify(
     priorities: Priorities,
     timestamp: Optional[str] = None,
     min_goal_rate: float = 0.0,
+    *,
+    elapsed: float,
 ) -> List[PlanVerdict]:
-    """Certify every candidate from ``observation``; admitted plans come first, best first."""
+    """Certify every candidate from ``observation``, reached after ``elapsed`` frames; admitted plans come first."""
     timestamp = timestamp or datetime.now(timezone.utc).isoformat()
-    verdicts = [
-        _verify(candidate, table.plan(candidate.skills, observation), table, priorities, timestamp, min_goal_rate)
-        for candidate in candidates
-    ]
+    verdicts = []
+    for candidate in candidates:
+        estimate = table.plan(candidate.skills, observation, elapsed)
+        verdicts.append(_verify(candidate, estimate, table, priorities, timestamp, min_goal_rate))
     return sorted(verdicts, key=_rank)
 
 

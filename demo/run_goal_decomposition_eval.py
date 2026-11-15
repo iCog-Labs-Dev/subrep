@@ -377,7 +377,7 @@ def check_table(
     flown: Dict[Tuple[str, str], List[PlanFlight]] = {}
     certified: Dict[Tuple[str, str], Estimate] = {}
     for flight in (flight for measurement in measurements for flight in measurement.flights):
-        estimate = committed.plan(flight.skills, np.asarray(flight.plan.start))
+        estimate = committed.plan(flight.skills, np.asarray(flight.plan.start), flight.plan.elapsed)
         if estimate is not None:
             key = (flight.plan.name, estimate.region)
             flown.setdefault(key, []).append(flight)

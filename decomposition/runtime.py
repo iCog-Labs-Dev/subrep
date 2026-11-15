@@ -227,6 +227,7 @@ def pursue(
     min_goal_rate: float = DEFAULT_MIN_GOAL_RATE,
     limit: Optional[int] = None,
     continuation: Continuation = Continuation.FALLBACK,
+    start_frame: int = 0,
 ) -> GoalRun:
     """Pursue ``goals`` from ``observation``, which ``env`` must have just produced.
 
@@ -234,7 +235,10 @@ def pursue(
     how many candidates are measured at each decision, most promising first under
     the priorities. It is off by default. ``continuation`` says what happens when
     nothing is admitted; by default a fallback admitted from the current state may
-    be flown, and the run stops when there is none.
+    be flown, and the run stops when there is none. ``start_frame`` is how many
+    frames of the episode were flown before ``observation``, 0 when it starts the
+    episode; every decision is certified with the frames flown by then, since the
+    episode's time limit decides whether a plan can still finish.
     """
     offered = (goals,) if isinstance(goals, str) else tuple(goals)
     unknown = [goal for goal in offered if goal not in book.goals]
@@ -242,6 +246,8 @@ def pursue(
         raise ValueError(f"unknown goal {unknown or offered!r}; the book has {sorted(book.goals)}")
     if max_attempts < 1:
         raise ValueError(f"max_attempts must be at least 1, got {max_attempts}")
+    if start_frame < 0:
+        raise ValueError(f"start_frame cannot be negative, got {start_frame}")
     obs = np.asarray(observation, dtype=np.float32)
     decisions: List[Decision] = []
     rewards: List[np.ndarray] = []
@@ -258,6 +264,7 @@ def pursue(
         status = GoalStatus.FAILED
         for _ in range(MAX_DECISIONS):
             facts = domain.facts(obs)
+            elapsed = start_frame + len(rewards)
             current = priorities(obs) if callable(priorities) else priorities
             generation = Generation(())
             verdicts: Tuple[PlanVerdict, ...] = ()
@@ -272,7 +279,9 @@ def pursue(
                     at_start=not decisions,
                     keep=remaining,
                 )
-                verdicts = tuple(verify(generation.candidates, obs, table, current, timestamp, min_goal_rate))
+                verdicts = tuple(
+                    verify(generation.candidates, obs, table, current, timestamp, min_goal_rate, elapsed=elapsed)
+                )
                 if feedback is not None:
                     verdicts = feedback.screen(verdicts)
             weights = None if current is None else current.weights
@@ -282,7 +291,7 @@ def pursue(
             recertified = chosen is not None
             considered: Tuple[PlanVerdict, ...] = ()
             if chosen is None and continuation is Continuation.FALLBACK and current is not None:
-                considered = _fallbacks(domain, verdicts, obs, table, current, timestamp, feedback)
+                considered = _fallbacks(domain, verdicts, obs, elapsed, table, current, timestamp, feedback)
                 chosen = _choose_fallback(considered, remaining)
             fallback = chosen is not None and not recertified
             continued = (
@@ -361,6 +370,7 @@ def _fallbacks(
     domain: Domain,
     verdicts: Sequence[PlanVerdict],
     observation: np.ndarray,
+    elapsed: int,
     table: EffectTable,
     priorities: Priorities,
     timestamp: Optional[str],
@@ -378,7 +388,7 @@ def _fallbacks(
     too_rare = [verdict.candidate for verdict in verdicts if verdict.reason == GOAL_TOO_RARE]
     if domain.safety_objective is None or not too_rare:
         return ()
-    considered = tuple(verify(too_rare, observation, table, priorities, timestamp))
+    considered = tuple(verify(too_rare, observation, table, priorities, timestamp, elapsed=elapsed))
     if feedback is not None:
         considered = feedback.screen(considered)
     safety = domain.objectives.index(domain.safety_objective)

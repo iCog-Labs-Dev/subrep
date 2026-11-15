@@ -55,7 +55,8 @@ def start(env):
 @pytest.fixture
 def verdicts(book, table, start):
     observation, facts = start
-    return verify(propose(book, "land_on_pad", facts), observation, table, SAFETY_FIRST, min_goal_rate=DEFAULT_MIN_GOAL_RATE)
+    candidates = propose(book, "land_on_pad", facts)
+    return verify(candidates, observation, table, SAFETY_FIRST, min_goal_rate=DEFAULT_MIN_GOAL_RATE, elapsed=0)
 
 
 def shifted(gains, by, count, spread=1.0):
@@ -143,7 +144,8 @@ def test_a_few_bad_outcomes_do_not_revoke_a_certificate(verdicts):
 
 def test_only_admitted_plans_can_be_recorded(book, table, start):
     observation, facts = start
-    rejected = verify(propose(book, "land_on_pad", facts), observation, table, SAFETY_FIRST, min_goal_rate=1.0)[0]
+    candidates = propose(book, "land_on_pad", facts)
+    rejected = verify(candidates, observation, table, SAFETY_FIRST, min_goal_rate=1.0, elapsed=0)[0]
     assert not rejected.admitted
     with pytest.raises(ValueError, match="admitted"):
         FeedbackLog(LUNAR_LANDER).record(rejected, Gains(0.0, (0.0, 0.0)))

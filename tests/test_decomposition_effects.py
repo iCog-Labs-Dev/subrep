@@ -21,6 +21,7 @@ from decomposition.effects import (
     measure_seed,
     partition,
     replay,
+    state,
     summarise,
 )
 from decomposition.planner import plans_for
@@ -259,7 +260,7 @@ UPRIGHT_OVER_PAD = "upright=1,over_pad=1,near_ground=0"
 
 
 def sample(group=UPRIGHT_OVER_PAD, seed=0):
-    return Sample("brake", group, 1.0, (1.0, 0.0), 5, True, (0.0,) * 8, seed)
+    return Sample("brake", group, 1.0, (1.0, 0.0), 5, True, (0.0,) * 8, seed, 0)
 
 
 def test_summarise_rejects_samples_from_different_groups():
@@ -328,12 +329,25 @@ def test_a_few_outlying_states_join_the_nearest_cell_instead_of_keeping_the_grou
     assert len(set(labels[200:])) == 1 and labels[200] in (labels[0], labels[100])
 
 
+def test_cells_tell_early_states_from_late_ones_at_the_same_place():
+    same_place = np.zeros((200, 8))
+    elapsed = np.repeat([150.0, 800.0], 100)
+    labels = partition(np.column_stack([same_place, elapsed]), np.arange(200), 100, 30, seed=0)
+    assert len(set(labels[:100])) == len(set(labels[100:])) == 1 and labels[0] != labels[100]
+
+
 def test_a_partition_checks_its_inputs():
     starts, episodes = blobs()
     with pytest.raises(ValueError, match="episode"):
         partition(starts, episodes[:-1], cell_episodes=50, min_episodes=30, seed=0)
     with pytest.raises(ValueError, match="cell_episodes"):
         partition(starts, episodes, cell_episodes=0, min_episodes=30, seed=0)
+
+
+def test_a_state_is_the_observation_followed_by_the_frames_already_flown():
+    np.testing.assert_array_equal(state(np.array([1.0, 2.0]), 7), [1.0, 2.0, 7.0])
+    with pytest.raises(ValueError, match="negative"):
+        state(np.array([1.0]), -1)
 
 
 def test_spread_is_one_where_a_number_never_changes():
@@ -362,7 +376,7 @@ def test_the_table_round_trips_through_json(small_table, tmp_path):
 
 def test_lookup_returns_the_entry_for_the_state(small_table):
     entry = small_table.data["plans"][0]
-    estimate = small_table.plan(entry["skills"], episode_start(entry["group"], range(4)))
+    estimate = small_table.plan(entry["skills"], episode_start(entry["group"], range(4)), 0)
     assert estimate.samples == entry["samples"] and estimate.episodes == entry["episodes"]
     assert estimate.mean.delta_r == entry["delta_r"]["mean"]
     assert estimate.lower.delta_n == (entry["delta_safety"]["lower"], entry["delta_fuel"]["lower"])
@@ -372,14 +386,15 @@ def test_lookup_returns_the_entry_for_the_state(small_table):
 def test_a_group_kept_whole_answers_for_the_whole_group(small_table):
     entry = small_table.data["plans"][0]
     assert "cells" not in entry
-    assert small_table.plan(entry["skills"], episode_start(entry["group"], range(4))).region == entry["group"]
+    assert small_table.plan(entry["skills"], episode_start(entry["group"], range(4)), 0).region == entry["group"]
 
 
 def test_a_lookup_answers_from_the_cell_nearest_the_state(celled_table):
     entry = next(entry for entry in celled_table.data["plans"] if entry.get("cells"))
     assert all(cell["episodes"] >= 1 for cell in entry["cells"])
     for index, cell in enumerate(entry["cells"]):
-        estimate = celled_table.plan(entry["skills"], np.array(cell["centroid"]))
+        *observation, elapsed = cell["centroid"]
+        estimate = celled_table.plan(entry["skills"], np.array(observation), elapsed)
         assert estimate.region == f"{entry['group']}|cell={index}"
         assert (estimate.samples, estimate.episodes) == (cell["samples"], cell["episodes"])
         assert estimate.lower.delta_r == cell["delta_r"]["lower"]
@@ -401,8 +416,8 @@ def test_a_state_outside_the_group_support_is_not_measured_in_any_cell(celled_ta
         lower = np.array(start, dtype=np.float64)
         lower[1] -= 0.5  # same facts, but half a unit lower than any measured start
         if group_key(LUNAR_LANDER, lander_facts(lower)) == entry["group"]:
-            assert celled_table.plan(entry["skills"], start) is not None
-            assert celled_table.plan(entry["skills"], lower) is None
+            assert celled_table.plan(entry["skills"], start, 0) is not None
+            assert celled_table.plan(entry["skills"], lower, 0) is None
             return
     pytest.fail("no group split into cells keeps its facts half a unit lower")
 
@@ -414,14 +429,14 @@ def first_steps(table):
 
 def test_steps_have_no_interaction(small_table):
     entry = first_steps(small_table)[0]
-    assert small_table.step("stabilise", episode_start(entry["group"], range(4))).interaction is None
+    assert small_table.step("stabilise", episode_start(entry["group"], range(4)), 0).interaction is None
 
 
 def test_unmeasured_or_thin_groups_are_unknown(small_table):
     start = episode_start(small_table.data["plans"][0]["group"], range(4))
-    assert small_table.step("hover", start) is None
+    assert small_table.step("hover", start, 0) is None
     strict = EffectTable({**small_table.data, "min_samples": 1000}, LUNAR_LANDER)
-    assert strict.plan(CAREFUL, start) is None
+    assert strict.plan(CAREFUL, start, 0) is None
 
 
 def test_the_support_holds_every_measured_start(small_table, env):
@@ -429,7 +444,7 @@ def test_the_support_holds_every_measured_start(small_table, env):
         for seed in range(4):
             start = replay(env, seed, ())
             if group_key(LUNAR_LANDER, lander_facts(start)) == entry["group"]:
-                assert small_table.supports(entry, start)
+                assert small_table.supports(entry, start, 0)
 
 
 def test_a_rough_value_follows_the_weights(committed_table):
@@ -456,8 +471,15 @@ def test_a_state_outside_the_support_is_not_measured(small_table):
     lower = np.array(start, dtype=np.float64)
     lower[1] -= 0.5  # same facts, but half a unit lower than any measured start
     assert group_key(LUNAR_LANDER, lander_facts(lower)) == entry["group"]
-    assert small_table.plan(entry["skills"], start) is not None
-    assert small_table.plan(entry["skills"], lower) is None
+    assert small_table.plan(entry["skills"], start, 0) is not None
+    assert small_table.plan(entry["skills"], lower, 0) is None
+
+
+def test_a_state_later_in_the_episode_than_any_measured_is_not_measured(small_table):
+    entry = small_table.data["plans"][0]  # measured from episode starts only
+    start = episode_start(entry["group"], range(4))
+    assert small_table.plan(entry["skills"], start, 0) is not None
+    assert small_table.plan(entry["skills"], start, 400) is None
 
 
 def test_the_table_checks_its_format(small_table):
@@ -484,7 +506,7 @@ def test_committed_table_covers_every_plan_from_unseen_episode_starts(committed_
     for seed in unseen:
         start = replay(env, seed, ())
         for skills in plans(lander_facts(start)):
-            assert committed_table.plan(skills, start) is not None, (seed, skills)
+            assert committed_table.plan(skills, start, 0) is not None, (seed, skills)
 
 
 def test_committed_table_answers_from_states_reached_in_mid_flight(committed_table, env):
@@ -494,15 +516,16 @@ def test_committed_table_answers_from_states_reached_in_mid_flight(committed_tab
     for seed in range(unseen, unseen + 30):
         flight = fly_plan(LUNAR_LANDER, env, seed, CAREFUL)
         for prefix in flight.next_states[:-1]:
-            state = replay(env, seed, prefix)
-            answered += any(committed_table.plan(skills, state) is not None for skills in plans(lander_facts(state)))
+            reached = replay(env, seed, prefix)
+            measured = [committed_table.plan(skills, reached, len(prefix)) for skills in plans(lander_facts(reached))]
+            answered += any(estimate is not None for estimate in measured)
     assert answered > 30
 
 
 def test_committed_table_refuses_a_state_no_flight_reached(committed_table):
     entry = committed_table.data["plans"][0]
-    outside = np.asarray(entry["support"]["low"], dtype=np.float64) - 1.0
-    assert committed_table.plan(entry["skills"], outside) is None
+    *below, _ = np.asarray(entry["support"]["low"], dtype=np.float64) - 1.0
+    assert committed_table.plan(entry["skills"], np.array(below), 0) is None
 
 
 def test_committed_landing_plans_are_safer_than_doing_nothing_and_differ_in_fuel(committed_table):
@@ -538,7 +561,7 @@ def test_plan_outcomes_come_from_the_final_result(small_table, committed_table):
 
 def test_estimates_report_how_plans_really_ended(small_table):
     entry = small_table.data["plans"][0]
-    estimate = small_table.plan(entry["skills"], episode_start(entry["group"], range(4)))
+    estimate = small_table.plan(entry["skills"], episode_start(entry["group"], range(4)), 0)
     assert estimate.outcomes == entry["outcomes"]
     step = first_steps(small_table)[0]
-    assert small_table.step("stabilise", episode_start(step["group"], range(4))).outcomes is None
+    assert small_table.step("stabilise", episode_start(step["group"], range(4)), 0).outcomes is None

@@ -24,7 +24,7 @@ from decomposition.runtime import (
     goal_achieved,
     pursue,
 )
-from decomposition.verifier import GOAL_TOO_RARE, NOT_MEASURED, MdnRegion, PlanVerdict, Priorities, plan_skill_id
+from decomposition.verifier import GOAL_TOO_RARE, NOT_MEASURED, MdnRegion, PlanVerdict, Priorities, plan_skill_id, verify
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, landing_outcome, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
@@ -297,6 +297,23 @@ def test_a_run_that_never_gets_anywhere_ends_after_the_decision_cap(env, book, t
     run = run_goal(env, book, table, TILTED_START_SEED)
     assert run.status is GoalStatus.FAILED and not run.episode_over
     assert len(run.decisions) == MAX_DECISIONS and run.frames == 0
+
+
+def test_every_decision_is_certified_with_the_frames_flown_so_far(env, book, table, monkeypatch):
+    seen = []
+
+    def recording(*args, elapsed, **kwargs):
+        seen.append(elapsed)
+        return verify(*args, elapsed=elapsed, **kwargs)
+
+    monkeypatch.setattr(runtime, "verify", recording)
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, SAFETY_FIRST, start_frame=0)
+    frames = np.cumsum([0] + [len(decision.execution.rewards) for decision in run.flown])
+    decided_at = list(dict.fromkeys(seen))  # a fallback is checked at the same moment as the plans it follows
+    assert decided_at[: len(run.flown)] == list(frames[: len(run.flown)]) and len(run.flown) > 1
+    with pytest.raises(ValueError, match="start_frame"):
+        pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, SAFETY_FIRST, start_frame=-1)
 
 
 def test_a_landing_beside_the_pad_is_not_achieved(env, book, table):
