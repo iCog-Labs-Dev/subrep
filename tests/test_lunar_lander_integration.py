@@ -22,9 +22,11 @@ certification cache never reuses an earlier verdict.
 
 Known behaviour these tests record without changing:
 
-* The risk budget cannot decide a LunarLander admission. Objective changes are
-  in the hundreds while epsilon is at most 0.5, so crash-only candidates are
-  rejected and landings admitted whatever epsilon is.
+* Without an epsilon scale, the risk budget cannot decide a LunarLander
+  admission. Objective changes are in the hundreds while epsilon is at most
+  0.5, so crash-only candidates are rejected and landings admitted whatever
+  epsilon is. The scaled tests show that with the scale (bridge/epsilon_scale.py)
+  epsilon decides a real trade-off landing, and crashes stay rejected.
 * MetaMo raises caution on every step, so the tests that check MetaMo's reaction
   to an outcome compare two fresh governors fed different outcomes, rather than
   one governor before and after.
@@ -250,12 +252,12 @@ def test_crash_only_candidates_are_rejected_and_the_loop_abstains(ci_run):
 
 
 def test_epsilon_cannot_change_a_lunar_lander_admission(ci_run):
-    """Records the risk-budget scale on MO-LunarLander.
+    """Records the risk-budget scale on MO-LunarLander, without an epsilon scale.
 
     Every CI candidate's PDS margin (delta_r + min delta_n) lies below
-    -EPSILON_MAX, the loosest budget MetaMo can emit, so no epsilon could admit
-    it. If objective changes are normalised later, this test is expected to
-    fail and should be updated together with that change.
+    -EPSILON_MAX, the loosest raw budget MetaMo can emit, so no epsilon could
+    admit it. The epsilon scale (bridge/epsilon_scale.py) is what lets epsilon
+    decide LunarLander admissions; see the scaled tests below.
     """
     _, _, records_per_step = ci_run
 
@@ -266,6 +268,50 @@ def test_epsilon_cannot_change_a_lunar_lander_admission(ci_run):
     ]
     assert margins
     assert max(margins) < -EPSILON_MAX
+
+
+def _certify_with_scale(baseline_stats, records, epsilon: float):
+    """Certify `records` once, with the LunarLander epsilon scale, on a fresh pipeline."""
+    from bridge.controller import MetaMoController
+    from bridge.governor import FakeGovernor
+    from bridge.protocol import GovernorSignal
+    from env.lunar_lander_metamo import lunar_lander_epsilon_scale
+
+    sig = GovernorSignal(
+        weights=np.full(NUM_OBJECTIVES, 1.0 / NUM_OBJECTIVES),
+        pds_epsilon=epsilon,
+        cvar_tail_level=0.1,
+    )
+    controller = MetaMoController(
+        FakeGovernor([sig]),
+        make_pipeline(),
+        seed=CONTROLLER_SEED,
+        epsilon_scale=lunar_lander_epsilon_scale(),
+    )
+    return controller.certify(
+        context=np.asarray(baseline_stats["info"]["start_obs"]),
+        candidate_skills=records,
+        baseline_stats=baseline_stats,
+        signal=sig,
+    )
+
+
+def test_real_crashes_are_rejected_at_the_loosest_epsilon():
+    """With the epsilon scale, eps_max tolerates a loss of about 150, more than
+    some crash margins; the task-failure guard still rejects every crash."""
+    from bridge.epsilon_scale import TASK_FAILURE
+
+    env = SubRepEnv(seed=SEEDS[0])
+    try:
+        for seed in SEEDS:
+            baseline_stats, records = evaluate_candidates(env, ci_candidates(env), seed=seed)
+            certified = _certify_with_scale(baseline_stats, records, EPSILON_MAX)
+            assert not any(r.is_certified for r in certified), seed
+            for r in certified:
+                if r.metadata.get("crashed"):
+                    assert r.metadata["rejection_reason"] == TASK_FAILURE, (seed, r.skill_id)
+    finally:
+        env.close()
 
 
 def test_the_same_seeds_reproduce_the_same_run(ci_run):
@@ -325,6 +371,44 @@ def test_ppo_landings_are_admitted_and_selected():
         if record.selected_skill_id is not None:
             assert record.admitted_count > 0
             assert record.selected_skill_id.startswith("ppo_")
+
+
+@requires_pilot
+def test_a_tighter_epsilon_rejects_a_real_trade_off_landing():
+    """A real fuel-wasting landing is admitted at eps_max and rejected at a tighter eps.
+
+    The candidate is chosen at runtime: the first seed in 1-20 where a
+    trade-off candidate lands with a margin in (-0.5 * U, 0), the band the
+    scaled tolerance spans. The tighter eps puts the tolerance at 0.9 of that
+    margin, so nothing is hard-coded but the band.
+    """
+    from env.lunar_lander_candidates import build_tradeoff_candidate_policies
+    from env.lunar_lander_metamo import LUNAR_LANDER_EPSILON_UNIT
+
+    unit = LUNAR_LANDER_EPSILON_UNIT
+    env = SubRepEnv(seed=1)
+    try:
+        candidates = build_tradeoff_candidate_policies(pilot_checkpoint=str(PILOT_CHECKPOINT))
+        found = None
+        for seed in range(1, 21):
+            baseline_stats, records = evaluate_candidates(env, candidates, seed=seed)
+            for r in records:
+                margin = float(r.delta_r) + float(np.min(r.delta_n))
+                if r.metadata["landing_success"] and -EPSILON_MAX * unit < margin < 0.0:
+                    found = (baseline_stats, r, margin)
+                    break
+            if found:
+                break
+    finally:
+        env.close()
+    assert found, "no trade-off landing within the scaled band on seeds 1-20"
+    baseline_stats, trade_off, margin = found
+
+    (loose,) = _certify_with_scale(baseline_stats, [trade_off], EPSILON_MAX)
+    (tight,) = _certify_with_scale(baseline_stats, [trade_off], 0.9 * abs(margin) / unit)
+    assert loose.is_certified, (trade_off.skill_id, margin)
+    assert not tight.is_certified, (trade_off.skill_id, margin)
+    assert "rejection_reason" not in tight.metadata  # rejected by PDS, not by the guard
 
 
 @requires_pilot

@@ -241,9 +241,12 @@ should be revisited against real episode outcomes.
 
 - **The landing result counts in both Δr and Δn_Safety, by decision.** See
   "Payoff and Safety" below for why, and what counting it once would change.
-- **ε cannot decide an admission at the current scale.** ε is at most 0.5,
+- **Without the ε scale, ε cannot decide an admission.** ε is at most 0.5,
   while Δn values are in the hundreds, so crash-only candidates are rejected
-  and landings admitted whatever ε is.
+  and landings admitted whatever ε is. With `--epsilon-scale on`, ε can decide
+  the trade-off candidates (see "ε in LunarLander units" below), but the live
+  ε stays small after landings: 0–0.109 in the measured run, so the
+  tolerance stays under 33.
 - **Evidence and execution share a seed.** Each decision step certifies the
   candidates and flies the chosen one from the same start. This shows the loop
   is wired correctly, not that a certificate holds on unseen starts.
@@ -335,7 +338,8 @@ python demo/run_lunar_lander_metamo.py --steps 10 --candidates ci      # no PPO 
 | Option | Meaning |
 |---|---|
 | `--steps`, `--seed` | number of decision steps, and the first seed |
-| `--candidates ci\|ppo\|extended` | the candidate set; defaults to `ppo` when `models/pilot_ppo.pt` exists, otherwise `ci` |
+| `--candidates ci\|ppo\|extended\|tradeoff` | the candidate set; defaults to `ppo` when `models/pilot_ppo.pt` exists, otherwise `ci`. `tradeoff` is `extended` plus six PPO candidates that burn extra fuel (`env/lunar_lander_candidates.py`) |
+| `--epsilon-scale off\|on` | `on`: PDS tolerates ε·U with U = 300.9, and candidates that crash are rejected first; adds the `tol` and `fail` columns. Default `off` |
 | `--no-selection noop\|stop` | when nothing is admitted: fly the noop baseline, or fly nothing. Both feed MetaMo a zero-Δ outcome with `admitted=False` |
 | `--cvar`, `--cvar-samples` | also apply the CVaR gate (OR semantics); a `pds` column then shows the PDS-only count |
 | `--verbose` | print every candidate's Δr, Δn, PDS margin and verdict |
@@ -362,6 +366,10 @@ The summary reports measured diagnostics: the ε and α ranges, the first and
 last weights, admissions, selections and flown results, the first step where
 Securing reaches 0.95, and the number of steps where ε anywhere in [0, 0.5]
 would change a PDS admission.
+
+With `--epsilon-scale on`, the PDS-only count (`pds` column) and the
+ε-sensitivity check apply the same rule as the gate: task failures are
+rejected, and the tolerance is ε·U.
 
 **Comparing two runs.** Save each run with `--json-out`, using the same options
 and seeds, for example before and after updating the MetaMo submodule. Then
@@ -407,6 +415,35 @@ commit and point the loader at it:
 git -C external/metamo archive ceb108e | (mkdir -p /tmp/metamo_ceb108e && tar -x -C /tmp/metamo_ceb108e)
 SUBREP_METAMO_PATH=/tmp/metamo_ceb108e \
   python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo
+```
+
+### ε in LunarLander units
+
+With `--epsilon-scale on`, the PDS gate tolerates ε·U, U = 300.9
+(`LUNAR_LANDER_EPSILON_UNIT`), and candidates whose own payoff is below 0, the
+crashes, are rejected first. The design decision and the alternatives are in
+"ε in environment units" in `bridge/README.md`.
+
+The same run with the scale off and on (`--steps 16 --candidates tradeoff`,
+seeds 1–16, MetaMo `4171b1d`):
+
+| | Scale off | Scale on |
+|---|---|---|
+| ε range | 0–0.109 | 0–0.109 |
+| PDS tolerance | equal to ε | 0–32.7 |
+| Rejected as task failures, before PDS | — | 99/224 |
+| Admitted | 75/224 | 76/224 |
+| Steps where some ε in [0, 0.5] would change an admission | 0/16 | 8/16 |
+| Selections | ppo_deterministic 8, ppo_stochastic 6, ppo_waste_main_12 1, ppo_waste_side_15 1 | identical, step for step |
+| Flown results | 16/16 landed | 16/16 landed |
+
+ε could now decide half the steps, but the live ε is small, so it decides one
+in this run: at step 15, `ppo_waste_side_15` lands with margin −7 and is
+admitted under a tolerance of 11.8. The scale is off by default, and with it
+off the demo's output and JSON carry no scale fields.
+
+```bash
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --verbose
 ```
 
 ---
@@ -562,6 +599,17 @@ Regression guard: `test_s1c_cached_approval_is_not_selected_after_epsilon_tighte
 runs one pipeline, one context and one skill through the controller at
 ε = 0.10 and then 0.00. The skill is selected at the first and not at the second,
 and the historical certificate survives.
+
+**An optional scale puts ε into the environment's units.** ε is dimensionless,
+but the PDS gate compares it with Δr + min Δn, which is in reward units. Given
+an `EpsilonScale(unit, payoff_floor)` (`bridge/epsilon_scale.py`), the
+controller stamps the tolerance ε·U instead of ε, and first rejects any
+candidate whose own payoff (baseline payoff + Δr) is below the floor. Those
+candidates never reach the pipeline, so they are never cached and never grow
+W_x, and their records carry `metadata["rejection_reason"] == "task_failure"`.
+`StepRecord` gains `pds_tolerance` and `task_failures`. With the scale, the
+stored ε is the tolerance, so the recheck above compares tolerances. Without
+it, nothing changes. See "ε in environment units" in `bridge/README.md`.
 
 ---
 

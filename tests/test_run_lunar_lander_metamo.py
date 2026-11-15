@@ -197,6 +197,63 @@ def test_the_summary_diagnostics_are_measured(noop_run):
         assert f"on {sensitive}/{STEPS} steps" in output
 
 
+def test_without_the_epsilon_scale_the_json_has_no_scale_fields(noop_run):
+    _, data, _ = noop_run
+    assert "epsilon_scale" not in data["config"]
+    for step in data["steps"]:
+        assert "pds_tolerance" not in step and "task_failures" not in step
+        assert all("task_failure" not in c for c in step["candidates"])
+    assert "task_failures_total" not in data["summary"]
+
+
+def test_the_epsilon_scale_records_the_tolerance_and_the_task_failures(tmp_path):
+    from env.lunar_lander_metamo import lunar_lander_epsilon_scale
+
+    scale = lunar_lander_epsilon_scale()
+    path = tmp_path / "scaled.json"
+    code, output, _ = run_demo(
+        ["--steps", "2", "--seed", str(SEED), "--candidates", "ci",
+         "--epsilon-scale", "on", "--json-out", str(path)]
+    )
+    assert code == 0
+    assert " tol " in output and " fail " in output
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["config"]["epsilon_scale"] == {
+        "unit": scale.unit, "payoff_floor": scale.payoff_floor
+    }
+    for step in data["steps"]:
+        assert step["pds_tolerance"] == pytest.approx(step["signal"]["epsilon"] * scale.unit)
+        assert step["task_failures"] == sum(c["task_failure"] for c in step["candidates"])
+        for candidate in step["candidates"]:
+            if candidate["crashed"]:
+                assert candidate["task_failure"] and not candidate["admitted"]
+        assert step["pds_only_admitted"] == lunar_demo.pds_admitted_count(
+            step["candidates"], step["signal"]["epsilon"], scale
+        )
+    summary = data["summary"]
+    assert summary["task_failures_total"] == sum(s["task_failures"] for s in data["steps"])
+    sensitive = sum(1 for s in data["steps"] if lunar_demo.eps_sensitive(s["candidates"], scale))
+    assert summary["eps_sensitive_steps"] == sensitive
+
+
+@pytest.mark.skipif(
+    not lunar_demo.PILOT_CHECKPOINT.is_file(),
+    reason="PPO checkpoint models/pilot_ppo.pt not found",
+)
+def test_the_tradeoff_candidates_are_listed(tmp_path):
+    path = tmp_path / "tradeoff.json"
+    code, _, _ = run_demo(
+        ["--steps", "1", "--seed", str(SEED), "--candidates", "tradeoff",
+         "--epsilon-scale", "on", "--json-out", str(path)]
+    )
+    assert code == 0
+    ids = json.loads(path.read_text(encoding="utf-8"))["config"]["candidate_ids"]
+    for skill_id in ("ppo_deterministic", "ppo_then_side_tradeoff",
+                     "ppo_waste_main_12", "ppo_waste_main_15", "ppo_waste_main_18",
+                     "ppo_waste_main_20", "ppo_waste_side_15", "ppo_waste_side_20"):
+        assert skill_id in ids
+
+
 @pytest.mark.skipif(
     not lunar_demo.PILOT_CHECKPOINT.is_file(),
     reason="PPO checkpoint models/pilot_ppo.pt not found",

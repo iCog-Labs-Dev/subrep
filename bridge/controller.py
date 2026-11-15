@@ -11,6 +11,12 @@ Determinism note: `CVaRGate.get_cvar` draws from `Dirichlet(...).sample()` on
 the global torch RNG (certification/cvar_test.py:51) with no seeding of its
 own, so certification is otherwise NOT reproducible run to run. The controller
 seeds before each certification pass and records the seed it used.
+
+Epsilon scale (optional, off by default): given an `EpsilonScale`
+(bridge/epsilon_scale.py), the controller first rejects candidates that fail
+the task, without sending them to the pipeline, then stamps the others with
+the tolerance epsilon * unit instead of the raw epsilon. Without one, every
+call is exactly as before.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from .epsilon_scale import TASK_FAILURE, EpsilonScale
 from .protocol import GovernorSignal, SkillOutcome
 
 
@@ -41,6 +48,21 @@ def _with_epsilon(candidate: Any, epsilon: float) -> Any:
     return candidate
 
 
+def _as_task_failure(candidate: Any) -> Any:
+    """Mark a candidate rejected because it failed the task.
+
+    Duck-typed like `_with_epsilon`: a stand-in that is not a dataclass with
+    `is_certified` and `metadata` is returned unchanged; it is still kept out
+    of the pipeline, so it is never admitted.
+    """
+    names = {f.name for f in fields(candidate)} if is_dataclass(candidate) else set()
+    if {"is_certified", "metadata"} <= names:
+        metadata = dict(candidate.metadata or {})
+        metadata["rejection_reason"] = TASK_FAILURE
+        return replace(candidate, is_certified=False, metadata=metadata)
+    return candidate
+
+
 @dataclass
 class StepRecord:
     """What happened during one controller step, for logging and assertions."""
@@ -55,6 +77,9 @@ class StepRecord:
     selected_skill_id: Optional[str] = None
     selected_score: Optional[float] = None
     seed: Optional[int] = None
+    # Set only when the controller has an epsilon scale.
+    pds_tolerance: Optional[float] = None
+    task_failures: int = 0
 
     def as_row(self) -> str:
         """Compact single-line summary."""
@@ -83,10 +108,12 @@ class MetaMoController:
         pipeline: Any,
         *,
         seed: int = 42,
+        epsilon_scale: Optional[EpsilonScale] = None,
     ) -> None:
         self.governor = governor
         self.pipeline = pipeline
         self.seed = int(seed)
+        self.epsilon_scale = epsilon_scale
         self.history: List[StepRecord] = []
         self._step_index = 0
 
@@ -110,22 +137,51 @@ class MetaMoController:
 
         The MDN's Dirichlet concentration is fetched internally by the
         pipeline and never travels through this call.
+
+        With an epsilon scale, candidates that fail the task are returned
+        rejected (`metadata["rejection_reason"] == TASK_FAILURE`) without
+        reaching the pipeline, and the rest are stamped with the tolerance
+        epsilon * unit. Records come back in the input order either way.
         """
         effective_seed = self.seed if seed is None else int(seed)
         _seed_torch(effective_seed)
 
-        budgeted = [
-            _with_epsilon(candidate, signal.pds_epsilon)
-            for candidate in candidate_skills
-        ]
+        scale = self.epsilon_scale
+        if scale is None:
+            budgeted = [
+                _with_epsilon(candidate, signal.pds_epsilon)
+                for candidate in candidate_skills
+            ]
+            return self.pipeline.certify_candidate_skills(
+                context=np.asarray(context),
+                candidate_skills=budgeted,
+                baseline_stats=baseline_stats,
+                weights_used=signal.weights,
+                cvar_confidence=signal.cvar_tail_level,
+            )
 
-        return self.pipeline.certify_candidate_skills(
-            context=np.asarray(context),
-            candidate_skills=budgeted,
-            baseline_stats=baseline_stats,
-            weights_used=signal.weights,
-            cvar_confidence=signal.cvar_tail_level,
+        tolerance = scale.tolerance(signal.pds_epsilon)
+        failing = [scale.fails_task(c, baseline_stats) for c in candidate_skills]
+        passing = [
+            _with_epsilon(candidate, tolerance)
+            for candidate, fails in zip(candidate_skills, failing)
+            if not fails
+        ]
+        certified = iter(
+            self.pipeline.certify_candidate_skills(
+                context=np.asarray(context),
+                candidate_skills=passing,
+                baseline_stats=baseline_stats,
+                weights_used=signal.weights,
+                cvar_confidence=signal.cvar_tail_level,
+            )
+            if passing
+            else []
         )
+        return [
+            _as_task_failure(candidate) if fails else next(certified)
+            for candidate, fails in zip(candidate_skills, failing)
+        ]
 
     def select(
         self,
@@ -197,6 +253,14 @@ class MetaMoController:
         outcome: SkillOutcome = outcome_for(selected_record)
         self.governor.step(outcome)
 
+        scale = self.epsilon_scale
+        pds_tolerance = None if scale is None else scale.tolerance(signal.pds_epsilon)
+        task_failures = (
+            0
+            if scale is None
+            else sum(1 for c in candidate_skills if scale.fails_task(c, baseline_stats))
+        )
+
         record = StepRecord(
             step=self._step_index,
             weights=np.asarray(signal.weights).copy(),
@@ -208,6 +272,8 @@ class MetaMoController:
             selected_skill_id=skill_id,
             selected_score=score,
             seed=effective_seed,
+            pds_tolerance=pds_tolerance,
+            task_failures=task_failures,
         )
         self.history.append(record)
         self._step_index += 1
