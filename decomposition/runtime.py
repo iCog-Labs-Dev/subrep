@@ -274,7 +274,7 @@ def pursue(
                 )
                 verdicts = tuple(verify(generation.candidates, obs, table, current, timestamp, min_goal_rate))
                 if feedback is not None:
-                    verdicts = feedback.screen(verdicts, facts)
+                    verdicts = feedback.screen(verdicts)
             weights = None if current is None else current.weights
             skipped = generation.skipped
 
@@ -282,7 +282,7 @@ def pursue(
             recertified = chosen is not None
             considered: Tuple[PlanVerdict, ...] = ()
             if chosen is None and continuation is Continuation.FALLBACK and current is not None:
-                considered = _fallbacks(domain, verdicts, obs, facts, table, current, timestamp, feedback)
+                considered = _fallbacks(domain, verdicts, obs, table, current, timestamp, feedback)
                 chosen = _choose_fallback(considered, remaining)
             fallback = chosen is not None and not recertified
             continued = (
@@ -361,7 +361,6 @@ def _fallbacks(
     domain: Domain,
     verdicts: Sequence[PlanVerdict],
     observation: np.ndarray,
-    facts: Mapping[str, bool],
     table: EffectTable,
     priorities: Priorities,
     timestamp: Optional[str],
@@ -381,7 +380,7 @@ def _fallbacks(
         return ()
     considered = tuple(verify(too_rare, observation, table, priorities, timestamp))
     if feedback is not None:
-        considered = feedback.screen(considered, facts)
+        considered = feedback.screen(considered)
     safety = domain.objectives.index(domain.safety_objective)
     checked = [
         verdict

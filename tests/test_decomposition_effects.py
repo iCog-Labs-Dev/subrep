@@ -12,12 +12,14 @@ from decomposition.effects import (
     EffectTable,
     Sample,
     build_table,
+    cell_scale,
     discounted_totals,
     fly_plan,
     group_key,
     improvement,
     lower_bound,
     measure_seed,
+    partition,
     replay,
     summarise,
 )
@@ -72,7 +74,12 @@ def env():
 
 @pytest.fixture(scope="module")
 def small_table():
-    return build_table(LUNAR_LANDER, range(4), both_plans, min_samples=1, max_states=1)
+    return build_table(LUNAR_LANDER, range(4), both_plans, min_samples=1, max_states=1, cell_episodes=None)
+
+
+@pytest.fixture(scope="module")
+def celled_table():
+    return build_table(LUNAR_LANDER, range(4), both_plans, min_samples=1, max_states=1, cell_episodes=1)
 
 
 @pytest.fixture(scope="module")
@@ -272,11 +279,64 @@ def test_an_entry_needs_enough_episodes_not_just_samples():
     assert build_table(LUNAR_LANDER, range(2), both_plans, min_samples=3).data["plans"] == []
 
 
+def blobs(count=100, offset=10.0):
+    """Two clusters of start states far apart, one state per episode."""
+    rng = np.random.default_rng(0)
+    near = rng.normal(0.0, 1.0, size=(count, 8))
+    return np.vstack([near, near + offset]), np.arange(2 * count)
+
+
+def test_cells_gather_similar_states():
+    starts, episodes = blobs()
+    labels = partition(starts, episodes, cell_episodes=100, min_episodes=30, seed=0)
+    assert set(labels[:100]) != set(labels[100:]) and len(set(labels[:100])) == len(set(labels[100:])) == 1
+
+
+def test_every_cell_is_measured_in_enough_episodes():
+    starts, episodes = blobs(count=30)
+    labels = partition(starts, episodes, cell_episodes=10, min_episodes=30, seed=0)
+    assert labels.max() == 1  # six cells were asked for; only two can hold 30 episodes each
+    assert all(len(set(episodes[labels == cell])) >= 30 for cell in range(2))
+
+
+def test_cells_count_episodes_not_samples():
+    starts, _ = blobs(count=50)
+    episodes = np.repeat(np.arange(10), 10)  # ten states from each of ten episodes
+    labels = partition(starts, episodes, cell_episodes=1, min_episodes=6, seed=0)
+    assert all(len(set(episodes[labels == cell])) >= 6 for cell in set(labels))
+
+
+def test_a_group_is_kept_whole_without_a_cell_size_or_without_enough_episodes():
+    starts, episodes = blobs()
+    assert not partition(starts, episodes, cell_episodes=None, min_episodes=30, seed=0).any()
+    assert not partition(starts[:40], episodes[:40], cell_episodes=10, min_episodes=30, seed=0).any()
+
+
+def test_cells_are_reproducible():
+    starts, episodes = blobs()
+    first = partition(starts, episodes, cell_episodes=50, min_episodes=30, seed=3)
+    np.testing.assert_array_equal(first, partition(starts, episodes, cell_episodes=50, min_episodes=30, seed=3))
+
+
+def test_a_partition_checks_its_inputs():
+    starts, episodes = blobs()
+    with pytest.raises(ValueError, match="episode"):
+        partition(starts, episodes[:-1], cell_episodes=50, min_episodes=30, seed=0)
+    with pytest.raises(ValueError, match="cell_episodes"):
+        partition(starts, episodes, cell_episodes=0, min_episodes=30, seed=0)
+
+
+def test_spread_is_one_where_a_number_never_changes():
+    starts = np.array([[0.0, 1.0], [2.0, 1.0]])
+    np.testing.assert_array_equal(cell_scale(starts), [1.0, 1.0])
+
+
 # The table
 
 
-def test_the_table_is_reproducible_from_its_seeds(small_table):
-    assert build_table(LUNAR_LANDER, range(4), both_plans, min_samples=1, max_states=1).data == small_table.data
+def test_the_table_is_reproducible_from_its_seeds(small_table, celled_table):
+    assert build_table(LUNAR_LANDER, range(4), both_plans, 1, 1, cell_episodes=None).data == small_table.data
+    assert build_table(LUNAR_LANDER, range(4), both_plans, 1, 1, cell_episodes=1).data == celled_table.data
 
 
 def test_a_shared_first_step_is_counted_once_per_seed(small_table):
@@ -297,6 +357,44 @@ def test_lookup_returns_the_entry_for_the_state(small_table):
     assert estimate.mean.delta_r == entry["delta_r"]["mean"]
     assert estimate.lower.delta_n == (entry["delta_safety"]["lower"], entry["delta_fuel"]["lower"])
     assert estimate.interaction.delta_r == entry["interaction"]["delta_r"]["mean"]
+
+
+def test_a_group_kept_whole_answers_for_the_whole_group(small_table):
+    entry = small_table.data["plans"][0]
+    assert "cells" not in entry
+    assert small_table.plan(entry["skills"], episode_start(entry["group"], range(4))).region == entry["group"]
+
+
+def test_a_lookup_answers_from_the_cell_nearest_the_state(celled_table):
+    entry = next(entry for entry in celled_table.data["plans"] if entry.get("cells"))
+    assert all(cell["episodes"] >= 1 for cell in entry["cells"])
+    for index, cell in enumerate(entry["cells"]):
+        estimate = celled_table.plan(entry["skills"], np.array(cell["centroid"]))
+        assert estimate.region == f"{entry['group']}|cell={index}"
+        assert (estimate.samples, estimate.episodes) == (cell["samples"], cell["episodes"])
+        assert estimate.lower.delta_r == cell["delta_r"]["lower"]
+        assert estimate.outcomes == cell["outcomes"]
+
+
+def test_the_cells_of_a_group_hold_all_its_samples(celled_table):
+    for entry in celled_table.data["plans"]:
+        if entry.get("cells"):
+            assert sum(cell["samples"] for cell in entry["cells"]) == entry["samples"]
+            assert len(entry["cell_scale"]) == len(entry["cells"][0]["centroid"])
+
+
+def test_a_state_outside_the_group_support_is_not_measured_in_any_cell(celled_table):
+    for entry in celled_table.data["plans"]:
+        if not entry.get("cells"):
+            continue
+        start = episode_start(entry["group"], range(4))
+        lower = np.array(start, dtype=np.float64)
+        lower[1] -= 0.5  # same facts, but half a unit lower than any measured start
+        if group_key(LUNAR_LANDER, lander_facts(lower)) == entry["group"]:
+            assert celled_table.plan(entry["skills"], start) is not None
+            assert celled_table.plan(entry["skills"], lower) is None
+            return
+    pytest.fail("no group split into cells keeps its facts half a unit lower")
 
 
 def first_steps(table):

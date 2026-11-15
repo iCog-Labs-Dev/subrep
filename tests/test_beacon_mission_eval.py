@@ -180,7 +180,7 @@ def test_the_report_lists_only_judged_certificates_and_counts_the_rest(table, mi
     markdown = to_markdown(report)
     unjudged = sum(entry["status"] == "too_few_samples" for entry in mission_run["feedback"])
     assert unjudged > 0
-    assert f"{unjudged} more plan and start groups had too few samples and are not listed." in markdown
+    assert f"{unjudged} more plan and start regions had too few samples and are not listed." in markdown
     assert "the runtime did not apply these revocations during the runs" in markdown
     assert "Settings: `fallback` policy, goal rate at least 0.9" in markdown
     assert "## Effect table on unseen seeds" in markdown

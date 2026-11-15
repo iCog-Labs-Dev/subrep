@@ -22,7 +22,7 @@ The evaluation also checks the measurements behind the certificates:
   state are compared with its certificate. A run the runtime stopped in the
   middle of a plan did not fly that plan as certified, so it is counted but not
   compared. This happens after every episode has been flown, so a revocation
-  found here was not applied during the runs. A plan and start group with fewer
+  found here was not applied during the runs. A plan and start region with fewer
   than ``MIN_SAMPLES`` flights is not judged, and a criterion with nothing to
   judge reports insufficient evidence, never a pass;
 - the effect table: the plans are measured again on the unseen seeds and
@@ -106,7 +106,7 @@ REPORT_ONLY = "report only"
 _COMPARISONS = {">=": operator.ge, "<=": operator.le, "==": operator.eq}
 CERTIFICATES_NOTE = (
     "Checked after every episode was flown: the runtime did not apply these revocations during the runs. "
-    f"A plan and start group with fewer than {MIN_SAMPLES} flights has too few samples and is not judged."
+    f"A plan and start region with fewer than {MIN_SAMPLES} flights has too few samples and is not judged."
 )
 
 PROFILES: Dict[str, Priorities] = {
@@ -322,9 +322,7 @@ def record_followed_plans(domain: Domain, feedback: FeedbackLog, env: Any, seed:
     for index, decision in enumerate(run.flown):
         if (decision.recertified or decision.fallback) and index >= followed_from:
             start = run.actions[:frames]
-            feedback.record(
-                decision.chosen, decision.facts, realised_gains(domain, env, seed, run.rewards[frames:], start)
-            )
+            feedback.record(decision.chosen, realised_gains(domain, env, seed, run.rewards[frames:], start))
         frames += decision.execution.frames
     return True
 
@@ -545,7 +543,7 @@ def share_criterion(name: str, count: int, total: int, threshold: float, what: s
 
 
 def revocation_criterion(runs: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
-    """No certificate revoked, judged only on plan and start groups with enough flights to tell."""
+    """No certificate revoked, judged only on plan and start regions with enough flights to tell."""
     entries = [entry for run in runs for entry in run["feedback"]]
     judged = [entry for entry in entries if entry["status"] != CertificateStatus.TOO_FEW_SAMPLES.value]
     revoked = sum(entry["status"] == CertificateStatus.REVOKED.value for entry in judged)
@@ -554,7 +552,7 @@ def revocation_criterion(runs: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
         revoked if judged else None,
         "==",
         0,
-        f"{len(judged)} of {len(entries)} plan and start groups had at least {MIN_SAMPLES} flights",
+        f"{len(judged)} of {len(entries)} plan and start regions had at least {MIN_SAMPLES} flights",
     )
 
 
@@ -634,7 +632,7 @@ def reliability_lines(goal_runs: Mapping[str, Mapping[str, Any]]) -> List[str]:
         "",
         "## Certificate reliability",
         "",
-        f"Plan and start groups whose certificates held, were revoked, or had fewer than {MIN_SAMPLES} flights to "
+        f"Plan and start regions whose certificates held, were revoked, or had fewer than {MIN_SAMPLES} flights to "
         "judge them, and the runs stopped in the middle of a plan, which were not compared.",
         "",
         "| Priorities | Held | Revoked | Too few flights | Runs not compared |",
@@ -779,13 +777,13 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         CERTIFICATES_NOTE,
         "",
-        "| Profile | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status | Fell short on |",
+        "| Profile | Plan | Start region | Samples | Certified Δr | Realised mean Δr | Status | Fell short on |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for name, run in report["goal_runs"].items():
         for entry in run["feedback"]:
             lines.append(
-                f"| {name} | {entry['plan']} | {entry['group']} | {entry['samples']} | "
+                f"| {name} | {entry['plan']} | {entry['region']} | {entry['samples']} | "
                 f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} | "
                 f"{shortfalls(entry)} |"
             )

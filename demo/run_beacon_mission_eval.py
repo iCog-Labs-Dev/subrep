@@ -473,7 +473,7 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         CERTIFICATES_NOTE,
         "",
-        "| Priorities | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status | Fell short on |",
+        "| Priorities | Plan | Start region | Samples | Certified Δr | Realised mean Δr | Status | Fell short on |",
         "|---|---|---|---|---|---|---|---|",
     ]
     unjudged = 0
@@ -483,13 +483,13 @@ def to_markdown(report: Mapping[str, Any]) -> str:
                 unjudged += 1
                 continue
             lines.append(
-                f"| {name} | {entry['plan']} | {entry['group']} | {entry['samples']} | "
+                f"| {name} | {entry['plan']} | {entry['region']} | {entry['samples']} | "
                 f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} | "
                 f"{shortfalls(entry)} |"
             )
     lines += [
         "",
-        f"{unjudged} more plan and start groups had too few samples and are not listed.",
+        f"{unjudged} more plan and start regions had too few samples and are not listed.",
         "",
         unchecked_note(report["goal_runs"]),
     ]

@@ -219,7 +219,7 @@ def test_a_revoked_fallback_is_not_flown_again(env, book, table):
     feedback = FeedbackLog(LUNAR_LANDER, min_samples=2)
     far_short = Gains(certificate.delta_r - 1000.0, tuple(value - 1000.0 for value in certificate.delta_n))
     for _ in range(3):
-        feedback.record(first.chosen, first.facts, far_short)
+        feedback.record(first.chosen, far_short)
 
     run = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH, feedback=feedback)
     again = run.decisions[0]

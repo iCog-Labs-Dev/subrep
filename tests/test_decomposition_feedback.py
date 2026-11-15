@@ -96,31 +96,45 @@ def test_a_certificate_holds_when_realised_gains_meet_it(verdicts, start):
     _, facts = start
     best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
     for realised in shifted(certified_gains(best), by=5.0, count=40):
-        log.record(best, facts, realised)
+        log.record(best, realised)
     [entry] = log.report()
     assert entry["status"] == CertificateStatus.HELD.value
-    assert entry["plan"] == plan_skill_id(best.candidate) and entry["group"] == group_key(LUNAR_LANDER, facts)
+    assert entry["plan"] == plan_skill_id(best.candidate) and entry["region"] == best.estimate.region
+    assert entry["region"].startswith(group_key(LUNAR_LANDER, facts))
     assert entry["samples"] == 40
     assert entry["delta_r"]["realised_mean"] > entry["delta_r"]["certified"]
     assert log.revoked() == frozenset()
 
 
-def test_a_certificate_is_revoked_when_realised_gains_fall_short(verdicts, start):
-    _, facts = start
+def test_a_certificate_is_revoked_when_realised_gains_fall_short(verdicts):
     best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
     for realised in shifted(certified_gains(best), by=-10.0, count=40):
-        log.record(best, facts, realised)
+        log.record(best, realised)
     [entry] = log.report()
     assert entry["status"] == CertificateStatus.REVOKED.value
     assert entry["delta_r"]["realised_upper"] < entry["delta_r"]["certified"]
-    assert log.revoked() == {(plan_skill_id(best.candidate), group_key(LUNAR_LANDER, facts))}
+    assert log.revoked() == {(plan_skill_id(best.candidate), best.estimate.region)}
 
 
-def test_a_few_bad_outcomes_do_not_revoke_a_certificate(verdicts, start):
-    _, facts = start
+def in_region(verdict, region):
+    """``verdict`` as if its plan had been certified from another region of states."""
+    return dataclasses.replace(verdict, estimate=dataclasses.replace(verdict.estimate, region=region))
+
+
+def test_flights_from_one_region_judge_only_the_certificates_from_that_region(verdicts):
+    best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
+    here, there = in_region(best, "states|cell=0"), in_region(best, "states|cell=1")
+    for realised in shifted(certified_gains(best), by=-10.0, count=40):
+        log.record(here, realised)
+    [revoked, untouched] = log.screen([here, there])
+    assert revoked.reason == REVOKED_REASON and untouched.admitted
+    assert log.revoked() == {(plan_skill_id(best.candidate), "states|cell=0")}
+
+
+def test_a_few_bad_outcomes_do_not_revoke_a_certificate(verdicts):
     best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
     for realised in shifted(certified_gains(best), by=-100.0, count=5):
-        log.record(best, facts, realised)
+        log.record(best, realised)
     [entry] = log.report()
     assert entry["status"] == CertificateStatus.TOO_FEW_SAMPLES.value
     assert entry["delta_r"]["realised_upper"] is None
@@ -132,16 +146,16 @@ def test_only_admitted_plans_can_be_recorded(book, table, start):
     rejected = verify(propose(book, "land_on_pad", facts), observation, table, SAFETY_FIRST, min_goal_rate=1.0)[0]
     assert not rejected.admitted
     with pytest.raises(ValueError, match="admitted"):
-        FeedbackLog(LUNAR_LANDER).record(rejected, facts, Gains(0.0, (0.0, 0.0)))
+        FeedbackLog(LUNAR_LANDER).record(rejected, Gains(0.0, (0.0, 0.0)))
 
 
 def test_the_runtime_skips_a_revoked_plan(env, book, table, verdicts, start):
-    observation, facts = start
+    observation, _ = start
     best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
     for realised in shifted(certified_gains(best), by=-10.0, count=40):
-        log.record(best, facts, realised)
+        log.record(best, realised)
 
-    screened = log.screen(verdicts, facts)
+    screened = log.screen(verdicts)
     assert [v.candidate.option for v in screened] == [v.candidate.option for v in verdicts]
     assert screened[0].reason == REVOKED_REASON and not screened[0].admitted
 
@@ -162,22 +176,20 @@ def recertified(verdict, by):
     return dataclasses.replace(verdict, entry=dataclasses.replace(verdict.entry, certificate=claim))
 
 
-def test_a_revocation_stands_until_a_certificate_claims_no_more_than_the_flights_support(verdicts, start):
-    _, facts = start
+def test_a_revocation_stands_until_a_certificate_claims_no_more_than_the_flights_support(verdicts):
     best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
     for realised in shifted(certified_gains(best), by=-10.0, count=40):
-        log.record(best, facts, realised)
-    [same, overclaiming, supported] = log.screen([best, recertified(best, 5.0), recertified(best, -20.0)], facts)
+        log.record(best, realised)
+    [same, overclaiming, supported] = log.screen([best, recertified(best, 5.0), recertified(best, -20.0)])
     assert same.reason == REVOKED_REASON and overclaiming.reason == REVOKED_REASON
     assert supported.admitted and supported.entry.certificate.delta_r == best.entry.certificate.delta_r - 20.0
 
 
-def test_the_report_keeps_every_certificate_it_judged(verdicts, start):
-    _, facts = start
+def test_the_report_keeps_every_certificate_it_judged(verdicts):
     best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
     rebuilt = recertified(best, -20.0)
     for index, realised in enumerate(shifted(certified_gains(best), by=-10.0, count=40)):
-        log.record(best if index < 20 else rebuilt, facts, realised)
+        log.record(best if index < 20 else rebuilt, realised)
     [entry] = log.report()
     assert entry["status"] == CertificateStatus.HELD.value  # the latest certificate holds
     assert entry["delta_r"]["certified"] == pytest.approx(certified_gains(rebuilt).delta_r)
@@ -187,12 +199,16 @@ def test_the_report_keeps_every_certificate_it_judged(verdicts, start):
 
 
 def with_claim_lowered(table, skills, group, by):
-    """``table`` as if rebuilt with the entry for ``skills`` from ``group`` claiming ``by`` less on every gain."""
+    """``table`` as if rebuilt with the entry for ``skills`` from ``group``, and its cells, claiming ``by`` less."""
+
+    def claim_less(stats):
+        return {**stats, **{k: {**v, "lower": v["lower"] - by} for k, v in stats.items() if k.startswith("delta_")}}
 
     def lowered(entry):
         if (entry["name"], entry["group"]) != (plan_key(skills), group):
             return entry
-        return {**entry, **{k: {**v, "lower": v["lower"] - by} for k, v in entry.items() if k.startswith("delta_")}}
+        cells = {"cells": [claim_less(cell) for cell in entry["cells"]]} if "cells" in entry else {}
+        return {**claim_less(entry), **cells}
 
     return EffectTable({**table.data, "plans": [lowered(entry) for entry in table.data["plans"]]}, LUNAR_LANDER)
 
@@ -201,7 +217,7 @@ def test_the_runtime_flies_a_revoked_plan_again_once_new_evidence_supports_it(en
     observation, facts = start
     best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
     for realised in shifted(certified_gains(best), by=-10.0, count=40):
-        log.record(best, facts, realised)
+        log.record(best, realised)
     rebuilt = with_claim_lowered(table, best.candidate.skills, group_key(LUNAR_LANDER, facts), by=20.0)
 
     def verdict_under(current):
@@ -214,11 +230,10 @@ def test_the_runtime_flies_a_revoked_plan_again_once_new_evidence_supports_it(en
     assert verdict_under(rebuilt).admitted
 
 
-def test_the_report_is_json_ready(verdicts, start):
-    _, facts = start
+def test_the_report_is_json_ready(verdicts):
     log = FeedbackLog(LUNAR_LANDER, min_samples=2)
     for realised in shifted(certified_gains(best_plan(verdicts)), by=0.0, count=3):
-        log.record(best_plan(verdicts), facts, realised)
+        log.record(best_plan(verdicts), realised)
     assert json.loads(json.dumps(log.report()))[0]["samples"] == 3
 
 
@@ -227,13 +242,12 @@ def test_min_samples_is_checked():
         FeedbackLog(LUNAR_LANDER, min_samples=1)
 
 
-def test_the_report_follows_every_new_outcome(verdicts, start):
-    _, facts = start
+def test_the_report_follows_every_new_outcome(verdicts):
     best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
     outcomes = shifted(certified_gains(best), by=-10.0, count=31)
     for realised in outcomes[:30]:
-        log.record(best, facts, realised)
+        log.record(best, realised)
     assert log.report()[0]["samples"] == 30 and log.revoked()
     log.report()[0]["samples"] = 0  # a caller changing its copy does not change the log
-    log.record(best, facts, outcomes[30])
+    log.record(best, outcomes[30])
     assert log.report()[0]["samples"] == 31

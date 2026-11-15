@@ -1,5 +1,5 @@
 {
-  "schema_version": "subrep.effects.v4",
+  "schema_version": "subrep.effects.v5",
   "environment": "mo-lunar-lander-v3+beacon(-0.5,0.7)",
   "objectives": [
     "safety",
@@ -11,6 +11,7 @@
   "confidence": 0.95,
   "bootstrap_resamples": 2000,
   "min_samples": 30,
+  "cell_episodes": null,
   "support_margin": 0.05,
   "group_facts": [
     "upright",

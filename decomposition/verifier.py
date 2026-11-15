@@ -317,6 +317,7 @@ def _gains_record(gains: Gains) -> Dict[str, object]:
 
 def _estimate_record(estimate: Estimate) -> Dict[str, object]:
     return {
+        "region": estimate.region,
         "samples": estimate.samples,
         "episodes": estimate.episodes,
         "completion_rate": estimate.completion_rate,
