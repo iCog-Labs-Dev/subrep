@@ -30,6 +30,7 @@ from decomposition.verifier import (
     best_plan,
     goal_rate_bound,
     verify,
+    wilson_lower,
 )
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
@@ -176,6 +177,13 @@ def test_a_goal_with_no_final_outcome_has_no_rate_to_check():
 def test_the_goal_rate_bound_is_a_wilson_lower_bound(rate, samples, low, high):
     estimate = Estimate(samples, samples, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes={"won": rate, "lost": 1.0 - rate})
     assert low <= goal_rate_bound(estimate, ("won",)) <= high
+
+
+def test_a_wilson_bound_is_below_the_rate_and_tightens_with_more_trials():
+    assert wilson_lower(0.9, 100) < wilson_lower(0.9, 1000) < 0.9
+    assert wilson_lower(1.0 + 1e-6, 50) == wilson_lower(1.0, 50) < 1.0  # rounded rates can add up past 1
+    with pytest.raises(ValueError, match="trial"):
+        wilson_lower(0.5, 0)
 
 
 def test_the_goal_rate_bound_counts_episodes_not_flights():

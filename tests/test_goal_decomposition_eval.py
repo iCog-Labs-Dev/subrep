@@ -6,10 +6,10 @@ import json
 import numpy as np
 import pytest
 
-from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable
+from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, measure_seeds, table_from_measurements
 from decomposition.executor import Execution, StepRecord, StepStatus
 from decomposition.feedback import REVOKED_REASON, FeedbackLog
-from decomposition.planner import CandidatePlan
+from decomposition.planner import CandidatePlan, plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
 from decomposition.runtime import Continuation, Decision, GoalRun, GoalStatus, pursue
 from decomposition.verifier import GOAL_TOO_RARE, PlanVerdict, plan_skill_id
@@ -23,9 +23,11 @@ from demo.run_goal_decomposition_eval import (
     REPORT_ONLY,
     Safeguards,
     abstention_reasons,
+    check_table,
     evaluate,
     evaluate_profile,
     finish_episode,
+    goal_outcomes,
     plan_flown_to_its_end,
     record_followed_plans,
     revocation_criterion,
@@ -143,13 +145,26 @@ def test_the_runtime_rechecks_in_mid_flight(report):
     assert run["recertified_rechecks"] > 0
 
 
-def test_the_table_is_checked_on_the_evaluation_seeds(report):
+def test_the_table_is_checked_region_by_region_on_the_evaluation_seeds(report):
     rows = report["table_check"]
     assert rows
+    gains = {"delta_r", "delta_safety", "delta_fuel"}
     assert all(1 <= row["episodes"] <= row["samples"] for row in rows)
-    assert all(set(row["below_committed_lower"]) <= {"delta_r", "delta_safety", "delta_fuel"} for row in rows)
-    below = sum(bool(row["below_committed_lower"]) for row in rows)
-    assert f"{below} of {len(rows)} entries had a mean below the committed lower bound" in to_markdown(report)
+    assert all(set(row["below_committed_lower"]) <= gains and set(row["refuted"]) <= gains for row in rows)
+    assert all(set(row["goal_rates"]) == {GOAL} for row in rows)
+    judged = sum(row["episodes"] >= 30 for row in rows)
+    assert f"{judged} of {len(rows)} regions had at least 30 episodes to judge" in to_markdown(report)
+
+
+def test_measurements_never_refute_the_table_built_from_them():
+    book = load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
+    measured = measure_seeds(LUNAR_LANDER, range(2), plans_for(book), max_states=3)
+    table = table_from_measurements(LUNAR_LANDER, range(2), measured, min_samples=1, cell_episodes=1)
+    rows = check_table(table, measured, goal_outcomes(book))
+    assert sum(row["samples"] for row in rows) == sum(len(m.flights) for m in measured)
+    assert not any(row["refuted"] for row in rows)
+    assert not any(rate["refuted"] for row in rows for rate in row["goal_rates"].values())
+    assert any("|cell=" in row["region"] for row in rows)
 
 
 def test_recovery_is_tried_from_every_tilted_start(report):

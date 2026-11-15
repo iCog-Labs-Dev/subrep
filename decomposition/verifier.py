@@ -199,10 +199,17 @@ def goal_rate_bound(estimate: Estimate, success_outcomes: Sequence[str]) -> floa
     one episode are not independent.
     """
     rate = sum((estimate.outcomes or {}).get(outcome, 0.0) for outcome in success_outcomes)
-    n, z = estimate.episodes, _WILSON_Z
-    centre = rate + z * z / (2 * n)
-    margin = z * math.sqrt(rate * (1 - rate) / n + z * z / (4 * n * n))
-    return (centre - margin) / (1 + z * z / n)
+    return wilson_lower(rate, estimate.episodes)
+
+
+def wilson_lower(rate: float, trials: int) -> float:
+    """One-sided 95% Wilson lower confidence bound of a rate observed over ``trials`` independent trials."""
+    if trials < 1:
+        raise ValueError(f"a rate needs at least one trial, got {trials}")
+    rate, z = min(max(rate, 0.0), 1.0), _WILSON_Z  # rounded rates can add up to a hair over 1
+    centre = rate + z * z / (2 * trials)
+    margin = z * math.sqrt(rate * (1 - rate) / trials + z * z / (4 * trials * trials))
+    return (centre - margin) / (1 + z * z / trials)
 
 
 def best_plan(verdicts: Sequence[PlanVerdict]) -> Optional[PlanVerdict]:

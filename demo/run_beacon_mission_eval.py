@@ -45,7 +45,7 @@ from decomposition.mdn_priorities import priorities_from_weights
 from decomposition.recipe_book import RecipeBook
 from decomposition.runtime import Continuation, GoalRun, pursue
 from decomposition.verifier import Priorities
-from demo.build_lunar_effect_table import build_mission_table, mission_book
+from demo.build_lunar_effect_table import build_mission_table, measure, mission_book
 from demo.run_goal_decomposition_eval import (
     CERTIFICATES_NOTE,
     OTHER_POLICIES,
@@ -55,6 +55,7 @@ from demo.run_goal_decomposition_eval import (
     criteria_table,
     criterion,
     frozen_settings,
+    goal_outcomes,
     live_revocation_lines,
     policy_lines,
     record_followed_plans,
@@ -72,8 +73,9 @@ from env.lunar_pilots import mission_pilots
 
 GOALS = ("scan_then_land", "land_on_pad")
 # The mission table was built from seeds 0-1999 and the moved-beacon tables from 0-999.
-# The skills were tuned on seeds 3000-3199, and earlier evaluations flew 8000-8499 and 10000-10499.
-DEFAULT_START_SEED = 11000
+# The skills were tuned and the table's settings chosen on seeds 3000-3199, earlier evaluations
+# flew 8000-8499 and 10000-10499, and an earlier version of this one 11000-11499.
+DEFAULT_START_SEED = 12000
 DEFAULT_SEEDS = 500
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 FIXED_MISSION = ("go_to_beacon", "cruise_to_pad", "slow_descent", "touch_down")
@@ -406,7 +408,7 @@ def evaluate(
         "goal_split": split,
         "limit": compare_limit(goal_runs["mission_first"], limited),
         "moved_beacons": moved_runs,
-        "table_check": check_table(table, seeds, DEFAULT_BEACON),
+        "table_check": check_table(table, measure(seeds, DEFAULT_BEACON), goal_outcomes(book)),
     }
     report["criteria"] = check_criteria(report)
     return report

@@ -26,7 +26,9 @@ The evaluation also checks the measurements behind the certificates:
   than ``MIN_SAMPLES`` flights is not judged, and a criterion with nothing to
   judge reports insufficient evidence, never a pass;
 - the effect table: the plans are measured again on the unseen seeds and
-  compared with the committed table;
+  compared with the committed table, region by region, as ``check_table``
+  describes: how often a certified lower bound is refuted by the unseen seeds
+  says whether the bounds are as reliable as they claim;
 - ``recover_stability`` is pursued from every tilted start.
 
 The seeds must not overlap those the effect table was built from, and every
@@ -52,7 +54,17 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 
 from decomposition.domain import Domain
-from decomposition.effects import DEFAULT_TABLE_PATH, MAX_STATES_PER_SEED, EffectTable, gain_names
+from decomposition.effects import (
+    DECIMALS,
+    DEFAULT_TABLE_PATH,
+    MAX_STATES_PER_SEED,
+    EffectTable,
+    Estimate,
+    PlanFlight,
+    SeedMeasurement,
+    gain_names,
+    lower_bound,
+)
 from decomposition.executor import execute
 from decomposition.feedback import MIN_SAMPLES, REVOKED_REASON, CertificateStatus, FeedbackLog, realised_gains
 from decomposition.mdn_priorities import priorities_from_weights
@@ -67,8 +79,8 @@ from decomposition.runtime import (
     GoalStatus,
     pursue,
 )
-from decomposition.verifier import Priorities
-from demo.build_lunar_effect_table import build
+from decomposition.verifier import Priorities, goal_rate_bound, wilson_lower
+from demo.build_lunar_effect_table import measure
 from demo.run_lunar_baseline import CONTROLLERS, EpisodeResult, run_episode, summarise
 from demo.run_lunar_subskill_reliability import SEQUENCES
 from demo.train_lunar_mdn import load_landing_mdn
@@ -79,9 +91,10 @@ from env.lunar_subskills import NO_ENGINE
 
 GOAL = "land_on_pad"
 # The table was built from seeds 0-1999. Seeds 2000-2499 and 6000-6499 were looked at
-# while reviewing the plans, 3000-3199 while tuning skills, and 8000-8499, 9000-9499 and
-# 10000-10499 by earlier evaluations, so these are fresh.
-DEFAULT_START_SEED = 11000
+# while reviewing the plans, 3000-3199 while tuning skills and choosing the table's
+# settings, 8000-8499, 9000-9499 and 10000-10499 by earlier evaluations, and 11000-11499
+# by an earlier version of this one, so these are fresh.
+DEFAULT_START_SEED = 12000
 DEFAULT_SEEDS = 500
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 # The policies for when no plan is admitted, as the reports name them; the first is the default.
@@ -341,32 +354,64 @@ def _last_change(run: GoalRun) -> int:
 # ---------------------------------------------------------------------------
 
 
-def check_table(
-    committed: EffectTable, seeds: range, beacon: Optional[Tuple[float, float]] = None
-) -> List[Dict[str, Any]]:
-    """Measure the plans again on ``seeds``, as the committed table was built, and compare each group with it.
+def goal_outcomes(book: RecipeBook) -> Dict[str, Tuple[str, ...]]:
+    """The success outcomes of every goal in ``book`` that has them."""
+    return {name: goal.success_outcomes for name, goal in book.goals.items() if goal.success_outcomes}
 
-    ``beacon`` is the mission's beacon, or None for landing. Every gain whose mean on
-    the new seeds falls below the committed lower bound is named.
+
+def check_table(
+    committed: EffectTable, measurements: Sequence[SeedMeasurement], goals: Mapping[str, Sequence[str]]
+) -> List[Dict[str, Any]]:
+    """Compare what the plans achieved on unseen seeds with what the committed table certifies, region by region.
+
+    Each flight in ``measurements`` goes to the region the committed table answers
+    from for its start state; flights from states the table does not cover are
+    left out. A gain falls below when its mean on the unseen seeds is below the
+    committed lower bound, which noise alone often does, and is refuted when even
+    the one-sided upper confidence bound of that mean is below it, which a correct
+    bound allows only rarely. ``goals`` names each goal's success outcomes; a
+    goal's rate is refuted when its Wilson upper bound on the unseen seeds is below
+    the committed Wilson lower bound.
     """
-    unseen = build(seeds, beacon, min_samples=1)
-    fresh = {(entry["name"], entry["group"]): entry for entry in unseen.data["plans"]}
     gains = gain_names(committed.data["objectives"])
+    flown: Dict[Tuple[str, str], List[PlanFlight]] = {}
+    certified: Dict[Tuple[str, str], Estimate] = {}
+    for flight in (flight for measurement in measurements for flight in measurement.flights):
+        estimate = committed.plan(flight.skills, np.asarray(flight.plan.start))
+        if estimate is not None:
+            key = (flight.plan.name, estimate.region)
+            flown.setdefault(key, []).append(flight)
+            certified[key] = estimate
     rows = []
-    for entry in committed.data["plans"]:
-        if entry["episodes"] < committed.min_samples or (entry["name"], entry["group"]) not in fresh:
-            continue
-        new = fresh[(entry["name"], entry["group"])]
+    for (plan, region), flights in sorted(flown.items()):
+        estimate = certified[(plan, region)]
+        values = np.stack([flight.plan.gains for flight in flights])
+        seeds = [flight.seed for flight in flights]
+        episodes = len(set(seeds))
+        lower = np.array([estimate.lower.delta_r, *estimate.lower.delta_n])
+        # Compared at the precision the table keeps, so rounding alone never refutes a bound.
+        mean = np.round(values.mean(axis=0), DECIMALS)
+        upper = np.round([-lower_bound(-values[:, index], index, seeds) for index in range(values.shape[1])], DECIMALS)
+        goal_rates = {}
+        for goal, success in goals.items():
+            rate = sum(flight.outcome in success for flight in flights) / len(flights)
+            bound = goal_rate_bound(estimate, success)
+            goal_rates[goal] = {
+                "committed_lower": round(bound, 4),
+                "unseen": round(rate, 4),
+                "refuted": 1.0 - wilson_lower(1.0 - rate, episodes) < bound,
+            }
         rows.append(
             {
-                "plan": entry["name"],
-                "group": entry["group"],
-                "samples": new["samples"],
-                "episodes": new["episodes"],
-                "committed_mean_delta_r": entry["delta_r"]["mean"],
-                "committed_lower_delta_r": entry["delta_r"]["lower"],
-                "unseen_mean_delta_r": new["delta_r"]["mean"],
-                "below_committed_lower": [name for name in gains if new[name]["mean"] < entry[name]["lower"]],
+                "plan": plan,
+                "region": region,
+                "samples": len(flights),
+                "episodes": episodes,
+                "committed_lower": {name: round(float(value), 3) for name, value in zip(gains, lower)},
+                "unseen_mean": {name: round(float(value), 3) for name, value in zip(gains, mean)},
+                "below_committed_lower": [name for name, low, m in zip(gains, lower, mean) if m < low],
+                "refuted": [name for name, low, high in zip(gains, lower, upper) if high < low],
+                "goal_rates": goal_rates,
             }
         )
     return rows
@@ -374,23 +419,31 @@ def check_table(
 
 def table_check_lines(rows: Sequence[Mapping[str, Any]]) -> List[str]:
     """Markdown comparing the committed table with the same plans measured on the evaluation seeds."""
-    below = sum(bool(row["below_committed_lower"]) for row in rows)
+    judged = [row for row in rows if row["episodes"] >= MIN_SAMPLES]
+    below = sum(bool(row["below_committed_lower"]) for row in judged)
+    refuted = sum(bool(row["refuted"]) for row in judged)
+    goal_refuted = sum(any(rate["refuted"] for rate in row["goal_rates"].values()) for row in judged)
     lines = [
         "",
         "## Effect table on unseen seeds",
         "",
-        f"The plans measured again on the evaluation seeds: {below} of {len(rows)} entries had a mean below the "
-        "committed lower bound on some gain. An entry with few episodes here is a noisy check.",
+        f"The plans measured again on the evaluation seeds, region by region. {len(judged)} of {len(rows)} regions "
+        f"had at least {MIN_SAMPLES} episodes to judge. Of those, {below} had a mean below the committed lower bound "
+        f"on some gain, which noise alone often causes; {refuted} were refuted on some gain, the upper confidence "
+        f"bound of the unseen mean falling below the committed lower bound; and {goal_refuted} had a goal rate "
+        "refuted the same way.",
         "",
-        "| Plan | Start group | Samples (episodes) | Committed mean Δr | Committed lower Δr | Unseen mean Δr "
-        "| Unseen mean below lower |",
-        "|---|---|---|---|---|---|---|",
+        "| Plan | Start region | Samples (episodes) | Committed lower Δr | Unseen mean Δr | Below lower | Refuted "
+        "| Goal rates refuted |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
+        refuted_goals = [goal for goal, rate in row["goal_rates"].items() if rate["refuted"]]
         lines.append(
-            f"| {row['plan']} | {row['group']} | {row['samples']} ({row['episodes']}) | "
-            f"{row['committed_mean_delta_r']:.1f} | {row['committed_lower_delta_r']:.1f} | "
-            f"{row['unseen_mean_delta_r']:.1f} | {', '.join(row['below_committed_lower']) or 'none'} |"
+            f"| {row['plan']} | {row['region']} | {row['samples']} ({row['episodes']}) | "
+            f"{row['committed_lower']['delta_r']:.1f} | {row['unseen_mean']['delta_r']:.1f} | "
+            f"{', '.join(row['below_committed_lower']) or 'none'} | {', '.join(row['refuted']) or 'none'} | "
+            f"{', '.join(refuted_goals) or 'none'} |"
         )
     return lines
 
@@ -488,7 +541,7 @@ def evaluate(
         "goal_runs": goal_runs,
         "policies": policies,
         "live_revocation": live,
-        "table_check": check_table(table, seeds),
+        "table_check": check_table(table, measure(seeds), goal_outcomes(book)),
         "recover_stability": recovery,
     }
     report["criteria"] = check_criteria(report)
@@ -693,7 +746,16 @@ def frozen_settings(table: EffectTable) -> Dict[str, Any]:
         "feedback_min_samples": MIN_SAMPLES,
         "table": {
             key: table.data[key]
-            for key in ("schema_version", "environment", "seeds", "gamma", "confidence", "min_samples", "support_margin")
+            for key in (
+                "schema_version",
+                "environment",
+                "seeds",
+                "gamma",
+                "confidence",
+                "min_samples",
+                "cell_episodes",
+                "support_margin",
+            )
         },
         "max_states_per_seed": MAX_STATES_PER_SEED,
     }
@@ -706,8 +768,12 @@ def settings_line(settings: Mapping[str, Any]) -> str:
         f"Settings: `{settings['default_policy']}` policy, goal rate at least {settings['min_goal_rate']}, "
         f"switch margin {settings['switch_margin']}, table {table['schema_version']} from seeds "
         f"{table['seeds']['start']}-{table['seeds']['stop'] - 1} (at least {table['min_samples']} episodes per entry, "
-        f"{settings['max_states_per_seed']} states per episode at most)."
+        f"{_cells(table['cell_episodes'])}, {settings['max_states_per_seed']} states per episode at most)."
     )
+
+
+def _cells(cell_episodes: Optional[int]) -> str:
+    return "groups kept whole" if cell_episodes is None else f"groups split into cells of about {cell_episodes} episodes"
 
 
 def _profile_record(priorities: Priorities) -> Dict[str, Any]:
