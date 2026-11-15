@@ -5,6 +5,7 @@ import dataclasses
 import numpy as np
 import pytest
 
+from decomposition import effects
 from decomposition.effects import (
     DEFAULT_TABLE_PATH,
     GAMMA,
@@ -317,6 +318,32 @@ def test_cells_are_reproducible():
     starts, episodes = blobs()
     first = partition(starts, episodes, cell_episodes=50, min_episodes=30, seed=3)
     np.testing.assert_array_equal(first, partition(starts, episodes, cell_episodes=50, min_episodes=30, seed=3))
+
+
+def two_rows_of_three():
+    """Six tight clusters in two rows of three, 33 episodes each: splitting the rows apart beats splitting the columns."""
+    rng = np.random.default_rng(1)
+    centres = [(x, y) for y in (-1.0, 1.0) for x in (-1.0, 0.0, 1.0)]
+    states = np.vstack([np.array(centre) + rng.normal(0.0, 0.05, size=(33, 2)) for centre in centres])
+    return states, np.arange(len(states))
+
+
+def test_cells_follow_the_states_whatever_the_seed(monkeypatch):
+    states, episodes = two_rows_of_three()
+    splits = [partition(states, episodes, cell_episodes=99, min_episodes=30, seed=seed) for seed in range(20)]
+    for labels in splits:
+        np.testing.assert_array_equal(labels, splits[0])
+    assert (splits[0][:99] == 0).all() and (splits[0][99:] == 1).all()  # the bottom row, then the top row
+    monkeypatch.setattr(effects, "KMEANS_RESTARTS", 1)
+    single = [partition(states, episodes, cell_episodes=99, min_episodes=30, seed=seed) for seed in range(20)]
+    assert any(not np.array_equal(labels, splits[0]) for labels in single)  # one start alone can split the columns
+
+
+def test_cells_are_numbered_in_the_order_their_first_states_appear():
+    states, episodes = blobs()
+    order = np.r_[np.arange(100, 200), np.arange(100)]  # the far cluster first
+    labels = partition(states[order], episodes[order], cell_episodes=100, min_episodes=30, seed=0)
+    assert (labels[:100] == 0).all() and (labels[100:] == 1).all()
 
 
 def test_a_few_outlying_states_join_the_nearest_cell_instead_of_keeping_the_group_whole():

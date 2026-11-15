@@ -56,14 +56,14 @@ A group can still mix states that fare differently: the states a plan usually
 starts from and rarer ones reached after a switch of plans in mid-flight. A
 group's averages would then understate what a plan achieves from the usual states
 and overstate it from the rare ones. Each plan's group is therefore split into
-cells of similar states, by k-means over the states scaled by their spread in
-the group, with about ``cell_episodes`` episodes per cell and at least
-``MIN_SAMPLES`` in each; a cell with fewer is merged into its neighbours. The
-cells are found from the states alone, never from how the flights from them
-went, so an estimate from a cell is not biased towards cells where flights
-happened to go well. A lookup answers from the cell nearest the state, and names
-it as the region the estimate holds for. The support still decides whether a
-state is measured at all.
+cells of similar states, by the best of several k-means starts over the states
+scaled by their spread in the group, with about ``cell_episodes`` episodes per
+cell and at least ``MIN_SAMPLES`` in each; a cell with fewer is merged into its
+neighbours. The cells are found from the states alone, never from how the
+flights from them went, so an estimate from a cell is not biased towards cells
+where flights happened to go well. A lookup answers from the cell nearest the
+state, and names it as the region the estimate holds for. The support still
+decides whether a state is measured at all.
 """
 
 from __future__ import annotations
@@ -88,6 +88,7 @@ MIN_SAMPLES = 30
 MAX_STATES_PER_SEED = 60  # bounds the states measured per seed when plans keep branching
 CELL_EPISODES: Optional[int] = 200  # episodes per cell a group is split into; None keeps each group whole
 KMEANS_ITERATIONS = 100
+KMEANS_RESTARTS = 10  # k-means++ starts a group's split into cells is chosen from
 # Fraction of the range of each number of the states added on both sides of a group's support.
 SUPPORT_MARGIN = 0.05
 DEFAULT_TABLE_PATH = Path(__file__).resolve().parent / "data" / "lunar_effects.json"
@@ -421,10 +422,13 @@ def partition(
     k-means starts with about one cell per ``cell_episodes`` episodes. While a cell
     holds fewer than ``min_episodes`` episodes, the smallest is dropped and k-means
     goes on from the centres left, so a few outlying states join their nearest
-    cell rather than keep the whole group from being split. Every state ends in the
-    cell whose centre is nearest, as a lookup finds it. There is one cell when
-    ``cell_episodes`` is None. The cells depend on the states, the episodes they
-    come from and ``seed`` only, never on what was measured from them.
+    cell rather than keep the whole group from being split. Of the splits from
+    ``KMEANS_RESTARTS`` k-means++ starts, the one whose states lie closest to their
+    cells' centres is kept, so the cells follow the states rather than one random
+    start. Every state ends in the cell whose centre is nearest, as a lookup finds
+    it, and the cells are numbered in the order their first states appear. There is
+    one cell when ``cell_episodes`` is None. The cells depend on the states, the
+    episodes they come from and ``seed`` only, never on what was measured from them.
     """
     states = np.asarray(states, dtype=np.float64)
     episodes = np.asarray(episodes)
@@ -432,20 +436,42 @@ def partition(
         raise ValueError("every state needs the episode it was measured in")
     if cell_episodes is not None and cell_episodes < 1:
         raise ValueError(f"cell_episodes must be at least 1, got {cell_episodes}")
-    whole = np.zeros(len(states), dtype=np.int64)
+    best = np.zeros(len(states), dtype=np.int64)
     scaled = states / cell_scale(states)
     count = 1 if cell_episodes is None else len(np.unique(episodes)) // cell_episodes
     count = min(count, len(np.unique(scaled, axis=0)))
     if count < 2:
-        return whole
-    labels, centres = _lloyd(scaled, _first_centres(scaled, count, np.random.default_rng(seed)))
+        return best
+    rng = np.random.default_rng(seed)
+    least = np.inf
+    for _ in range(KMEANS_RESTARTS):
+        labels, centres = _split(scaled, episodes, count, min_episodes, rng)
+        spread = float(((scaled - centres[labels]) ** 2).sum())
+        if len(centres) > 1 and spread < least:
+            best, least = labels, spread
+    return _in_order_of_appearance(best)
+
+
+def _split(
+    points: np.ndarray, episodes: np.ndarray, count: int, min_episodes: int, rng: np.random.Generator
+) -> Tuple[np.ndarray, np.ndarray]:
+    """One k-means split from a k-means++ start, smallest cells merged away until each has ``min_episodes``."""
+    labels, centres = _lloyd(points, _first_centres(points, count, rng))
     while len(centres) > 1:
         sizes = [len(np.unique(episodes[labels == cell])) for cell in range(len(centres))]
         smallest = int(np.argmin(sizes))
         if sizes[smallest] >= min_episodes:
-            return labels
-        labels, centres = _lloyd(scaled, np.delete(centres, smallest, axis=0))
-    return whole
+            break
+        labels, centres = _lloyd(points, np.delete(centres, smallest, axis=0))
+    return labels, centres
+
+
+def _in_order_of_appearance(labels: np.ndarray) -> np.ndarray:
+    """``labels`` renumbered so that cell 0 holds the first state, cell 1 the first state not in cell 0, and so on."""
+    cells, first = np.unique(labels, return_index=True)
+    rank = np.empty(len(cells), dtype=np.int64)
+    rank[np.argsort(first)] = np.arange(len(cells))
+    return rank[np.searchsorted(cells, labels)]
 
 
 def _first_centres(points: np.ndarray, count: int, rng: np.random.Generator) -> np.ndarray:
