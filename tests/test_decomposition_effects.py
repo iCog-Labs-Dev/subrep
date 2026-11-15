@@ -318,6 +318,16 @@ def test_cells_are_reproducible():
     np.testing.assert_array_equal(first, partition(starts, episodes, cell_episodes=50, min_episodes=30, seed=3))
 
 
+def test_a_few_outlying_states_join_the_nearest_cell_instead_of_keeping_the_group_whole():
+    starts, episodes = blobs()
+    outliers = np.full((5, 8), 60.0)
+    states = np.vstack([starts, outliers])
+    labels = partition(states, np.arange(len(states)), cell_episodes=60, min_episodes=30, seed=0)
+    assert labels.max() == 1
+    assert len(set(labels[:100])) == len(set(labels[100:200])) == 1 and labels[0] != labels[100]
+    assert len(set(labels[200:])) == 1 and labels[200] in (labels[0], labels[100])
+
+
 def test_a_partition_checks_its_inputs():
     starts, episodes = blobs()
     with pytest.raises(ValueError, match="episode"):
