@@ -160,3 +160,148 @@ def test_repeated_threatening_outcomes_raise_safety_weight() -> None:
 
     assert_valid_weights(signal.weights)
     assert signal.weights[0] > baseline.weights[0]
+
+
+# ---------------------------------------------------------------------------
+# Caution follows the task danger, and recovers
+# ---------------------------------------------------------------------------
+#
+# Synthetic outcomes shaped like the median flown episodes on seeds 1-40,
+# against the noop baseline with gamma 1: a ppo_deterministic landing
+# (delta_r +200, delta_n [+308, -98], 211 steps) and a left_engine crash
+# (delta_r 0, delta_n [-441, -68], 68 steps). They carry the LunarLander task
+# risk (env/lunar_lander_rollout.py). The scales are the ppo demo's first-step
+# appraisal scales. Assertions use margins well inside the measured values.
+
+requires_metamo = pytest.mark.skipif(
+    not is_available(),
+    reason="MetaMo checkout not found (see bridge/_loader.py for search paths)",
+)
+
+PAYOFF_SCALE = 66.667
+MOTIVE_SCALE = 266.672
+
+
+def _landing() -> SkillOutcome:
+    from env.lunar_lander_rollout import TASK_RISK_LANDING
+
+    return SkillOutcome(
+        delta_r=200.0, delta_n=np.array([308.0, -98.0]), admitted=True,
+        effort=0.211, risk=TASK_RISK_LANDING,
+    )
+
+
+def _crash() -> SkillOutcome:
+    from env.lunar_lander_rollout import TASK_RISK_CRASH
+
+    return SkillOutcome(
+        delta_r=0.0, delta_n=np.array([-441.0, -68.0]), admitted=True,
+        effort=0.068, risk=TASK_RISK_CRASH,
+    )
+
+
+def _trace(outcomes):
+    """(securing, eps, safety weight) after each outcome, on a fresh governor."""
+    governor = make_lunar_lander_governor(
+        payoff_scale=PAYOFF_SCALE, motive_scale=MOTIVE_SCALE
+    )
+    trace = []
+    for outcome in outcomes:
+        governor.step(outcome)
+        signal = governor.signal()
+        trace.append(
+            (governor.modulator_summary()["securing"], signal.pds_epsilon, float(signal.weights[0]))
+        )
+    return trace
+
+
+@requires_metamo
+def test_caution_is_higher_after_crashes_than_after_landings() -> None:
+    """Measured after 6 of each: Securing 0.998 vs 0.081, eps 0 vs 0.366."""
+    after_crashes = _trace([_crash()] * 6)[-1]
+    after_landings = _trace([_landing()] * 6)[-1]
+
+    assert after_crashes[0] > after_landings[0] + 0.5
+    assert after_crashes[1] < after_landings[1]
+    assert after_crashes[2] > after_landings[2]
+
+
+@requires_metamo
+def test_caution_recovers_after_a_crash_streak() -> None:
+    """6 crashes then 12 landings: measured Securing 0.998 -> 0.07, eps 0 -> 0.37."""
+    trace = _trace([_crash()] * 6 + [_landing()] * 12)
+    peak = max(range(len(trace)), key=lambda i: trace[i][0])
+    end = trace[-1]
+
+    assert peak <= 6, "caution should peak during or just after the crashes"
+    assert end[0] < trace[peak][0] - 0.5
+    assert end[1] > trace[peak][1] + 0.2
+
+
+@requires_metamo
+def test_caution_recovers_after_a_long_crash_streak() -> None:
+    """Pinning means never coming back, not being near 1 under sustained threat.
+
+    30 crashes take Securing to about 0.999, which is MetaMo's own behaviour
+    under a constant high risk. Measured, 2 landings then bring it down by
+    0.42 and 4 by 0.86, and eps ends at 0.37.
+    """
+    trace = _trace([_crash()] * 30 + [_landing()] * 12)
+    after_crashes = trace[29]
+
+    assert after_crashes[1] == pytest.approx(0.0)
+    assert min(s for s, _, _ in trace[30:34]) < after_crashes[0] - 0.3
+    assert trace[-1][1] > 0.1
+
+
+@requires_metamo
+def test_caution_rises_again_after_relaxing() -> None:
+    """From the relaxed state, a crash still tightens the budget at once.
+
+    Measured with real flown outcomes: one crash cuts eps from 0.37 to 0.13.
+    """
+    trace = _trace([_landing()] * 30 + [_crash()] * 2)
+    rested, one_crash, two_crashes = trace[29], trace[30], trace[31]
+
+    assert one_crash[0] > rested[0]
+    assert one_crash[1] < 0.5 * rested[1]
+    assert two_crashes[1] <= one_crash[1]
+
+
+@requires_metamo
+def test_the_same_outcome_sequence_reproduces_the_same_states() -> None:
+    sequence = [_crash()] * 6 + [_landing()] * 12
+
+    def run():
+        governor = make_lunar_lander_governor(
+            payoff_scale=PAYOFF_SCALE, motive_scale=MOTIVE_SCALE
+        )
+        states = []
+        for outcome in sequence:
+            governor.step(outcome)
+            signal = governor.signal()
+            states.append((
+                governor.state.M.copy(), governor.state.G.copy(),
+                signal.weights.copy(), signal.pds_epsilon, signal.cvar_tail_level,
+            ))
+        return states
+
+    for a, b in zip(run(), run()):
+        np.testing.assert_array_equal(a[0], b[0])
+        np.testing.assert_array_equal(a[1], b[1])
+        np.testing.assert_array_equal(a[2], b[2])
+        assert a[3] == b[3] and a[4] == b[4]
+
+
+@requires_metamo
+def test_the_governor_exposes_the_stimulus_it_was_given() -> None:
+    from env.lunar_lander_rollout import TASK_RISK_LANDING
+
+    governor = make_lunar_lander_governor(
+        payoff_scale=PAYOFF_SCALE, motive_scale=MOTIVE_SCALE
+    )
+    assert governor.last_stimulus is None
+    governor.step(_landing())
+    assert governor.last_stimulus.risk == pytest.approx(TASK_RISK_LANDING)
+    governor.step(SkillOutcome(delta_r=0.0, delta_n=np.zeros(2), admitted=False))
+    assert governor.last_stimulus.risk == pytest.approx(0.25)

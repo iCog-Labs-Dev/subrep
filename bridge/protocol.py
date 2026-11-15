@@ -31,6 +31,9 @@ class SkillOutcome:
         novelty: Optional externally supplied novelty in [0, 1]. When None
             the stimulus builder derives it from the outcome.
         effort: Normalized execution cost in [0, 1].
+        risk: Optional measured task danger in [0, 1]. When None, the
+            stimulus builder derives risk from the worst motive change. The
+            rejection penalty applies either way.
     """
 
     delta_r: float
@@ -38,6 +41,7 @@ class SkillOutcome:
     admitted: bool
     novelty: Optional[float] = None
     effort: float = 0.0
+    risk: Optional[float] = None
 
     def __post_init__(self) -> None:
         delta_n = np.asarray(self.delta_n, dtype=np.float64).reshape(-1)
@@ -48,6 +52,11 @@ class SkillOutcome:
         if not np.isfinite(self.delta_r):
             raise ValueError(f"delta_r must be finite, got {self.delta_r}")
         object.__setattr__(self, "delta_n", delta_n)
+        if self.risk is not None:
+            risk = float(self.risk)
+            if not np.isfinite(risk) or not (0.0 <= risk <= 1.0):
+                raise ValueError(f"risk must be None or in [0, 1], got {self.risk}")
+            object.__setattr__(self, "risk", risk)
 
 
 @dataclass(frozen=True)

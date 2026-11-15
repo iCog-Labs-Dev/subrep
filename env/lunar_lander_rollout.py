@@ -84,6 +84,27 @@ NOOP_BASELINE = CandidatePolicy("noop", _fixed_action_policy(0))
 # small that the next non-zero outcome saturates every stimulus.
 APPRAISAL_SCALE_FLOOR = 10.0
 
+# Task danger of the flown episode, for `episode_outcome(..., task_risk=True)`.
+# By default the bridge derives risk from the worst objective change against
+# the noop baseline (bridge/stimulus.py). Against a baseline that crashes,
+# that reads a clean landing as moderately risky (about 0.39), because the
+# landing burns more fuel than doing nothing, so MetaMo's caution never
+# relaxes. These levels read the flown episode's own result instead.
+#
+# The landing level was chosen by feeding the real governor real flown
+# outcomes (ppo_deterministic landings, left_engine crashes, seeds 1-40).
+# MetaMo settles in one of two states: relaxed (eps about 0.33-0.38) or
+# cautious (eps about 0.05). Which one depends on the landing level, with the
+# switch between 0.22 and 0.28 as the appraisal scales move by +-20%. 0.1 stays
+# in the relaxed state across that range: 30 landings leave Securing at 0.08
+# and eps at 0.37 (below eps_max 0.5); after 30 crashes, 2 landings bring
+# Securing down by 0.3; and from rest, one crash cuts eps from 0.37 to 0.13.
+# A landing is not treated as entirely safe (0.0), which recovers slightly
+# faster but otherwise behaves the same.
+TASK_RISK_CRASH = 1.0
+TASK_RISK_TIMEOUT = 0.5
+TASK_RISK_LANDING = 0.1
+
 
 def _policy_callable(policy: Any) -> Any:
     """The callable behind a `CandidatePolicy`, or `policy` itself."""
@@ -314,6 +335,7 @@ def episode_outcome(
     *,
     admitted: bool,
     max_steps: Optional[int] = DEFAULT_MAX_STEPS,
+    task_risk: bool = False,
 ) -> SkillOutcome:
     """The `SkillOutcome` for an executed episode, for the governor's `step()`.
 
@@ -321,6 +343,10 @@ def episode_outcome(
     is whether the chosen candidate passed the gates. When `max_steps` is not
     given, the step limit the episode actually ran with (`info["max_steps"]`)
     is used, so effort cannot be measured against a different limit.
+
+    With `task_risk=True`, the outcome carries the flown episode's task
+    danger (`task_risk_of`) as its measured risk. Off by default, so the
+    bridge's own risk applies.
     """
     # Effort is flight time: the episode's steps over the most it could have
     # run (`max_steps`, capped by the env's own time limit). A quick touchdown
@@ -335,4 +361,20 @@ def episode_outcome(
         delta_n=np.asarray(delta_n, dtype=np.float64),
         admitted=bool(admitted),
         effort=effort,
+        risk=task_risk_of(info) if task_risk else None,
     )
+
+
+def task_risk_of(info: Dict[str, Any]) -> float:
+    """The flown episode's task danger: a crash, a landing, or neither.
+
+    Reads the strict flags `run_episode` reports (env/lunar_lander_wrapper.py
+    sets them). Anything that neither crashed nor landed -- the time limit, or
+    a `max_steps` cut-off -- reads as the middle level. A missing key reads as
+    "neither", so a minimal `info` still works.
+    """
+    if info.get("crashed", False):
+        return TASK_RISK_CRASH
+    if info.get("landing_success", False):
+        return TASK_RISK_LANDING
+    return TASK_RISK_TIMEOUT

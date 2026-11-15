@@ -81,8 +81,10 @@ def build_stimulus_values(
     Semantics:
         conduciveness -- how well the outcome served current objectives, from
             the scalarized improvement `delta_r + w . delta_n`.
-        risk -- driven by the WORST motive movement, matching the CDS/PDS
-            gates' own `min_i(delta_n_i)` criterion, plus a rejection penalty.
+        risk -- the outcome's measured task danger when it carries one
+            (`outcome.risk`); otherwise driven by the WORST motive movement,
+            matching the CDS/PDS gates' own `min_i(delta_n_i)` criterion. A
+            rejection penalty is added in both cases.
         novelty -- magnitude of motive movement, i.e. how much the world moved,
             unless the caller supplies a measured value.
         effort -- passed through from the outcome.
@@ -103,10 +105,17 @@ def build_stimulus_values(
     conduciveness = _unit_squash(improvement, scale=2.0)
 
     # The gates admit on delta_r + min_i(delta_n_i), so the worst component is
-    # the right risk signal -- a large average gain can still hide a harmful
-    # collapse in one objective.
-    worst_motive = float(np.min(delta_n))
-    risk = _positive_squash(-worst_motive, scale=motive_scale)
+    # the default risk signal -- a large average gain can still hide a harmful
+    # collapse in one objective. It measures change against the baseline,
+    # though, not danger: against a baseline that always fails, a clean
+    # success that spends more of one objective still reads as risky. An
+    # environment that knows the task's own danger passes it as
+    # `outcome.risk` instead.
+    if outcome.risk is None:
+        worst_motive = float(np.min(delta_n))
+        risk = _positive_squash(-worst_motive, scale=motive_scale)
+    else:
+        risk = float(outcome.risk)
     if not outcome.admitted:
         risk = min(1.0, risk + rejection_risk)
 

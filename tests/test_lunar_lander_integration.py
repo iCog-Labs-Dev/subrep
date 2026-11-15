@@ -412,6 +412,38 @@ def test_a_tighter_epsilon_rejects_a_real_trade_off_landing():
 
 
 @requires_pilot
+def test_real_crashes_then_real_landings_raise_then_relax_caution():
+    """One governor, fed real flown episodes with the task risk.
+
+    4 left_engine crashes, then 8 ppo_deterministic landings, on seeds 1-12.
+    Caution peaks with the crashes, then falls, and eps comes back up.
+    """
+    env = SubRepEnv(seed=1)
+    try:
+        landing_policy = next(c for c in ppo_candidates(env) if c.skill_id == "ppo_deterministic")
+        crash_policy = CandidatePolicy("left_engine", _fixed_action_policy(1))
+        _, records = evaluate_candidates(env, ci_candidates(env), seed=1)
+        payoff_scale, motive_scale = appraisal_scales(records)
+        governor = make_lunar_lander_governor(
+            payoff_scale=payoff_scale, motive_scale=motive_scale
+        )
+        trace = []
+        for step, seed in enumerate(range(1, 13)):
+            policy = crash_policy if step < 4 else landing_policy
+            delta_r, delta_n, info = execute_candidate(env, policy, seed=seed)
+            assert info["crashed"] if step < 4 else info["landing_success"], (step, seed)
+            governor.step(episode_outcome(delta_r, delta_n, info, admitted=True, task_risk=True))
+            trace.append((securing(governor), governor.signal().pds_epsilon))
+    finally:
+        env.close()
+
+    peak = max(range(len(trace)), key=lambda i: trace[i][0])
+    assert peak <= 4, "caution should peak during or just after the crashes"
+    assert trace[-1][0] < trace[peak][0] - 0.3
+    assert trace[-1][1] > trace[peak][1]
+
+
+@requires_pilot
 def test_a_landing_reads_safer_than_a_crash():
     """Two identical fresh governors, one fed a real landing, one a real crash.
 
