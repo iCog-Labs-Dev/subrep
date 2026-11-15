@@ -158,8 +158,8 @@ def test_the_table_is_checked_region_by_region_on_the_evaluation_seeds(report):
 
 def test_measurements_never_refute_the_table_built_from_them():
     book = load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills)
-    measured = measure_seeds(LUNAR_LANDER, range(2), plans_for(book), max_states=3)
-    table = table_from_measurements(LUNAR_LANDER, range(2), measured, min_samples=1, cell_episodes=1)
+    measured = measure_seeds(LUNAR_LANDER, range(4), plans_for(book), max_states=3)
+    table = table_from_measurements(LUNAR_LANDER, range(4), measured, min_samples=1, cell_episodes=1)
     rows = check_table(table, measured, goal_outcomes(book))
     assert sum(row["samples"] for row in rows) == sum(len(m.flights) for m in measured)
     assert not any(row["refuted"] for row in rows)

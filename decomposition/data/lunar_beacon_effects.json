@@ -1,5 +1,5 @@
 {
-  "schema_version": "subrep.effects.v6",
+  "schema_version": "subrep.effects.v7",
   "environment": "mo-lunar-lander-v3+beacon(-0.5,0.7)",
   "objectives": [
     "safety",
@@ -376,7 +376,7 @@
     },
     {
       "name": "go_to_beacon",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 1.0,
@@ -414,27 +414,27 @@
       "delta_r": {
         "mean": 114.972146,
         "std": 90.283704,
-        "lower": 108.213383
+        "lower": 107.986812
       },
       "delta_safety": {
         "mean": 159.723583,
         "std": 69.229528,
-        "lower": 154.429631
+        "lower": 154.425438
       },
       "delta_fuel": {
         "mean": -158.484011,
         "std": 50.626817,
-        "lower": -162.323256
+        "lower": -162.425069
       },
       "delta_mission": {
         "mean": 113.732574,
         "std": 11.548988,
-        "lower": 112.86261
+        "lower": 112.854408
       }
     },
     {
       "name": "go_to_beacon",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 1.0,
@@ -472,27 +472,27 @@
       "delta_r": {
         "mean": 71.005003,
         "std": 67.951858,
-        "lower": 60.948563
+        "lower": 61.836187
       },
       "delta_safety": {
         "mean": 129.756328,
         "std": 38.383311,
-        "lower": 124.289779
+        "lower": 124.273884
       },
       "delta_fuel": {
         "mean": -172.235659,
         "std": 46.394325,
-        "lower": -179.011977
+        "lower": -178.754361
       },
       "delta_mission": {
         "mean": 113.484333,
         "std": 10.662383,
-        "lower": 111.951699
+        "lower": 111.964346
       }
     },
     {
       "name": "go_to_beacon",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 1.0,
@@ -530,27 +530,27 @@
       "delta_r": {
         "mean": 101.908923,
         "std": 77.307186,
-        "lower": 95.569455
+        "lower": 95.209098
       },
       "delta_safety": {
         "mean": 142.518163,
         "std": 52.570786,
-        "lower": 137.985627
+        "lower": 138.085359
       },
       "delta_fuel": {
         "mean": -155.567472,
         "std": 50.568402,
-        "lower": -159.801279
+        "lower": -159.76528
       },
       "delta_mission": {
         "mean": 114.958231,
         "std": 11.558115,
-        "lower": 113.974896
+        "lower": 113.961815
       }
     },
     {
       "name": "go_to_beacon",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 1.0,
@@ -588,27 +588,27 @@
       "delta_r": {
         "mean": 82.619377,
         "std": 54.155407,
-        "lower": 77.219752
+        "lower": 77.213472
       },
       "delta_safety": {
         "mean": 106.184467,
         "std": 39.783213,
-        "lower": 102.241522
+        "lower": 102.161577
       },
       "delta_fuel": {
         "mean": -140.578835,
         "std": 31.985519,
-        "lower": -143.830015
+        "lower": -143.658955
       },
       "delta_mission": {
         "mean": 117.013746,
         "std": 7.043428,
-        "lower": 116.292565
+        "lower": 116.337909
       }
     },
     {
       "name": "go_to_beacon",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 1.0,
@@ -646,27 +646,27 @@
       "delta_r": {
         "mean": 46.427156,
         "std": 59.046461,
-        "lower": 36.286762
+        "lower": 36.134263
       },
       "delta_safety": {
         "mean": 75.427182,
         "std": 48.542373,
-        "lower": 66.809001
+        "lower": 67.189839
       },
       "delta_fuel": {
         "mean": -146.624832,
         "std": 28.410908,
-        "lower": -151.341338
+        "lower": -151.555465
       },
       "delta_mission": {
         "mean": 117.624806,
         "std": 6.328126,
-        "lower": 116.533755
+        "lower": 116.509166
       }
     },
     {
       "name": "go_to_beacon",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 1.0,
@@ -704,27 +704,27 @@
       "delta_r": {
         "mean": 74.427765,
         "std": 51.896443,
-        "lower": 68.668743
+        "lower": 68.563278
       },
       "delta_safety": {
         "mean": 99.996946,
         "std": 37.928045,
-        "lower": 95.754776
+        "lower": 95.644126
       },
       "delta_fuel": {
         "mean": -142.187008,
         "std": 32.849071,
-        "lower": -145.810582
+        "lower": -146.026412
       },
       "delta_mission": {
         "mean": 116.617827,
         "std": 7.157141,
-        "lower": 115.849549
+        "lower": 115.800504
       }
     },
     {
       "name": "go_to_beacon",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 1.0,
@@ -762,27 +762,27 @@
       "delta_r": {
         "mean": 20.62729,
         "std": 58.416338,
-        "lower": 14.411834
+        "lower": 14.616621
       },
       "delta_safety": {
         "mean": 21.188713,
         "std": 46.739212,
-        "lower": 16.411725
+        "lower": 16.389768
       },
       "delta_fuel": {
         "mean": -121.222983,
         "std": 28.811072,
-        "lower": -124.252436
+        "lower": -124.285819
       },
       "delta_mission": {
         "mean": 120.661561,
         "std": 6.795281,
-        "lower": 119.937644
+        "lower": 119.932725
       }
     },
     {
       "name": "go_to_beacon",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 1.0,
@@ -820,27 +820,27 @@
       "delta_r": {
         "mean": -6.024757,
         "std": 44.208353,
-        "lower": -14.845727
+        "lower": -14.386114
       },
       "delta_safety": {
         "mean": 8.705243,
         "std": 34.053259,
-        "lower": 2.313846
+        "lower": 2.339797
       },
       "delta_fuel": {
         "mean": -135.136159,
         "std": 25.012668,
-        "lower": -139.923688
+        "lower": -140.066377
       },
       "delta_mission": {
         "mean": 120.406159,
         "std": 6.472948,
-        "lower": 119.146336
+        "lower": 119.111399
       }
     },
     {
       "name": "go_to_beacon",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 1.0,
@@ -878,27 +878,27 @@
       "delta_r": {
         "mean": 7.436212,
         "std": 51.9213,
-        "lower": 1.425351
+        "lower": 1.385914
       },
       "delta_safety": {
         "mean": 17.350657,
         "std": 42.56343,
-        "lower": 12.502897
+        "lower": 12.397367
       },
       "delta_fuel": {
         "mean": -129.142039,
         "std": 28.406598,
-        "lower": -132.461753
+        "lower": -132.630451
       },
       "delta_mission": {
         "mean": 119.227595,
         "std": 7.000913,
-        "lower": 118.413266
+        "lower": 118.381039
       }
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.959911,
@@ -936,17 +936,17 @@
       "delta_r": {
         "mean": 120.301025,
         "std": 74.279569,
-        "lower": 114.575798
+        "lower": 114.733912
       },
       "delta_safety": {
         "mean": 222.277,
         "std": 78.951607,
-        "lower": 216.313627
+        "lower": 216.359028
       },
       "delta_fuel": {
         "mean": -101.975975,
         "std": 15.262257,
-        "lower": -103.166155
+        "lower": -103.232505
       },
       "delta_mission": {
         "mean": 0.0,
@@ -956,7 +956,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.953488,
@@ -994,17 +994,17 @@
       "delta_r": {
         "mean": 98.560769,
         "std": 43.346443,
-        "lower": 92.830014
+        "lower": 92.308205
       },
       "delta_safety": {
         "mean": 191.334873,
         "std": 47.842344,
-        "lower": 184.889596
+        "lower": 184.405084
       },
       "delta_fuel": {
         "mean": -92.774104,
         "std": 13.921363,
-        "lower": -94.682282
+        "lower": -94.834661
       },
       "delta_mission": {
         "mean": 0.0,
@@ -1014,7 +1014,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.976261,
@@ -1052,17 +1052,17 @@
       "delta_r": {
         "mean": 106.546651,
         "std": 57.916041,
-        "lower": 101.585151
+        "lower": 101.377563
       },
       "delta_safety": {
         "mean": 207.286039,
         "std": 62.32272,
-        "lower": 201.84513
+        "lower": 201.874956
       },
       "delta_fuel": {
         "mean": -100.739388,
         "std": 13.603069,
-        "lower": -101.961187
+        "lower": -101.967147
       },
       "delta_mission": {
         "mean": 0.0,
@@ -1072,7 +1072,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 0.93609,
@@ -1110,17 +1110,17 @@
       "delta_r": {
         "mean": 82.694398,
         "std": 48.918883,
-        "lower": 77.617139
+        "lower": 77.747152
       },
       "delta_safety": {
         "mean": 169.680519,
         "std": 46.472419,
-        "lower": 164.852602
+        "lower": 165.122525
       },
       "delta_fuel": {
         "mean": -86.986121,
         "std": 27.744974,
-        "lower": -90.293256
+        "lower": -90.203023
       },
       "delta_mission": {
         "mean": 0.0,
@@ -1130,7 +1130,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 0.978723,
@@ -1168,17 +1168,17 @@
       "delta_r": {
         "mean": 61.477896,
         "std": 48.805587,
-        "lower": 53.399935
+        "lower": 53.194253
       },
       "delta_safety": {
         "mean": 146.642267,
         "std": 48.652852,
-        "lower": 138.558085
+        "lower": 138.444767
       },
       "delta_fuel": {
         "mean": -85.164371,
         "std": 6.265667,
-        "lower": -86.217322
+        "lower": -86.162816
       },
       "delta_mission": {
         "mean": 0.0,
@@ -1188,7 +1188,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.958333,
@@ -1226,17 +1226,17 @@
       "delta_r": {
         "mean": 79.7418,
         "std": 42.804509,
-        "lower": 74.845174
+        "lower": 74.978471
       },
       "delta_safety": {
         "mean": 166.634646,
         "std": 41.81709,
-        "lower": 161.834194
+        "lower": 162.035602
       },
       "delta_fuel": {
         "mean": -86.892846,
         "std": 21.010311,
-        "lower": -89.395808
+        "lower": -89.306764
       },
       "delta_mission": {
         "mean": 0.0,
@@ -1246,7 +1246,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 0.995935,
@@ -1284,17 +1284,17 @@
       "delta_r": {
         "mean": 27.932095,
         "std": 44.910301,
-        "lower": 23.099922
+        "lower": 23.175653
       },
       "delta_safety": {
         "mean": 108.801534,
         "std": 45.116858,
-        "lower": 104.087331
+        "lower": 104.086511
       },
       "delta_fuel": {
         "mean": -80.869439,
         "std": 4.349631,
-        "lower": -81.318991
+        "lower": -81.304283
       },
       "delta_mission": {
         "mean": 0.0,
@@ -1304,7 +1304,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 1.0,
@@ -1342,17 +1342,17 @@
       "delta_r": {
         "mean": 12.595532,
         "std": 34.480446,
-        "lower": 6.337335
+        "lower": 5.985979
       },
       "delta_safety": {
         "mean": 94.392471,
         "std": 33.560191,
-        "lower": 88.465704
+        "lower": 87.887082
       },
       "delta_fuel": {
         "mean": -81.796939,
         "std": 4.771864,
-        "lower": -82.707682
+        "lower": -82.728677
       },
       "delta_mission": {
         "mean": 0.0,
@@ -1362,7 +1362,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.994872,
@@ -1400,17 +1400,17 @@
       "delta_r": {
         "mean": 23.361341,
         "std": 40.533114,
-        "lower": 18.92775
+        "lower": 18.732284
       },
       "delta_safety": {
         "mean": 103.398137,
         "std": 40.731754,
-        "lower": 98.92003
+        "lower": 98.80214
       },
       "delta_fuel": {
         "mean": -80.036795,
         "std": 3.640374,
-        "lower": -80.490096
+        "lower": -80.482889
       },
       "delta_mission": {
         "mean": 0.0,
@@ -1420,7 +1420,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.979955,
@@ -1458,27 +1458,27 @@
       "delta_r": {
         "mean": 26.069208,
         "std": 107.739727,
-        "lower": 17.624657
+        "lower": 17.821072
       },
       "delta_safety": {
         "mean": 219.714869,
         "std": 73.867926,
-        "lower": 213.906251
+        "lower": 214.25021
       },
       "delta_fuel": {
         "mean": -310.750062,
         "std": 51.10701,
-        "lower": -314.90678
+        "lower": -314.591381
       },
       "delta_mission": {
         "mean": 117.104401,
         "std": 15.079729,
-        "lower": 115.941203
+        "lower": 115.951045
       }
     },
     {
       "name": "mission_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.976744,
@@ -1516,27 +1516,27 @@
       "delta_r": {
         "mean": -18.990154,
         "std": 75.546055,
-        "lower": -30.200909
+        "lower": -29.55905
       },
       "delta_safety": {
         "mean": 186.52543,
         "std": 40.203711,
-        "lower": 180.822906
+        "lower": 180.902759
       },
       "delta_fuel": {
         "mean": -322.899959,
         "std": 42.437496,
-        "lower": -329.075078
+        "lower": -328.873485
       },
       "delta_mission": {
         "mean": 117.384375,
         "std": 17.558037,
-        "lower": 114.979007
+        "lower": 115.063807
       }
     },
     {
       "name": "mission_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.979228,
@@ -1574,27 +1574,27 @@
       "delta_r": {
         "mean": 12.959835,
         "std": 91.648273,
-        "lower": 4.984847
+        "lower": 4.732218
       },
       "delta_safety": {
         "mean": 203.495025,
         "std": 57.378327,
-        "lower": 198.498989
+        "lower": 198.384048
       },
       "delta_fuel": {
         "mean": -309.642024,
         "std": 50.563413,
-        "lower": -314.154968
+        "lower": -313.993301
       },
       "delta_mission": {
         "mean": 119.106833,
         "std": 16.507138,
-        "lower": 117.652537
+        "lower": 117.739859
       }
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 0.988722,
@@ -1632,27 +1632,27 @@
       "delta_r": {
         "mean": -8.591166,
         "std": 58.416842,
-        "lower": -14.217172
+        "lower": -14.603419
       },
       "delta_safety": {
         "mean": 161.227033,
         "std": 38.994181,
-        "lower": 157.319211
+        "lower": 157.325624
       },
       "delta_fuel": {
         "mean": -291.880555,
         "std": 37.578548,
-        "lower": -295.655743
+        "lower": -295.529904
       },
       "delta_mission": {
         "mean": 122.062356,
         "std": 10.322666,
-        "lower": 121.101905
+        "lower": 121.014712
       }
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 0.989362,
@@ -1690,27 +1690,27 @@
       "delta_r": {
         "mean": -45.355916,
         "std": 62.811857,
-        "lower": -56.110661
+        "lower": -56.043851
       },
       "delta_safety": {
         "mean": 129.112829,
         "std": 47.538694,
-        "lower": 121.17105
+        "lower": 120.768954
       },
       "delta_fuel": {
         "mean": -296.374489,
         "std": 35.962257,
-        "lower": -302.28823
+        "lower": -302.481696
       },
       "delta_mission": {
         "mean": 121.905745,
         "std": 10.53602,
-        "lower": 120.33774
+        "lower": 120.34639
       }
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.967593,
@@ -1748,27 +1748,27 @@
       "delta_r": {
         "mean": -16.74656,
         "std": 61.347674,
-        "lower": -23.878956
+        "lower": -23.690721
       },
       "delta_safety": {
         "mean": 154.63991,
         "std": 38.32041,
-        "lower": 150.276006
+        "lower": 150.289059
       },
       "delta_fuel": {
         "mean": -293.551757,
         "std": 40.397884,
-        "lower": -298.296579
+        "lower": -298.181436
       },
       "delta_mission": {
         "mean": 122.165286,
         "std": 12.131054,
-        "lower": 120.87134
+        "lower": 120.883892
       }
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 0.987805,
@@ -1806,27 +1806,27 @@
       "delta_r": {
         "mean": -72.058304,
         "std": 65.586018,
-        "lower": -78.950442
+        "lower": -78.548197
       },
       "delta_safety": {
         "mean": 78.754798,
         "std": 47.154901,
-        "lower": 73.72547
+        "lower": 74.084904
       },
       "delta_fuel": {
         "mean": -275.592349,
         "std": 34.813057,
-        "lower": -279.217759
+        "lower": -279.180877
       },
       "delta_mission": {
         "mean": 124.779247,
         "std": 9.858071,
-        "lower": 123.820414
+        "lower": 123.80664
       }
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 0.970588,
@@ -1864,27 +1864,27 @@
       "delta_r": {
         "mean": -98.797485,
         "std": 51.161412,
-        "lower": -108.869104
+        "lower": -108.633381
       },
       "delta_safety": {
         "mean": 64.056927,
         "std": 35.561474,
-        "lower": 57.210926
+        "lower": 57.380933
       },
       "delta_fuel": {
         "mean": -288.529628,
         "std": 35.405315,
-        "lower": -295.518213
+        "lower": -295.700076
       },
       "delta_mission": {
         "mean": 125.675215,
         "std": 11.319584,
-        "lower": 123.622633
+        "lower": 123.665602
       }
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.984615,
@@ -1922,27 +1922,27 @@
       "delta_r": {
         "mean": -82.791872,
         "std": 57.442582,
-        "lower": -89.512795
+        "lower": -89.329987
       },
       "delta_safety": {
         "mean": 73.016155,
         "std": 43.0284,
-        "lower": 68.108496
+        "lower": 68.021613
       },
       "delta_fuel": {
         "mean": -280.045681,
         "std": 30.981218,
-        "lower": -283.678776
+        "lower": -283.560428
       },
       "delta_mission": {
         "mean": 124.237654,
         "std": 9.986396,
-        "lower": 123.198009
+        "lower": 123.142679
       }
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.957684,
@@ -1980,17 +1980,17 @@
       "delta_r": {
         "mean": 117.062677,
         "std": 82.886566,
-        "lower": 110.856149
+        "lower": 110.504808
       },
       "delta_safety": {
         "mean": 218.980972,
         "std": 83.354715,
-        "lower": 212.726027
+        "lower": 212.648945
       },
       "delta_fuel": {
         "mean": -101.918295,
         "std": 19.998796,
-        "lower": -103.567021
+        "lower": -103.628655
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2000,7 +2000,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.953488,
@@ -2038,17 +2038,17 @@
       "delta_r": {
         "mean": 93.509039,
         "std": 53.924371,
-        "lower": 85.432059
+        "lower": 85.663763
       },
       "delta_safety": {
         "mean": 188.52117,
         "std": 57.673671,
-        "lower": 180.003768
+        "lower": 180.147007
       },
       "delta_fuel": {
         "mean": -95.012132,
         "std": 12.941524,
-        "lower": -96.897849
+        "lower": -96.972098
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2058,7 +2058,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.964392,
@@ -2096,17 +2096,17 @@
       "delta_r": {
         "mean": 105.216687,
         "std": 62.078293,
-        "lower": 99.573242
+        "lower": 99.687825
       },
       "delta_safety": {
         "mean": 205.603619,
         "std": 64.845062,
-        "lower": 199.620615
+        "lower": 199.934901
       },
       "delta_fuel": {
         "mean": -100.386932,
         "std": 13.64617,
-        "lower": -101.580419
+        "lower": -101.622603
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2116,7 +2116,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 0.951128,
@@ -2154,17 +2154,17 @@
       "delta_r": {
         "mean": 84.663127,
         "std": 44.796366,
-        "lower": 79.848655
+        "lower": 80.115095
       },
       "delta_safety": {
         "mean": 173.487055,
         "std": 41.842357,
-        "lower": 169.264261
+        "lower": 169.20789
       },
       "delta_fuel": {
         "mean": -88.823928,
         "std": 23.249763,
-        "lower": -91.262857
+        "lower": -91.369083
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2174,7 +2174,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 0.989362,
@@ -2212,17 +2212,17 @@
       "delta_r": {
         "mean": 62.643538,
         "std": 46.204077,
-        "lower": 54.75924
+        "lower": 54.527551
       },
       "delta_safety": {
         "mean": 149.590563,
         "std": 46.353068,
-        "lower": 141.857604
+        "lower": 141.356625
       },
       "delta_fuel": {
         "mean": -86.947024,
         "std": 10.302126,
-        "lower": -88.77833
+        "lower": -88.813547
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2232,7 +2232,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.986111,
@@ -2270,17 +2270,17 @@
       "delta_r": {
         "mean": 80.874537,
         "std": 38.554793,
-        "lower": 76.441344
+        "lower": 76.614101
       },
       "delta_safety": {
         "mean": 166.99636,
         "std": 39.973041,
-        "lower": 162.502612
+        "lower": 162.499257
       },
       "delta_fuel": {
         "mean": -86.121823,
         "std": 8.069687,
-        "lower": -87.013468
+        "lower": -86.998334
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2290,7 +2290,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 1.0,
@@ -2328,17 +2328,17 @@
       "delta_r": {
         "mean": 27.239331,
         "std": 44.591906,
-        "lower": 22.624704
+        "lower": 22.65669
       },
       "delta_safety": {
         "mean": 109.031657,
         "std": 44.936334,
-        "lower": 104.432681
+        "lower": 104.413761
       },
       "delta_fuel": {
         "mean": -81.792325,
         "std": 4.292074,
-        "lower": -82.236533
+        "lower": -82.248986
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2348,7 +2348,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 1.0,
@@ -2386,17 +2386,17 @@
       "delta_r": {
         "mean": 10.90194,
         "std": 35.227555,
-        "lower": 4.157664
+        "lower": 4.194272
       },
       "delta_safety": {
         "mean": 94.54503,
         "std": 34.848856,
-        "lower": 87.790665
+        "lower": 87.914387
       },
       "delta_fuel": {
         "mean": -83.643092,
         "std": 4.037319,
-        "lower": -84.445464
+        "lower": -84.44329
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2406,7 +2406,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.994872,
@@ -2444,17 +2444,17 @@
       "delta_r": {
         "mean": 21.783428,
         "std": 40.872579,
-        "lower": 17.092395
+        "lower": 17.151348
       },
       "delta_safety": {
         "mean": 102.902526,
         "std": 40.922778,
-        "lower": 98.130691
+        "lower": 98.148254
       },
       "delta_fuel": {
         "mean": -81.119099,
         "std": 4.226805,
-        "lower": -81.645977
+        "lower": -81.605253
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2464,7 +2464,7 @@
     },
     {
       "name": "slow_descent",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 1.0,
@@ -2502,17 +2502,17 @@
       "delta_r": {
         "mean": 90.981903,
         "std": 71.38374,
-        "lower": 85.41507
+        "lower": 85.52013
       },
       "delta_safety": {
         "mean": 201.240548,
         "std": 72.276914,
-        "lower": 195.689053
+        "lower": 195.696094
       },
       "delta_fuel": {
         "mean": -110.258644,
         "std": 4.433284,
-        "lower": -110.606517
+        "lower": -110.597241
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2522,7 +2522,7 @@
     },
     {
       "name": "slow_descent",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 1.0,
@@ -2560,17 +2560,17 @@
       "delta_r": {
         "mean": 51.97784,
         "std": 40.024926,
-        "lower": 45.88285
+        "lower": 46.090031
       },
       "delta_safety": {
         "mean": 158.439644,
         "std": 39.854105,
-        "lower": 152.295175
+        "lower": 152.576483
       },
       "delta_fuel": {
         "mean": -106.461805,
         "std": 3.513052,
-        "lower": -106.967503
+        "lower": -106.973089
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2580,7 +2580,7 @@
     },
     {
       "name": "slow_descent",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 1.0,
@@ -2618,17 +2618,17 @@
       "delta_r": {
         "mean": 74.619996,
         "std": 54.649658,
-        "lower": 69.734726
+        "lower": 69.842245
       },
       "delta_safety": {
         "mean": 183.144156,
         "std": 54.773965,
-        "lower": 178.28796
+        "lower": 178.351017
       },
       "delta_fuel": {
         "mean": -108.52416,
         "std": 3.731328,
-        "lower": -108.856176
+        "lower": -108.859097
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2754,7 +2754,7 @@
     },
     {
       "name": "slow_descent",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 1.0,
@@ -2792,17 +2792,17 @@
       "delta_r": {
         "mean": 46.109428,
         "std": 37.8484,
-        "lower": 42.066573
+        "lower": 42.487339
       },
       "delta_safety": {
         "mean": 150.114938,
         "std": 38.730477,
-        "lower": 145.968838
+        "lower": 146.268324
       },
       "delta_fuel": {
         "mean": -104.005509,
         "std": 4.529841,
-        "lower": -104.444183
+        "lower": -104.450119
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2812,7 +2812,7 @@
     },
     {
       "name": "slow_descent",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 1.0,
@@ -2850,17 +2850,17 @@
       "delta_r": {
         "mean": 14.341216,
         "std": 46.654817,
-        "lower": 6.663053
+        "lower": 6.081858
       },
       "delta_safety": {
         "mean": 117.432526,
         "std": 46.98966,
-        "lower": 109.667522
+        "lower": 109.205343
       },
       "delta_fuel": {
         "mean": -103.09131,
         "std": 3.441852,
-        "lower": -103.680721
+        "lower": -103.660948
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2870,7 +2870,7 @@
     },
     {
       "name": "slow_descent",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 1.0,
@@ -2908,17 +2908,17 @@
       "delta_r": {
         "mean": 42.6582,
         "std": 35.959408,
-        "lower": 38.710832
+        "lower": 38.750479
       },
       "delta_safety": {
         "mean": 143.672753,
         "std": 37.390234,
-        "lower": 139.471828
+        "lower": 139.619509
       },
       "delta_fuel": {
         "mean": -101.014553,
         "std": 4.711392,
-        "lower": -101.544667
+        "lower": -101.518177
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2928,7 +2928,7 @@
     },
     {
       "name": "slow_descent",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 1.0,
@@ -2966,17 +2966,17 @@
       "delta_r": {
         "mean": -25.909508,
         "std": 45.600979,
-        "lower": -30.752031
+        "lower": -30.995115
       },
       "delta_safety": {
         "mean": 70.464757,
         "std": 46.007831,
-        "lower": 65.528662
+        "lower": 65.380518
       },
       "delta_fuel": {
         "mean": -96.374264,
         "std": 3.886143,
-        "lower": -96.771647
+        "lower": -96.781367
       },
       "delta_mission": {
         "mean": 0.0,
@@ -2986,7 +2986,7 @@
     },
     {
       "name": "slow_descent",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 1.0,
@@ -3024,17 +3024,17 @@
       "delta_r": {
         "mean": -44.209228,
         "std": 34.941761,
-        "lower": -50.659359
+        "lower": -50.763662
       },
       "delta_safety": {
         "mean": 55.369686,
         "std": 35.370801,
-        "lower": 48.862431
+        "lower": 48.736542
       },
       "delta_fuel": {
         "mean": -99.578914,
         "std": 3.668609,
-        "lower": -100.307617
+        "lower": -100.305325
       },
       "delta_mission": {
         "mean": 0.0,
@@ -3102,7 +3102,7 @@
     },
     {
       "name": "slow_descent",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 1.0,
@@ -3140,17 +3140,17 @@
       "delta_r": {
         "mean": -29.277321,
         "std": 41.646256,
-        "lower": -34.029167
+        "lower": -34.171013
       },
       "delta_safety": {
         "mean": 64.750203,
         "std": 41.893909,
-        "lower": 59.942638
+        "lower": 59.82678
       },
       "delta_fuel": {
         "mean": -94.027524,
         "std": 3.768123,
-        "lower": -94.465176
+        "lower": -94.473839
       },
       "delta_mission": {
         "mean": 0.0,
@@ -3218,7 +3218,7 @@
     },
     {
       "name": "touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.934718,
@@ -3256,17 +3256,17 @@
       "delta_r": {
         "mean": 100.567265,
         "std": 60.350553,
-        "lower": 95.295313
+        "lower": 95.21536
       },
       "delta_safety": {
         "mean": 177.293679,
         "std": 63.034411,
-        "lower": 171.607952
+        "lower": 171.739632
       },
       "delta_fuel": {
         "mean": -76.726414,
         "std": 11.49734,
-        "lower": -77.796304
+        "lower": -77.715553
       },
       "delta_mission": {
         "mean": 0.0,
@@ -3450,7 +3450,7 @@
     },
     {
       "name": "touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.953704,
@@ -3488,17 +3488,17 @@
       "delta_r": {
         "mean": 87.914121,
         "std": 39.98954,
-        "lower": 83.59779
+        "lower": 83.19663
       },
       "delta_safety": {
         "mean": 162.41737,
         "std": 41.181351,
-        "lower": 158.020869
+        "lower": 157.51907
       },
       "delta_fuel": {
         "mean": -74.503249,
         "std": 8.30235,
-        "lower": -75.427817
+        "lower": -75.452896
       },
       "delta_mission": {
         "mean": 0.0,
@@ -3508,7 +3508,7 @@
     },
     {
       "name": "touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.994872,
@@ -3546,17 +3546,17 @@
       "delta_r": {
         "mean": 27.623389,
         "std": 40.536421,
-        "lower": 23.095436
+        "lower": 23.082378
       },
       "delta_safety": {
         "mean": 103.00007,
         "std": 40.867787,
-        "lower": 98.401025
+        "lower": 98.384627
       },
       "delta_fuel": {
         "mean": -75.376682,
         "std": 3.152207,
-        "lower": -75.747137
+        "lower": -75.73782
       },
       "delta_mission": {
         "mean": 0.0,
@@ -13555,7 +13555,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>brake>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.975501,
@@ -13593,22 +13593,22 @@
       "delta_r": {
         "mean": 166.163421,
         "std": 118.915959,
-        "lower": 156.675701
+        "lower": 157.166593
       },
       "delta_safety": {
         "mean": 273.723901,
         "std": 79.123559,
-        "lower": 267.60396
+        "lower": 267.61941
       },
       "delta_fuel": {
         "mean": -293.932912,
         "std": 47.610595,
-        "lower": -297.54067
+        "lower": -297.510141
       },
       "delta_mission": {
         "mean": 186.372431,
         "std": 27.594417,
-        "lower": 184.143253
+        "lower": 184.204244
       },
       "outcomes": {
         "mission_complete": 0.939866,
@@ -13622,22 +13622,22 @@
         "delta_r": {
           "mean": -52.403788,
           "std": 68.463735,
-          "lower": -57.875052
+          "lower": -58.055188
         },
         "delta_safety": {
           "mean": -176.191615,
           "std": 54.884552,
-          "lower": -180.440377
+          "lower": -180.548816
         },
         "delta_fuel": {
           "mean": 52.971634,
           "std": 21.229067,
-          "lower": 51.304409
+          "lower": 51.345397
         },
         "delta_mission": {
           "mean": 70.816194,
           "std": 25.335213,
-          "lower": 68.790785
+          "lower": 68.682288
         }
       },
       "skills": [
@@ -13684,22 +13684,22 @@
           "delta_r": {
             "mean": 221.353988,
             "std": 120.93222,
-            "lower": 207.849314
+            "lower": 208.34452
           },
           "delta_safety": {
             "mean": 283.713021,
             "std": 83.043011,
-            "lower": 274.428452
+            "lower": 274.840263
           },
           "delta_fuel": {
             "mean": -263.723197,
             "std": 42.953417,
-            "lower": -268.454144
+            "lower": -268.299979
           },
           "delta_mission": {
             "mean": 201.364166,
             "std": 27.870664,
-            "lower": 198.277495
+            "lower": 198.263518
           },
           "outcomes": {
             "mission_complete": 0.928571,
@@ -13713,22 +13713,22 @@
             "delta_r": {
               "mean": -47.704874,
               "std": 77.888501,
-              "lower": -56.676104
+              "lower": -56.38581
             },
             "delta_safety": {
               "mean": -164.190449,
               "std": 60.19587,
-              "lower": -170.856609
+              "lower": -170.838086
             },
             "delta_fuel": {
               "mean": 41.421402,
               "std": 18.806768,
-              "lower": 39.298467
+              "lower": 39.308933
             },
             "delta_mission": {
               "mean": 75.064175,
               "std": 30.094462,
-              "lower": 71.650392
+              "lower": 71.659334
             }
           }
         },
@@ -13754,22 +13754,22 @@
           "delta_r": {
             "mean": 111.218145,
             "std": 87.224502,
-            "lower": 101.727576
+            "lower": 101.425974
           },
           "delta_safety": {
             "mean": 263.779178,
             "std": 73.685289,
-            "lower": 255.52338
+            "lower": 255.649645
           },
           "delta_fuel": {
             "mean": -324.008361,
             "std": 29.556109,
-            "lower": -327.283319
+            "lower": -327.342107
           },
           "delta_mission": {
             "mean": 171.447326,
             "std": 17.31144,
-            "lower": 169.556429
+            "lower": 169.464606
           },
           "outcomes": {
             "mission_complete": 0.951111,
@@ -13783,22 +13783,22 @@
             "delta_r": {
               "mean": -57.081819,
               "std": 57.185768,
-              "lower": -63.303448
+              "lower": -63.213176
             },
             "delta_safety": {
               "mean": -188.139443,
               "std": 46.018078,
-              "lower": -193.014108
+              "lower": -193.135195
             },
             "delta_fuel": {
               "mean": 64.470531,
               "std": 16.798259,
-              "lower": 62.689415
+              "lower": 62.751327
             },
             "delta_mission": {
               "mean": 66.587093,
               "std": 18.530823,
-              "lower": 64.478022
+              "lower": 64.439724
             }
           }
         }
@@ -13806,7 +13806,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>brake>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.984496,
@@ -13844,22 +13844,22 @@
       "delta_r": {
         "mean": 114.798222,
         "std": 108.23389,
-        "lower": 99.79736
+        "lower": 99.321694
       },
       "delta_safety": {
         "mean": 237.237025,
         "std": 50.312007,
-        "lower": 230.252324
+        "lower": 229.968652
       },
       "delta_fuel": {
         "mean": -306.285734,
         "std": 51.649998,
-        "lower": -313.301377
+        "lower": -313.843507
       },
       "delta_mission": {
         "mean": 183.846931,
         "std": 31.363357,
-        "lower": 179.328254
+        "lower": 179.335909
       },
       "outcomes": {
         "mission_complete": 0.906977,
@@ -13873,22 +13873,22 @@
         "delta_r": {
           "mean": -56.882628,
           "std": 76.484324,
-          "lower": -68.351906
+          "lower": -67.625723
         },
         "delta_safety": {
           "mean": -180.235729,
           "std": 59.751128,
-          "lower": -188.914973
+          "lower": -188.603912
         },
         "delta_fuel": {
           "mean": 52.990504,
           "std": 21.651025,
-          "lower": 49.740971
+          "lower": 49.876639
         },
         "delta_mission": {
           "mean": 70.362598,
           "std": 25.131658,
-          "lower": 66.415796
+          "lower": 66.892332
         }
       },
       "skills": [
@@ -13901,7 +13901,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>brake>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.985163,
@@ -13939,22 +13939,22 @@
       "delta_r": {
         "mean": 151.946994,
         "std": 120.422596,
-        "lower": 140.997072
+        "lower": 141.616722
       },
       "delta_safety": {
         "mean": 254.74538,
         "std": 67.602355,
-        "lower": 248.585848
+        "lower": 248.419034
       },
       "delta_fuel": {
         "mean": -290.492813,
         "std": 52.104573,
-        "lower": -295.119401
+        "lower": -294.893909
       },
       "delta_mission": {
         "mean": 187.694428,
         "std": 30.682614,
-        "lower": 184.85655
+        "lower": 184.956008
       },
       "outcomes": {
         "mission_complete": 0.922849,
@@ -13968,22 +13968,22 @@
         "delta_r": {
           "mean": -54.789573,
           "std": 83.929963,
-          "lower": -62.173237
+          "lower": -62.616137
         },
         "delta_safety": {
           "mean": -175.623241,
           "std": 64.762681,
-          "lower": -181.374986
+          "lower": -181.347917
         },
         "delta_fuel": {
           "mean": 49.704804,
           "std": 23.201089,
-          "lower": 47.666356
+          "lower": 47.59591
         },
         "delta_mission": {
           "mean": 71.128865,
           "std": 27.437706,
-          "lower": 68.719632
+          "lower": 68.608057
         }
       },
       "skills": [
@@ -14398,7 +14398,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>brake>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 0.984962,
@@ -14436,22 +14436,22 @@
       "delta_r": {
         "mean": 127.131871,
         "std": 96.885995,
-        "lower": 117.365574
+        "lower": 117.397048
       },
       "delta_safety": {
         "mean": 211.766409,
         "std": 57.089714,
-        "lower": 205.89806
+        "lower": 205.847093
       },
       "delta_fuel": {
         "mean": -273.758437,
         "std": 42.637617,
-        "lower": -278.281487
+        "lower": -278.119702
       },
       "delta_mission": {
         "mean": 189.1239,
         "std": 29.785852,
-        "lower": 186.069401
+        "lower": 186.145813
       },
       "outcomes": {
         "mission_complete": 0.890977,
@@ -14465,22 +14465,22 @@
         "delta_r": {
           "mean": -57.41428,
           "std": 84.398591,
-          "lower": -65.93803
+          "lower": -66.137293
         },
         "delta_safety": {
           "mean": -175.184377,
           "std": 61.45142,
-          "lower": -181.444273
+          "lower": -181.690553
         },
         "delta_fuel": {
           "mean": 46.170674,
           "std": 19.724403,
-          "lower": 44.166324
+          "lower": 44.198312
         },
         "delta_mission": {
           "mean": 71.599422,
           "std": 27.652608,
-          "lower": 68.788681
+          "lower": 68.826015
         }
       },
       "skills": [
@@ -14493,7 +14493,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>brake>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 1.0,
@@ -14531,22 +14531,22 @@
       "delta_r": {
         "mean": 102.486134,
         "std": 82.946128,
-        "lower": 87.8518
+        "lower": 88.780009
       },
       "delta_safety": {
         "mean": 187.030536,
         "std": 52.494204,
-        "lower": 178.048953
+        "lower": 177.876791
       },
       "delta_fuel": {
         "mean": -279.229737,
         "std": 39.757167,
-        "lower": -286.090546
+        "lower": -285.914655
       },
       "delta_mission": {
         "mean": 194.685336,
         "std": 22.626451,
-        "lower": 190.683367
+        "lower": 190.914495
       },
       "outcomes": {
         "mission_complete": 0.946809,
@@ -14560,22 +14560,22 @@
         "delta_r": {
           "mean": -42.624991,
           "std": 60.928014,
-          "lower": -53.573702
+          "lower": -53.536076
         },
         "delta_safety": {
           "mean": -166.70188,
           "std": 50.276814,
-          "lower": -175.248486
+          "lower": -175.588231
         },
         "delta_fuel": {
           "mean": 47.01636,
           "std": 15.202955,
-          "lower": 44.517973
+          "lower": 44.311219
         },
         "delta_mission": {
           "mean": 77.06053,
           "std": 20.162772,
-          "lower": 73.452067
+          "lower": 73.343919
         }
       },
       "skills": [
@@ -14588,7 +14588,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>brake>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.967593,
@@ -14626,22 +14626,22 @@
       "delta_r": {
         "mean": 126.223617,
         "std": 87.875084,
-        "lower": 116.956947
+        "lower": 116.751213
       },
       "delta_safety": {
         "mean": 209.62877,
         "std": 45.210618,
-        "lower": 204.895678
+        "lower": 204.675299
       },
       "delta_fuel": {
         "mean": -274.557043,
         "std": 41.355768,
-        "lower": -279.335792
+        "lower": -279.09306
       },
       "delta_mission": {
         "mean": 191.151891,
         "std": 27.288247,
-        "lower": 188.01425
+        "lower": 188.089019
       },
       "outcomes": {
         "mission_complete": 0.921296,
@@ -14655,22 +14655,22 @@
         "delta_r": {
           "mean": -45.670677,
           "std": 66.777854,
-          "lower": -52.984873
+          "lower": -53.405627
         },
         "delta_safety": {
           "mean": -166.345599,
           "std": 53.264574,
-          "lower": -171.999181
+          "lower": -172.368402
         },
         "delta_fuel": {
           "mean": 47.404448,
           "std": 16.649157,
-          "lower": 45.568853
+          "lower": 45.518946
         },
         "delta_mission": {
           "mean": 73.270473,
           "std": 26.551038,
-          "lower": 70.396159
+          "lower": 70.173655
         }
       },
       "skills": [
@@ -14683,7 +14683,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>brake>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 0.98374,
@@ -14721,22 +14721,22 @@
       "delta_r": {
         "mean": 74.962008,
         "std": 94.343592,
-        "lower": 64.712751
+        "lower": 65.535252
       },
       "delta_safety": {
         "mean": 132.632161,
         "std": 59.702597,
-        "lower": 126.33009
+        "lower": 126.524691
       },
       "delta_fuel": {
         "mean": -255.65257,
         "std": 41.404178,
-        "lower": -260.02699
+        "lower": -259.823471
       },
       "delta_mission": {
         "mean": 197.982417,
         "std": 26.358497,
-        "lower": 195.137988
+        "lower": 195.273753
       },
       "outcomes": {
         "mission_complete": 0.922764,
@@ -14750,22 +14750,22 @@
         "delta_r": {
           "mean": -43.179803,
           "std": 80.169473,
-          "lower": -52.056145
+          "lower": -51.618844
         },
         "delta_safety": {
           "mean": -162.337409,
           "std": 62.298362,
-          "lower": -169.225851
+          "lower": -168.749987
         },
         "delta_fuel": {
           "mean": 42.387348,
           "std": 17.067703,
-          "lower": 40.515096
+          "lower": 40.66307
         },
         "delta_mission": {
           "mean": 76.770256,
           "std": 25.292338,
-          "lower": 73.977406
+          "lower": 74.016774
         }
       },
       "skills": [
@@ -14778,7 +14778,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>brake>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 0.970588,
@@ -14816,22 +14816,22 @@
       "delta_r": {
         "mean": 44.200159,
         "std": 89.090299,
-        "lower": 26.841389
+        "lower": 25.341578
       },
       "delta_safety": {
         "mean": 118.991759,
         "std": 51.368392,
-        "lower": 109.227179
+        "lower": 109.046239
       },
       "delta_fuel": {
         "mean": -270.234075,
         "std": 36.58308,
-        "lower": -277.025862
+        "lower": -277.612689
       },
       "delta_mission": {
         "mean": 195.442475,
         "std": 29.318255,
-        "lower": 189.781292
+        "lower": 189.099853
       },
       "outcomes": {
         "mission_complete": 0.897059,
@@ -14845,22 +14845,22 @@
         "delta_r": {
           "mean": -47.515717,
           "std": 76.518339,
-          "lower": -64.427915
+          "lower": -62.351056
         },
         "delta_safety": {
           "mean": -161.864424,
           "std": 55.059717,
-          "lower": -173.201365
+          "lower": -172.457121
         },
         "delta_fuel": {
           "mean": 41.318264,
           "std": 15.851797,
-          "lower": 38.207503
+          "lower": 38.241305
         },
         "delta_mission": {
           "mean": 73.030442,
           "std": 30.084882,
-          "lower": 66.645292
+          "lower": 66.79958
         }
       },
       "skills": [
@@ -14873,7 +14873,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>brake>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.974359,
@@ -14911,22 +14911,22 @@
       "delta_r": {
         "mean": 56.215351,
         "std": 95.548377,
-        "lower": 45.14522
+        "lower": 44.91132
       },
       "delta_safety": {
         "mean": 126.470066,
         "std": 55.253003,
-        "lower": 119.914324
+        "lower": 120.279614
       },
       "delta_fuel": {
         "mean": -264.184738,
         "std": 39.146545,
-        "lower": -268.571557
+        "lower": -268.912847
       },
       "delta_mission": {
         "mean": 193.930023,
         "std": 28.99124,
-        "lower": 190.457626
+        "lower": 190.486421
       },
       "outcomes": {
         "mission_complete": 0.902564,
@@ -14940,22 +14940,22 @@
         "delta_r": {
           "mean": -46.103315,
           "std": 74.006639,
-          "lower": -55.173355
+          "lower": -54.724717
         },
         "delta_safety": {
           "mean": -163.445196,
           "std": 53.076777,
-          "lower": -169.876261
+          "lower": -169.727915
         },
         "delta_fuel": {
           "mean": 43.339638,
           "std": 19.354188,
-          "lower": 40.953571
+          "lower": 41.065992
         },
         "delta_mission": {
           "mean": 74.002244,
           "std": 27.464111,
-          "lower": 70.663394
+          "lower": 70.741702
         }
       },
       "skills": [
@@ -15201,7 +15201,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.982183,
@@ -15239,22 +15239,22 @@
       "delta_r": {
         "mean": 169.922533,
         "std": 117.510341,
-        "lower": 161.127072
+        "lower": 161.046269
       },
       "delta_safety": {
         "mean": 275.377747,
         "std": 78.085318,
-        "lower": 269.474467
+        "lower": 269.43833
       },
       "delta_fuel": {
         "mean": -292.504844,
         "std": 47.8886,
-        "lower": -296.035402
+        "lower": -296.119843
       },
       "delta_mission": {
         "mean": 187.049631,
         "std": 27.833973,
-        "lower": 184.876433
+        "lower": 184.94027
       },
       "outcomes": {
         "mission_complete": 0.942094,
@@ -15268,22 +15268,22 @@
         "delta_r": {
           "mean": -74.798093,
           "std": 66.024573,
-          "lower": -79.986059
+          "lower": -79.947896
         },
         "delta_safety": {
           "mean": -199.449437,
           "std": 56.270192,
-          "lower": -203.722564
+          "lower": -203.846903
         },
         "delta_fuel": {
           "mean": 52.580857,
           "std": 20.573146,
-          "lower": 51.034604
+          "lower": 51.001233
         },
         "delta_mission": {
           "mean": 72.070487,
           "std": 24.174215,
-          "lower": 70.194035
+          "lower": 70.171213
         }
       },
       "skills": [
@@ -15330,22 +15330,22 @@
           "delta_r": {
             "mean": 226.289985,
             "std": 117.353042,
-            "lower": 213.628383
+            "lower": 213.274476
           },
           "delta_safety": {
             "mean": 285.656426,
             "std": 82.097483,
-            "lower": 276.379316
+            "lower": 276.957186
           },
           "delta_fuel": {
             "mean": -261.926393,
             "std": 42.578304,
-            "lower": -266.69007
+            "lower": -266.598595
           },
           "delta_mission": {
             "mean": 202.559951,
             "std": 26.92268,
-            "lower": 199.623071
+            "lower": 199.560555
           },
           "outcomes": {
             "mission_complete": 0.9375,
@@ -15359,22 +15359,22 @@
             "delta_r": {
               "mean": -65.460272,
               "std": 69.421774,
-              "lower": -73.0483
+              "lower": -73.040374
             },
             "delta_safety": {
               "mean": -185.519374,
               "std": 61.063618,
-              "lower": -192.17525
+              "lower": -192.028941
             },
             "delta_fuel": {
               "mean": 41.375645,
               "std": 17.5321,
-              "lower": 39.429935
+              "lower": 39.320315
             },
             "delta_mission": {
               "mean": 78.683456,
               "std": 23.672882,
-              "lower": 75.999408
+              "lower": 75.912487
             }
           }
         },
@@ -15400,22 +15400,22 @@
           "delta_r": {
             "mean": 113.805603,
             "std": 86.793903,
-            "lower": 104.594146
+            "lower": 103.893869
           },
           "delta_safety": {
             "mean": 265.14475,
             "std": 72.440303,
-            "lower": 257.468086
+            "lower": 256.974855
           },
           "delta_fuel": {
             "mean": -322.947392,
             "std": 30.231677,
-            "lower": -326.199671
+            "lower": -326.249932
           },
           "delta_mission": {
             "mean": 171.608244,
             "std": 18.613715,
-            "lower": 169.440157
+            "lower": 169.487486
           },
           "outcomes": {
             "mission_complete": 0.946667,
@@ -15429,22 +15429,22 @@
             "delta_r": {
               "mean": -84.094413,
               "std": 61.056711,
-              "lower": -90.991633
+              "lower": -90.860302
             },
             "delta_safety": {
               "mean": -213.317589,
               "std": 47.126356,
-              "lower": -218.430678
+              "lower": -218.603874
             },
             "delta_fuel": {
               "mean": 63.736269,
               "std": 17.005208,
-              "lower": 61.875997
+              "lower": 61.868573
             },
             "delta_mission": {
               "mean": 65.486909,
               "std": 22.834028,
-              "lower": 62.957822
+              "lower": 62.840755
             }
           }
         }
@@ -15452,7 +15452,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.96124,
@@ -15490,22 +15490,22 @@
       "delta_r": {
         "mean": 120.877311,
         "std": 108.371438,
-        "lower": 105.098558
+        "lower": 105.380817
       },
       "delta_safety": {
         "mean": 239.072493,
         "std": 50.876007,
-        "lower": 231.794288
+        "lower": 231.444008
       },
       "delta_fuel": {
         "mean": -304.972977,
         "std": 51.314759,
-        "lower": -312.532297
+        "lower": -312.312009
       },
       "delta_mission": {
         "mean": 186.777796,
         "std": 28.895029,
-        "lower": 182.657241
+        "lower": 182.599099
       },
       "outcomes": {
         "mission_complete": 0.937984,
@@ -15519,22 +15519,22 @@
         "delta_r": {
           "mean": -81.316089,
           "std": 79.235922,
-          "lower": -92.470407
+          "lower": -93.260277
         },
         "delta_safety": {
           "mean": -204.224853,
           "std": 61.476511,
-          "lower": -213.035898
+          "lower": -213.243256
         },
         "delta_fuel": {
           "mean": 52.816155,
           "std": 21.69048,
-          "lower": 49.877416
+          "lower": 49.519126
         },
         "delta_mission": {
           "mean": 70.092609,
           "std": 29.418845,
-          "lower": 65.892091
+          "lower": 65.401703
         }
       },
       "skills": [
@@ -15547,7 +15547,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.988131,
@@ -15585,22 +15585,22 @@
       "delta_r": {
         "mean": 161.648856,
         "std": 115.471728,
-        "lower": 151.512398
+        "lower": 151.215051
       },
       "delta_safety": {
         "mean": 259.440624,
         "std": 64.207877,
-        "lower": 253.68712
+        "lower": 253.683836
       },
       "delta_fuel": {
         "mean": -288.245646,
         "std": 51.668089,
-        "lower": -292.845623
+        "lower": -292.92768
       },
       "delta_mission": {
         "mean": 190.453877,
         "std": 27.898198,
-        "lower": 188.035657
+        "lower": 188.023794
       },
       "outcomes": {
         "mission_complete": 0.952522,
@@ -15614,22 +15614,22 @@
         "delta_r": {
           "mean": -70.746206,
           "std": 78.423342,
-          "lower": -77.841145
+          "lower": -77.587495
         },
         "delta_safety": {
           "mean": -195.398467,
           "std": 65.505562,
-          "lower": -201.408157
+          "lower": -201.345962
         },
         "delta_fuel": {
           "mean": 50.390894,
           "std": 20.904305,
-          "lower": 48.475747
+          "lower": 48.45883
         },
         "delta_mission": {
           "mean": 74.261368,
           "std": 24.312443,
-          "lower": 72.056988
+          "lower": 72.099176
         }
       },
       "skills": [
@@ -16044,7 +16044,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 0.973684,
@@ -16082,22 +16082,22 @@
       "delta_r": {
         "mean": 130.285045,
         "std": 98.337334,
-        "lower": 120.252214
+        "lower": 119.883886
       },
       "delta_safety": {
         "mean": 212.512431,
         "std": 59.166454,
-        "lower": 206.55993
+        "lower": 206.361899
       },
       "delta_fuel": {
         "mean": -272.842955,
         "std": 42.9531,
-        "lower": -277.322656
+        "lower": -277.121527
       },
       "delta_mission": {
         "mean": 190.615571,
         "std": 28.034461,
-        "lower": 187.748021
+        "lower": 187.711726
       },
       "outcomes": {
         "mission_complete": 0.906015,
@@ -16111,22 +16111,22 @@
         "delta_r": {
           "mean": -80.749021,
           "std": 93.572538,
-          "lower": -90.407127
+          "lower": -90.329805
         },
         "delta_safety": {
           "mean": -197.550113,
           "std": 67.791602,
-          "lower": -204.336181
+          "lower": -204.534438
         },
         "delta_fuel": {
           "mean": 45.30236,
           "std": 20.454942,
-          "lower": 43.248878
+          "lower": 43.264594
         },
         "delta_mission": {
           "mean": 71.498733,
           "std": 29.357597,
-          "lower": 68.48373
+          "lower": 68.404204
         }
       },
       "skills": [
@@ -16139,7 +16139,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 1.0,
@@ -16177,22 +16177,22 @@
       "delta_r": {
         "mean": 108.794902,
         "std": 80.804076,
-        "lower": 95.152153
+        "lower": 95.803263
       },
       "delta_safety": {
         "mean": 190.106595,
         "std": 49.720805,
-        "lower": 181.971761
+        "lower": 182.177791
       },
       "delta_fuel": {
         "mean": -278.173373,
         "std": 40.033918,
-        "lower": -285.333318
+        "lower": -285.071913
       },
       "delta_mission": {
         "mean": 196.86168,
         "std": 19.707296,
-        "lower": 193.339016
+        "lower": 193.555193
       },
       "outcomes": {
         "mission_complete": 0.968085,
@@ -16206,22 +16206,22 @@
         "delta_r": {
           "mean": -63.547644,
           "std": 55.779746,
-          "lower": -72.695162
+          "lower": -73.653237
         },
         "delta_safety": {
           "mean": -189.469494,
           "std": 49.693139,
-          "lower": -197.594472
+          "lower": -198.194137
         },
         "delta_fuel": {
           "mean": 46.684977,
           "std": 15.358501,
-          "lower": 44.11126
+          "lower": 44.103211
         },
         "delta_mission": {
           "mean": 79.236873,
           "std": 16.840426,
-          "lower": 76.195933
+          "lower": 75.992236
         }
       },
       "skills": [
@@ -16234,7 +16234,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.972222,
@@ -16272,22 +16272,22 @@
       "delta_r": {
         "mean": 132.407639,
         "std": 84.397214,
-        "lower": 123.343939
+        "lower": 122.787807
       },
       "delta_safety": {
         "mean": 211.955975,
         "std": 45.225402,
-        "lower": 207.140742
+        "lower": 206.859969
       },
       "delta_fuel": {
         "mean": -272.833848,
         "std": 41.034444,
-        "lower": -277.432861
+        "lower": -277.481232
       },
       "delta_mission": {
         "mean": 193.285511,
         "std": 24.012206,
-        "lower": 190.798818
+        "lower": 190.443891
       },
       "outcomes": {
         "mission_complete": 0.944444,
@@ -16301,22 +16301,22 @@
         "delta_r": {
           "mean": -64.495856,
           "std": 66.994529,
-          "lower": -72.377251
+          "lower": -71.989461
         },
         "delta_safety": {
           "mean": -187.277625,
           "std": 56.775022,
-          "lower": -193.704545
+          "lower": -193.560161
         },
         "delta_fuel": {
           "mean": 47.403213,
           "std": 15.932904,
-          "lower": 45.76999
+          "lower": 45.585878
         },
         "delta_mission": {
           "mean": 75.378554,
           "std": 24.220016,
-          "lower": 72.430584
+          "lower": 72.61775
         }
       },
       "skills": [
@@ -16329,7 +16329,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>slow_descent>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 0.98374,
@@ -16367,22 +16367,22 @@
       "delta_r": {
         "mean": 82.148753,
         "std": 91.081233,
-        "lower": 72.078668
+        "lower": 72.652005
       },
       "delta_safety": {
         "mean": 136.221992,
         "std": 56.56503,
-        "lower": 130.168772
+        "lower": 130.436835
       },
       "delta_fuel": {
         "mean": -254.711386,
         "std": 41.645841,
-        "lower": -259.157355
+        "lower": -259.181514
       },
       "delta_mission": {
         "mean": 200.638147,
         "std": 22.795494,
-        "lower": 198.047138
+        "lower": 198.312646
       },
       "outcomes": {
         "mission_complete": 0.95122,
@@ -16396,22 +16396,22 @@
         "delta_r": {
           "mean": -60.485979,
           "std": 76.983499,
-          "lower": -68.824019
+          "lower": -68.95246
         },
         "delta_safety": {
           "mean": -181.418933,
           "std": 63.00989,
-          "lower": -188.074596
+          "lower": -188.07915
         },
         "delta_fuel": {
           "mean": 41.51922,
           "std": 18.652315,
-          "lower": 39.499972
+          "lower": 39.52521
         },
         "delta_mission": {
           "mean": 79.413733,
           "std": 21.698058,
-          "lower": 77.124205
+          "lower": 77.006383
         }
       },
       "skills": [
@@ -16424,7 +16424,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>slow_descent>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 0.985294,
@@ -16462,22 +16462,22 @@
       "delta_r": {
         "mean": 51.084723,
         "std": 88.937249,
-        "lower": 32.868426
+        "lower": 32.160964
       },
       "delta_safety": {
         "mean": 121.135352,
         "std": 52.223473,
-        "lower": 110.721491
+        "lower": 109.785349
       },
       "delta_fuel": {
         "mean": -268.567083,
         "std": 36.813518,
-        "lower": -275.931518
+        "lower": -275.895501
       },
       "delta_mission": {
         "mean": 198.516453,
         "std": 26.364032,
-        "lower": 193.196214
+        "lower": 192.969136
       },
       "outcomes": {
         "mission_complete": 0.926471,
@@ -16491,22 +16491,22 @@
         "delta_r": {
           "mean": -60.770215,
           "std": 70.206183,
-          "lower": -75.606349
+          "lower": -75.617515
         },
         "delta_safety": {
           "mean": -180.150934,
           "std": 52.601389,
-          "lower": -190.668171
+          "lower": -190.832379
         },
         "delta_fuel": {
           "mean": 41.270425,
           "std": 15.368618,
-          "lower": 38.171571
+          "lower": 38.262822
         },
         "delta_mission": {
           "mean": 78.110295,
           "std": 23.529025,
-          "lower": 73.161854
+          "lower": 73.315495
         }
       },
       "skills": [
@@ -16519,7 +16519,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>free_fall>slow_descent>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.969231,
@@ -16557,22 +16557,22 @@
       "delta_r": {
         "mean": 59.614092,
         "std": 92.755025,
-        "lower": 48.566672
+        "lower": 48.810005
       },
       "delta_safety": {
         "mean": 127.769971,
         "std": 54.94515,
-        "lower": 121.288406
+        "lower": 121.504152
       },
       "delta_fuel": {
         "mean": -262.733056,
         "std": 39.395884,
-        "lower": -267.037262
+        "lower": -267.620276
       },
       "delta_mission": {
         "mean": 194.577176,
         "std": 28.23553,
-        "lower": 191.181352
+        "lower": 191.2571
       },
       "outcomes": {
         "mission_complete": 0.907692,
@@ -16586,22 +16586,22 @@
         "delta_r": {
           "mean": -65.654323,
           "std": 77.275525,
-          "lower": -74.813719
+          "lower": -75.242195
         },
         "delta_safety": {
           "mean": -183.71001,
           "std": 59.282482,
-          "lower": -190.608377
+          "lower": -190.773422
         },
         "delta_fuel": {
           "mean": 43.424025,
           "std": 17.440047,
-          "lower": 41.2949
+          "lower": 41.186214
         },
         "delta_mission": {
           "mean": 74.631663,
           "std": 27.389406,
-          "lower": 71.180125
+          "lower": 71.190148
         }
       },
       "skills": [
@@ -16847,7 +16847,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.98441,
@@ -16885,22 +16885,22 @@
       "delta_r": {
         "mean": 169.282305,
         "std": 117.866026,
-        "lower": 159.876411
+        "lower": 159.946481
       },
       "delta_safety": {
         "mean": 275.0932,
         "std": 77.564538,
-        "lower": 268.81905
+        "lower": 269.1701
       },
       "delta_fuel": {
         "mean": -293.155764,
         "std": 47.924983,
-        "lower": -296.943085
+        "lower": -296.879859
       },
       "delta_mission": {
         "mean": 187.344869,
         "std": 27.285111,
-        "lower": 185.204484
+        "lower": 185.265231
       },
       "outcomes": {
         "mission_complete": 0.946548,
@@ -16914,22 +16914,22 @@
         "delta_r": {
           "mean": -74.635767,
           "std": 70.37048,
-          "lower": -80.140656
+          "lower": -80.039427
         },
         "delta_safety": {
           "mean": -199.17801,
           "std": 57.686908,
-          "lower": -203.720208
+          "lower": -203.555312
         },
         "delta_fuel": {
           "mean": 51.864723,
           "std": 21.993185,
-          "lower": 50.170945
+          "lower": 50.163275
         },
         "delta_mission": {
           "mean": 72.67752,
           "std": 23.07243,
-          "lower": 70.889798
+          "lower": 70.818813
         }
       },
       "skills": [
@@ -16975,22 +16975,22 @@
           "delta_r": {
             "mean": 223.636114,
             "std": 121.7286,
-            "lower": 210.846204
+            "lower": 210.177363
           },
           "delta_safety": {
             "mean": 284.543509,
             "std": 82.750414,
-            "lower": 275.538035
+            "lower": 275.569568
           },
           "delta_fuel": {
             "mean": -263.081529,
             "std": 43.333659,
-            "lower": -267.608849
+            "lower": -267.836972
           },
           "delta_mission": {
             "mean": 202.174134,
             "std": 27.775351,
-            "lower": 199.256447
+            "lower": 199.001705
           },
           "outcomes": {
             "mission_complete": 0.933036,
@@ -17004,22 +17004,22 @@
             "delta_r": {
               "mean": -66.779582,
               "std": 80.071909,
-              "lower": -75.725277
+              "lower": -75.699252
             },
             "delta_safety": {
               "mean": -185.137364,
               "std": 63.519353,
-              "lower": -192.063636
+              "lower": -192.047082
             },
             "delta_fuel": {
               "mean": 40.070148,
               "std": 19.948397,
-              "lower": 37.82459
+              "lower": 37.833764
             },
             "delta_mission": {
               "mean": 78.287634,
               "std": 24.725105,
-              "lower": 75.460515
+              "lower": 75.414386
             }
           }
         },
@@ -17045,22 +17045,22 @@
           "delta_r": {
             "mean": 115.170068,
             "std": 84.271706,
-            "lower": 105.76172
+            "lower": 105.939167
           },
           "delta_safety": {
             "mean": 265.684893,
             "std": 70.789487,
-            "lower": 257.686332
+            "lower": 257.659572
           },
           "delta_fuel": {
             "mean": -323.096336,
             "std": 30.283034,
-            "lower": -326.383992
+            "lower": -326.409921
           },
           "delta_mission": {
             "mean": 172.581512,
             "std": 16.754639,
-            "lower": 170.745827
+            "lower": 170.71271
           },
           "outcomes": {
             "mission_complete": 0.96,
@@ -17074,22 +17074,22 @@
             "delta_r": {
               "mean": -82.457036,
               "std": 58.106517,
-              "lower": -88.840043
+              "lower": -88.816889
             },
             "delta_safety": {
               "mean": -213.156253,
               "std": 47.247619,
-              "lower": -218.232464
+              "lower": -218.555523
             },
             "delta_fuel": {
               "mean": 63.606878,
               "std": 17.108734,
-              "lower": 61.74273
+              "lower": 61.76161
             },
             "delta_mission": {
               "mean": 67.092341,
               "std": 19.777931,
-              "lower": 64.863622
+              "lower": 64.79705
             }
           }
         }
@@ -17097,7 +17097,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.984496,
@@ -17135,22 +17135,22 @@
       "delta_r": {
         "mean": 124.581727,
         "std": 103.80962,
-        "lower": 109.394853
+        "lower": 109.659855
       },
       "delta_safety": {
         "mean": 241.754826,
         "std": 49.723806,
-        "lower": 234.486384
+        "lower": 234.449162
       },
       "delta_fuel": {
         "mean": -304.389528,
         "std": 50.852834,
-        "lower": -311.762011
+        "lower": -311.543328
       },
       "delta_mission": {
         "mean": 187.216429,
         "std": 27.415336,
-        "lower": 183.136931
+        "lower": 183.134752
       },
       "outcomes": {
         "mission_complete": 0.945736,
@@ -17164,22 +17164,22 @@
         "delta_r": {
           "mean": -73.50556,
           "std": 62.103421,
-          "lower": -82.930956
+          "lower": -82.592548
         },
         "delta_safety": {
           "mean": -200.391212,
           "std": 55.99884,
-          "lower": -208.511072
+          "lower": -208.726288
         },
         "delta_fuel": {
           "mean": 53.153558,
           "std": 21.081726,
-          "lower": 50.122561
+          "lower": 50.034511
         },
         "delta_mission": {
           "mean": 73.732095,
           "std": 20.937807,
-          "lower": 70.560085
+          "lower": 70.537339
         }
       },
       "skills": [
@@ -17191,7 +17191,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.979228,
@@ -17229,22 +17229,22 @@
       "delta_r": {
         "mean": 159.492182,
         "std": 118.083418,
-        "lower": 148.8975
+        "lower": 149.15751
       },
       "delta_safety": {
         "mean": 258.29147,
         "std": 65.853434,
-        "lower": 252.328726
+        "lower": 252.728434
       },
       "delta_fuel": {
         "mean": -288.788832,
         "std": 51.690692,
-        "lower": -293.278596
+        "lower": -293.463281
       },
       "delta_mission": {
         "mean": 189.989543,
         "std": 28.594123,
-        "lower": 187.529346
+        "lower": 187.358058
       },
       "outcomes": {
         "mission_complete": 0.946588,
@@ -17258,22 +17258,22 @@
         "delta_r": {
           "mean": -73.817995,
           "std": 85.550494,
-          "lower": -81.311975
+          "lower": -81.53402
         },
         "delta_safety": {
           "mean": -196.018378,
           "std": 67.899153,
-          "lower": -201.856532
+          "lower": -202.233028
         },
         "delta_fuel": {
           "mean": 49.641296,
           "std": 22.017394,
-          "lower": 47.547939
+          "lower": 47.69204
         },
         "delta_mission": {
           "mean": 72.559088,
           "std": 27.178731,
-          "lower": 70.113374
+          "lower": 70.087631
         }
       },
       "skills": [
@@ -17685,7 +17685,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 0.981203,
@@ -17723,22 +17723,22 @@
       "delta_r": {
         "mean": 133.742809,
         "std": 98.720926,
-        "lower": 123.207473
+        "lower": 124.141403
       },
       "delta_safety": {
         "mean": 213.962915,
         "std": 58.562406,
-        "lower": 208.062817
+        "lower": 207.96851
       },
       "delta_fuel": {
         "mean": -272.544314,
         "std": 43.443922,
-        "lower": -276.84839
+        "lower": -276.816197
       },
       "delta_mission": {
         "mean": 192.324208,
         "std": 26.608173,
-        "lower": 189.481585
+        "lower": 189.621339
       },
       "outcomes": {
         "mission_complete": 0.924812,
@@ -17752,22 +17752,22 @@
         "delta_r": {
           "mean": -73.992301,
           "std": 83.793271,
-          "lower": -83.105634
+          "lower": -82.611409
         },
         "delta_safety": {
           "mean": -193.829273,
           "std": 64.557236,
-          "lower": -200.401023
+          "lower": -200.436382
         },
         "delta_fuel": {
           "mean": 45.569151,
           "std": 19.367655,
-          "lower": 43.528186
+          "lower": 43.587173
         },
         "delta_mission": {
           "mean": 74.267821,
           "std": 25.531155,
-          "lower": 71.54526
+          "lower": 71.715708
         }
       },
       "skills": [
@@ -17779,7 +17779,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 1.0,
@@ -17817,22 +17817,22 @@
       "delta_r": {
         "mean": 107.845256,
         "std": 82.642127,
-        "lower": 94.454941
+        "lower": 93.8
       },
       "delta_safety": {
         "mean": 190.120652,
         "std": 50.564261,
-        "lower": 181.699404
+        "lower": 181.865077
       },
       "delta_fuel": {
         "mean": -278.312701,
         "std": 39.905828,
-        "lower": -284.965415
+        "lower": -285.370776
       },
       "delta_mission": {
         "mean": 196.037305,
         "std": 21.340521,
-        "lower": 192.401207
+        "lower": 192.390841
       },
       "outcomes": {
         "mission_complete": 0.957447,
@@ -17846,22 +17846,22 @@
         "delta_r": {
           "mean": -66.513428,
           "std": 54.510821,
-          "lower": -76.028438
+          "lower": -76.09995
         },
         "delta_safety": {
           "mean": -191.250045,
           "std": 47.688841,
-          "lower": -199.189583
+          "lower": -199.367005
         },
         "delta_fuel": {
           "mean": 46.324118,
           "std": 15.18969,
-          "lower": 43.672171
+          "lower": 43.646575
         },
         "delta_mission": {
           "mean": 78.412499,
           "std": 18.701155,
-          "lower": 75.083545
+          "lower": 75.116133
         }
       },
       "skills": [
@@ -17873,7 +17873,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.972222,
@@ -17911,22 +17911,22 @@
       "delta_r": {
         "mean": 129.050292,
         "std": 88.011185,
-        "lower": 118.859101
+        "lower": 118.839846
       },
       "delta_safety": {
         "mean": 210.298688,
         "std": 47.192801,
-        "lower": 204.863926
+        "lower": 204.879464
       },
       "delta_fuel": {
         "mean": -272.997408,
         "std": 41.127176,
-        "lower": -277.699117
+        "lower": -277.520629
       },
       "delta_mission": {
         "mean": 191.749011,
         "std": 26.407919,
-        "lower": 188.69905
+        "lower": 188.624558
       },
       "outcomes": {
         "mission_complete": 0.925926,
@@ -17940,22 +17940,22 @@
         "delta_r": {
           "mean": -66.930973,
           "std": 70.454994,
-          "lower": -74.804411
+          "lower": -74.759638
         },
         "delta_safety": {
           "mean": -187.863337,
           "std": 57.367053,
-          "lower": -194.162233
+          "lower": -194.227321
         },
         "delta_fuel": {
           "mean": 47.082619,
           "std": 15.387602,
-          "lower": 45.376447
+          "lower": 45.354055
         },
         "delta_mission": {
           "mean": 73.849743,
           "std": 25.909737,
-          "lower": 70.874391
+          "lower": 70.870603
         }
       },
       "skills": [
@@ -17967,7 +17967,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>slow_descent>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 0.979675,
@@ -18005,22 +18005,22 @@
       "delta_r": {
         "mean": 81.522135,
         "std": 91.883106,
-        "lower": 71.072578
+        "lower": 71.786246
       },
       "delta_safety": {
         "mean": 136.918271,
         "std": 55.218722,
-        "lower": 131.05443
+        "lower": 131.177466
       },
       "delta_fuel": {
         "mean": -255.198926,
         "std": 42.034725,
-        "lower": -259.882284
+        "lower": -259.536662
       },
       "delta_mission": {
         "mean": 199.802791,
         "std": 24.903836,
-        "lower": 197.016986
+        "lower": 197.056231
       },
       "outcomes": {
         "mission_complete": 0.939024,
@@ -18034,22 +18034,22 @@
         "delta_r": {
           "mean": -59.812697,
           "std": 80.146527,
-          "lower": -68.367278
+          "lower": -68.569829
         },
         "delta_safety": {
           "mean": -178.810145,
           "std": 60.771451,
-          "lower": -185.102389
+          "lower": -185.107033
         },
         "delta_fuel": {
           "mean": 40.997283,
           "std": 19.499594,
-          "lower": 38.910986
+          "lower": 38.864565
         },
         "delta_mission": {
           "mean": 78.000164,
           "std": 25.349159,
-          "lower": 75.233654
+          "lower": 75.175824
         }
       },
       "skills": [
@@ -18061,7 +18061,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>slow_descent>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 0.970588,
@@ -18099,22 +18099,22 @@
       "delta_r": {
         "mean": 49.848335,
         "std": 83.82601,
-        "lower": 32.370598
+        "lower": 33.563416
       },
       "delta_safety": {
         "mean": 122.450182,
         "std": 44.238812,
-        "lower": 113.685393
+        "lower": 113.877297
       },
       "delta_fuel": {
         "mean": -269.575952,
         "std": 36.698043,
-        "lower": -276.604684
+        "lower": -276.541711
       },
       "delta_mission": {
         "mean": 196.974104,
         "std": 27.675118,
-        "lower": 191.013147
+        "lower": 191.414583
       },
       "outcomes": {
         "mission_complete": 0.911765,
@@ -18128,22 +18128,22 @@
         "delta_r": {
           "mean": -65.753895,
           "std": 70.676413,
-          "lower": -80.905015
+          "lower": -80.546641
         },
         "delta_safety": {
           "mean": -180.676065,
           "std": 46.686808,
-          "lower": -190.208191
+          "lower": -189.743048
         },
         "delta_fuel": {
           "mean": 40.402689,
           "std": 18.464314,
-          "lower": 36.456291
+          "lower": 36.440294
         },
         "delta_mission": {
           "mean": 74.519481,
           "std": 29.612659,
-          "lower": 68.245143
+          "lower": 68.302488
         }
       },
       "skills": [
@@ -18155,7 +18155,7 @@
     },
     {
       "name": "go_to_beacon>cruise_to_pad>slow_descent>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.974359,
@@ -18193,22 +18193,22 @@
       "delta_r": {
         "mean": 63.969906,
         "std": 87.955561,
-        "lower": 53.63998
+        "lower": 53.79246
       },
       "delta_safety": {
         "mean": 130.979649,
         "std": 47.195247,
-        "lower": 125.547117
+        "lower": 125.443536
       },
       "delta_fuel": {
         "mean": -263.019867,
         "std": 40.557912,
-        "lower": -267.674231
+        "lower": -267.906827
       },
       "delta_mission": {
         "mean": 196.010122,
         "std": 27.555596,
-        "lower": 192.674421
+        "lower": 192.752252
       },
       "outcomes": {
         "mission_complete": 0.923077,
@@ -18222,22 +18222,22 @@
         "delta_r": {
           "mean": -61.135091,
           "std": 66.644285,
-          "lower": -68.976629
+          "lower": -69.107739
         },
         "delta_safety": {
           "mean": -180.152501,
           "std": 52.294085,
-          "lower": -186.362189
+          "lower": -186.491123
         },
         "delta_fuel": {
           "mean": 42.944233,
           "std": 18.333654,
-          "lower": 40.69163
+          "lower": 40.804185
         },
         "delta_mission": {
           "mean": 76.073177,
           "std": 26.015123,
-          "lower": 72.926208
+          "lower": 72.831407
         }
       },
       "skills": [
@@ -18481,7 +18481,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.959911,
@@ -18519,17 +18519,17 @@
       "delta_r": {
         "mean": 159.102794,
         "std": 137.682418,
-        "lower": 148.393633
+        "lower": 147.774677
       },
       "delta_safety": {
         "mean": 283.913091,
         "std": 122.795661,
-        "lower": 274.616441
+        "lower": 274.312851
       },
       "delta_fuel": {
         "mean": -124.810297,
         "std": 44.315682,
-        "lower": -128.154023
+        "lower": -128.380707
       },
       "delta_mission": {
         "mean": 0.0,
@@ -18548,17 +18548,17 @@
         "delta_r": {
           "mean": 38.801768,
           "std": 109.68841,
-          "lower": 29.80949
+          "lower": 30.413375
         },
         "delta_safety": {
           "mean": 61.636091,
           "std": 88.824715,
-          "lower": 54.375363
+          "lower": 54.919236
         },
         "delta_fuel": {
           "mean": -22.834322,
           "std": 44.627305,
-          "lower": -26.436629
+          "lower": -26.336305
         },
         "delta_mission": {
           "mean": 0.0,
@@ -18606,17 +18606,17 @@
           "delta_r": {
             "mean": 151.980114,
             "std": 145.568115,
-            "lower": 135.569669
+            "lower": 136.762358
           },
           "delta_safety": {
             "mean": 276.203575,
             "std": 131.015639,
-            "lower": 261.292605
+            "lower": 262.199562
           },
           "delta_fuel": {
             "mean": -124.223462,
             "std": 43.534253,
-            "lower": -129.064793
+            "lower": -128.948782
           },
           "delta_mission": {
             "mean": 0.0,
@@ -18635,17 +18635,17 @@
             "delta_r": {
               "mean": 32.12105,
               "std": 118.280315,
-              "lower": 18.704838
+              "lower": 18.756166
             },
             "delta_safety": {
               "mean": 55.758517,
               "std": 97.658707,
-              "lower": 44.614552
+              "lower": 44.62548
             },
             "delta_fuel": {
               "mean": -23.637467,
               "std": 44.279157,
-              "lower": -28.822685
+              "lower": -28.538604
             },
             "delta_mission": {
               "mean": 0.0,
@@ -18676,17 +18676,17 @@
           "delta_r": {
             "mean": 166.193817,
             "std": 128.964948,
-            "lower": 151.879031
+            "lower": 151.982057
           },
           "delta_safety": {
             "mean": 291.588342,
             "std": 113.506131,
-            "lower": 279.370749
+            "lower": 278.971544
           },
           "delta_fuel": {
             "mean": -125.394525,
             "std": 45.072595,
-            "lower": -130.504416
+            "lower": -130.251534
           },
           "delta_mission": {
             "mean": 0.0,
@@ -18705,17 +18705,17 @@
             "delta_r": {
               "mean": 45.452795,
               "std": 99.96448,
-              "lower": 34.057857
+              "lower": 34.107482
             },
             "delta_safety": {
               "mean": 67.487542,
               "std": 78.620143,
-              "lower": 58.364246
+              "lower": 58.80513
             },
             "delta_fuel": {
               "mean": -22.034747,
               "std": 44.956978,
-              "lower": -27.288745
+              "lower": -27.084263
             },
             "delta_mission": {
               "mean": 0.0,
@@ -18728,7 +18728,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.953488,
@@ -18766,17 +18766,17 @@
       "delta_r": {
         "mean": 153.874522,
         "std": 115.570746,
-        "lower": 136.796896
+        "lower": 136.990754
       },
       "delta_safety": {
         "mean": 266.477072,
         "std": 95.87986,
-        "lower": 252.323913
+        "lower": 252.166419
       },
       "delta_fuel": {
         "mean": -112.602547,
         "std": 53.601291,
-        "lower": -120.275543
+        "lower": -120.176029
       },
       "delta_mission": {
         "mean": 0.0,
@@ -18795,17 +18795,17 @@
         "delta_r": {
           "mean": 55.313753,
           "std": 105.156354,
-          "lower": 39.732067
+          "lower": 38.896381
         },
         "delta_safety": {
           "mean": 75.142198,
           "std": 81.057428,
-          "lower": 62.882952
+          "lower": 62.284608
         },
         "delta_fuel": {
           "mean": -19.828443,
           "std": 53.505464,
-          "lower": -28.033619
+          "lower": -28.032303
         },
         "delta_mission": {
           "mean": 0.0,
@@ -18819,7 +18819,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.976261,
@@ -18857,17 +18857,17 @@
       "delta_r": {
         "mean": 154.474825,
         "std": 123.427529,
-        "lower": 144.036199
+        "lower": 142.817661
       },
       "delta_safety": {
         "mean": 278.238504,
         "std": 100.057585,
-        "lower": 269.510025
+        "lower": 268.976729
       },
       "delta_fuel": {
         "mean": -123.763679,
         "std": 50.912583,
-        "lower": -128.414692
+        "lower": -128.532365
       },
       "delta_mission": {
         "mean": 0.0,
@@ -18886,17 +18886,17 @@
         "delta_r": {
           "mean": 47.928174,
           "std": 103.270255,
-          "lower": 38.520452
+          "lower": 38.212759
         },
         "delta_safety": {
           "mean": 70.952465,
           "std": 75.642888,
-          "lower": 63.891022
+          "lower": 63.891036
         },
         "delta_fuel": {
           "mean": -23.024291,
           "std": 53.215579,
-          "lower": -27.725089
+          "lower": -28.092226
         },
         "delta_mission": {
           "mean": 0.0,
@@ -18910,7 +18910,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 0.93609,
@@ -18948,17 +18948,17 @@
       "delta_r": {
         "mean": 127.294926,
         "std": 106.674404,
-        "lower": 116.100029
+        "lower": 116.391722
       },
       "delta_safety": {
         "mean": 232.887342,
         "std": 86.486139,
-        "lower": 223.95111
+        "lower": 224.157376
       },
       "delta_fuel": {
         "mean": -105.592416,
         "std": 53.107895,
-        "lower": -110.905391
+        "lower": -111.064116
       },
       "delta_mission": {
         "mean": 0.0,
@@ -18977,17 +18977,17 @@
         "delta_r": {
           "mean": 44.600528,
           "std": 99.470812,
-          "lower": 34.214195
+          "lower": 34.125402
         },
         "delta_safety": {
           "mean": 63.206823,
           "std": 77.302814,
-          "lower": 55.233099
+          "lower": 55.145972
         },
         "delta_fuel": {
           "mean": -18.606295,
           "std": 47.325142,
-          "lower": -23.547893
+          "lower": -23.451889
         },
         "delta_mission": {
           "mean": 0.0,
@@ -19001,7 +19001,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 0.978723,
@@ -19039,17 +19039,17 @@
       "delta_r": {
         "mean": 126.925986,
         "std": 98.821525,
-        "lower": 109.088024
+        "lower": 109.84099
       },
       "delta_safety": {
         "mean": 226.738014,
         "std": 73.415593,
-        "lower": 214.079481
+        "lower": 213.917382
       },
       "delta_fuel": {
         "mean": -99.812028,
         "std": 47.972225,
-        "lower": -108.350541
+        "lower": -108.427937
       },
       "delta_mission": {
         "mean": 0.0,
@@ -19068,17 +19068,17 @@
         "delta_r": {
           "mean": 65.44809,
           "std": 89.277034,
-          "lower": 49.436713
+          "lower": 50.033191
         },
         "delta_safety": {
           "mean": 80.095748,
           "std": 58.871346,
-          "lower": 69.493473
+          "lower": 69.588256
         },
         "delta_fuel": {
           "mean": -14.647657,
           "std": 47.914094,
-          "lower": -23.455136
+          "lower": -23.134584
         },
         "delta_mission": {
           "mean": 0.0,
@@ -19092,7 +19092,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.958333,
@@ -19130,17 +19130,17 @@
       "delta_r": {
         "mean": 123.378475,
         "std": 116.977203,
-        "lower": 110.294565
+        "lower": 110.021286
       },
       "delta_safety": {
         "mean": 225.862202,
         "std": 95.456647,
-        "lower": 215.079643
+        "lower": 214.949963
       },
       "delta_fuel": {
         "mean": -102.483726,
         "std": 45.44144,
-        "lower": -107.786943
+        "lower": -107.66948
       },
       "delta_mission": {
         "mean": 0.0,
@@ -19159,17 +19159,17 @@
         "delta_r": {
           "mean": 43.636675,
           "std": 109.706284,
-          "lower": 31.377558
+          "lower": 31.675824
         },
         "delta_safety": {
           "mean": 59.227556,
           "std": 87.927726,
-          "lower": 48.997829
+          "lower": 49.247028
         },
         "delta_fuel": {
           "mean": -15.59088,
           "std": 41.414421,
-          "lower": -20.386682
+          "lower": -20.169569
         },
         "delta_mission": {
           "mean": 0.0,
@@ -19183,7 +19183,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 0.995935,
@@ -19221,17 +19221,17 @@
       "delta_r": {
         "mean": 117.520076,
         "std": 51.721419,
-        "lower": 112.023468
+        "lower": 111.8745
       },
       "delta_safety": {
         "mean": 199.35012,
         "std": 47.317084,
-        "lower": 194.376205
+        "lower": 194.255987
       },
       "delta_fuel": {
         "mean": -81.830045,
         "std": 12.561835,
-        "lower": -83.332519
+        "lower": -83.331973
       },
       "delta_mission": {
         "mean": 0.0,
@@ -19250,17 +19250,17 @@
         "delta_r": {
           "mean": 89.587981,
           "std": 28.72467,
-          "lower": 86.130289
+          "lower": 86.198234
         },
         "delta_safety": {
           "mean": 90.548586,
           "std": 18.395391,
-          "lower": 88.437617
+          "lower": 88.407559
         },
         "delta_fuel": {
           "mean": -0.960606,
           "std": 11.049007,
-          "lower": -2.367933
+          "lower": -2.365288
         },
         "delta_mission": {
           "mean": 0.0,
@@ -19274,7 +19274,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 1.0,
@@ -19312,17 +19312,17 @@
       "delta_r": {
         "mean": 105.436571,
         "std": 33.190352,
-        "lower": 99.477232
+        "lower": 99.046964
       },
       "delta_safety": {
         "mean": 188.097864,
         "std": 32.538992,
-        "lower": 182.362204
+        "lower": 181.84466
       },
       "delta_fuel": {
         "mean": -82.661292,
         "std": 6.247855,
-        "lower": -83.943955
+        "lower": -83.95201
       },
       "delta_mission": {
         "mean": 0.0,
@@ -19341,17 +19341,17 @@
         "delta_r": {
           "mean": 92.841039,
           "std": 12.023112,
-          "lower": 90.078133
+          "lower": 90.026597
         },
         "delta_safety": {
           "mean": 93.705393,
           "std": 7.872375,
-          "lower": 91.962486
+          "lower": 91.919519
         },
         "delta_fuel": {
           "mean": -0.864353,
           "std": 4.524902,
-          "lower": -1.958107
+          "lower": -1.946116
         },
         "delta_mission": {
           "mean": 0.0,
@@ -19365,7 +19365,7 @@
     },
     {
       "name": "heuristic_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.994872,
@@ -19403,17 +19403,17 @@
       "delta_r": {
         "mean": 113.095097,
         "std": 46.506138,
-        "lower": 107.775886
+        "lower": 107.803415
       },
       "delta_safety": {
         "mean": 193.838682,
         "std": 44.646836,
-        "lower": 188.758361
+        "lower": 188.829394
       },
       "delta_fuel": {
         "mean": -80.743584,
         "std": 5.891769,
-        "lower": -81.482471
+        "lower": -81.497274
       },
       "delta_mission": {
         "mean": 0.0,
@@ -19432,17 +19432,17 @@
         "delta_r": {
           "mean": 89.733756,
           "std": 22.66472,
-          "lower": 86.718949
+          "lower": 86.503288
         },
         "delta_safety": {
           "mean": 90.440545,
           "std": 19.087079,
-          "lower": 87.873785
+          "lower": 87.701725
         },
         "delta_fuel": {
           "mean": -0.706788,
           "std": 4.071878,
-          "lower": -1.248467
+          "lower": -1.280782
         },
         "delta_mission": {
           "mean": 0.0,
@@ -19456,7 +19456,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.979955,
@@ -19494,22 +19494,22 @@
       "delta_r": {
         "mean": 143.869132,
         "std": 124.995894,
-        "lower": 134.209301
+        "lower": 134.483277
       },
       "delta_safety": {
         "mean": 270.125366,
         "std": 77.083966,
-        "lower": 264.042575
+        "lower": 264.15999
       },
       "delta_fuel": {
         "mean": -311.532511,
         "std": 50.824898,
-        "lower": -315.584331
+        "lower": -315.401398
       },
       "delta_mission": {
         "mean": 185.276277,
         "std": 28.389312,
-        "lower": 183.081779
+        "lower": 183.099402
       },
       "outcomes": {
         "mission_complete": 0.946548,
@@ -19523,22 +19523,22 @@
         "delta_r": {
           "mean": 117.799924,
           "std": 43.672378,
-          "lower": 114.401538
+          "lower": 114.369425
         },
         "delta_safety": {
           "mean": 50.410496,
           "std": 21.964712,
-          "lower": 48.609544
+          "lower": 48.602222
         },
         "delta_fuel": {
           "mean": -0.782449,
           "std": 4.927828,
-          "lower": -1.175116
+          "lower": -1.207893
         },
         "delta_mission": {
           "mean": 68.171876,
           "std": 20.703222,
-          "lower": 66.600909
+          "lower": 66.540605
         }
       },
       "skills": [
@@ -19581,22 +19581,22 @@
           "delta_r": {
             "mean": 212.332351,
             "std": 120.977932,
-            "lower": 199.200073
+            "lower": 198.972467
           },
           "delta_safety": {
             "mean": 284.12897,
             "std": 80.962777,
-            "lower": 275.625843
+            "lower": 275.265613
           },
           "delta_fuel": {
             "mean": -276.1279,
             "std": 43.833743,
-            "lower": -281.048457
+            "lower": -280.832022
           },
           "delta_mission": {
             "mean": 204.33128,
             "std": 21.529532,
-            "lower": 202.062793
+            "lower": 202.030782
           },
           "outcomes": {
             "mission_complete": 0.96875,
@@ -19610,22 +19610,22 @@
             "delta_r": {
               "mean": 133.223492,
               "std": 39.69414,
-              "lower": 128.659506
+              "lower": 128.899191
             },
             "delta_safety": {
               "mean": 57.220964,
               "std": 20.593625,
-              "lower": 54.704299
+              "lower": 54.834748
             },
             "delta_fuel": {
               "mean": -0.750809,
               "std": 5.106302,
-              "lower": -1.383006
+              "lower": -1.328844
             },
             "delta_mission": {
               "mean": 76.753336,
               "std": 18.297104,
-              "lower": 74.689344
+              "lower": 74.774251
             }
           }
         },
@@ -19651,22 +19651,22 @@
           "delta_r": {
             "mean": 75.710193,
             "std": 85.415886,
-            "lower": 66.228976
+            "lower": 66.023971
           },
           "delta_safety": {
             "mean": 256.183999,
             "std": 70.299629,
-            "lower": 248.767253
+            "lower": 248.746205
           },
           "delta_fuel": {
             "mean": -346.779768,
             "std": 27.417472,
-            "lower": -349.701496
+            "lower": -349.753439
           },
           "delta_mission": {
             "mean": 166.305964,
             "std": 20.627922,
-            "lower": 163.974378
+            "lower": 163.944022
           },
           "outcomes": {
             "mission_complete": 0.924444,
@@ -19680,22 +19680,22 @@
             "delta_r": {
               "mean": 102.444906,
               "std": 42.010103,
-              "lower": 97.746233
+              "lower": 97.511915
             },
             "delta_safety": {
               "mean": 43.630297,
               "std": 21.175292,
-              "lower": 41.228347
+              "lower": 41.052449
             },
             "delta_fuel": {
               "mean": -0.813948,
               "std": 4.743271,
-              "lower": -1.394721
+              "lower": -1.372319
             },
             "delta_mission": {
               "mean": 59.628556,
               "std": 19.384099,
-              "lower": 57.494443
+              "lower": 57.499744
             }
           }
         }
@@ -19703,7 +19703,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.976744,
@@ -19741,22 +19741,22 @@
       "delta_r": {
         "mean": 99.194143,
         "std": 90.916243,
-        "lower": 86.239864
+        "lower": 86.371992
       },
       "delta_safety": {
         "mean": 237.158872,
         "std": 45.577082,
-        "lower": 230.780878
+        "lower": 230.795523
       },
       "delta_fuel": {
         "mean": -323.529726,
         "std": 42.273709,
-        "lower": -329.695902
+        "lower": -329.483464
       },
       "delta_mission": {
         "mean": 185.564996,
         "std": 24.258491,
-        "lower": 182.06472
+        "lower": 182.181758
       },
       "outcomes": {
         "mission_complete": 0.96124,
@@ -19770,22 +19770,22 @@
         "delta_r": {
           "mean": 118.184297,
           "std": 39.997859,
-          "lower": 111.94893
+          "lower": 112.279682
         },
         "delta_safety": {
           "mean": 50.633442,
           "std": 19.425464,
-          "lower": 47.593645
+          "lower": 47.624771
         },
         "delta_fuel": {
           "mean": -0.629768,
           "std": 3.823244,
-          "lower": -1.25267
+          "lower": -1.201422
         },
         "delta_mission": {
           "mean": 68.180621,
           "std": 19.714793,
-          "lower": 65.107373
+          "lower": 65.237713
         }
       },
       "skills": [
@@ -19794,7 +19794,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.979228,
@@ -19832,22 +19832,22 @@
       "delta_r": {
         "mean": 131.371479,
         "std": 108.141188,
-        "lower": 121.832531
+        "lower": 121.988387
       },
       "delta_safety": {
         "mean": 254.486666,
         "std": 61.231218,
-        "lower": 249.031152
+        "lower": 248.866701
       },
       "delta_fuel": {
         "mean": -310.599033,
         "std": 49.697447,
-        "lower": -314.971886
+        "lower": -314.936931
       },
       "delta_mission": {
         "mean": 187.483846,
         "std": 26.519554,
-        "lower": 185.200228
+        "lower": 185.131082
       },
       "outcomes": {
         "mission_complete": 0.95549,
@@ -19861,22 +19861,22 @@
         "delta_r": {
           "mean": 118.411644,
           "std": 41.396284,
-          "lower": 114.551031
+          "lower": 114.759677
         },
         "delta_safety": {
           "mean": 50.99164,
           "std": 19.014196,
-          "lower": 49.20966
+          "lower": 49.322073
         },
         "delta_fuel": {
           "mean": -0.957009,
           "std": 5.204085,
-          "lower": -1.448417
+          "lower": -1.469339
         },
         "delta_mission": {
           "mean": 68.377014,
           "std": 20.79867,
-          "lower": 66.434046
+          "lower": 66.498992
         }
       },
       "skills": [
@@ -19885,7 +19885,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 0.988722,
@@ -19923,22 +19923,22 @@
       "delta_r": {
         "mean": 120.40921,
         "std": 68.772494,
-        "lower": 113.55681
+        "lower": 113.426922
       },
       "delta_safety": {
         "mean": 216.929119,
         "std": 38.947976,
-        "lower": 212.841252
+        "lower": 213.033569
       },
       "delta_fuel": {
         "mean": -292.19562,
         "std": 37.461716,
-        "lower": -295.956616
+        "lower": -295.851616
       },
       "delta_mission": {
         "mean": 195.675711,
         "std": 18.034629,
-        "lower": 193.924278
+        "lower": 193.826968
       },
       "outcomes": {
         "mission_complete": 0.977444,
@@ -19952,22 +19952,22 @@
         "delta_r": {
           "mean": 129.000376,
           "std": 27.000767,
-          "lower": 126.216655
+          "lower": 126.078681
         },
         "delta_safety": {
           "mean": 55.702086,
           "std": 10.572459,
-          "lower": 54.629915
+          "lower": 54.560636
         },
         "delta_fuel": {
           "mean": -0.315065,
           "std": 1.799038,
-          "lower": -0.521466
+          "lower": -0.509879
         },
         "delta_mission": {
           "mean": 73.613354,
           "std": 15.912981,
-          "lower": 71.977997
+          "lower": 71.927071
         }
       },
       "skills": [
@@ -19976,7 +19976,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 0.989362,
@@ -20014,22 +20014,22 @@
       "delta_r": {
         "mean": 85.698084,
         "std": 69.984886,
-        "lower": 74.065714
+        "lower": 73.902965
       },
       "delta_safety": {
         "mean": 185.322889,
         "std": 48.207461,
-        "lower": 177.34465
+        "lower": 176.989126
       },
       "delta_fuel": {
         "mean": -296.78558,
         "std": 35.454959,
-        "lower": -302.55917
+        "lower": -302.928886
       },
       "delta_mission": {
         "mean": 197.160776,
         "std": 14.531273,
-        "lower": 194.594893
+        "lower": 194.622965
       },
       "outcomes": {
         "mission_complete": 0.989362,
@@ -20043,22 +20043,22 @@
         "delta_r": {
           "mean": 131.054,
           "std": 25.145405,
-          "lower": 126.325364
+          "lower": 126.785961
         },
         "delta_safety": {
           "mean": 56.21006,
           "std": 9.946825,
-          "lower": 54.298012
+          "lower": 54.483824
         },
         "delta_fuel": {
           "mean": -0.411091,
           "std": 3.075777,
-          "lower": -1.047107
+          "lower": -1.042365
         },
         "delta_mission": {
           "mean": 75.25503,
           "std": 13.676582,
-          "lower": 72.74985
+          "lower": 72.950444
         }
       },
       "skills": [
@@ -20067,7 +20067,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.967593,
@@ -20105,22 +20105,22 @@
       "delta_r": {
         "mean": 107.911827,
         "std": 77.292273,
-        "lower": 99.237786
+        "lower": 99.364157
       },
       "delta_safety": {
         "mean": 208.484228,
         "std": 39.177912,
-        "lower": 204.172428
+        "lower": 204.242379
       },
       "delta_fuel": {
         "mean": -293.798681,
         "std": 40.19101,
-        "lower": -298.493366
+        "lower": -298.371174
       },
       "delta_mission": {
         "mean": 193.22628,
         "std": 22.056698,
-        "lower": 190.788324
+        "lower": 190.766376
       },
       "outcomes": {
         "mission_complete": 0.953704,
@@ -20134,22 +20134,22 @@
         "delta_r": {
           "mean": 124.658388,
           "std": 34.007947,
-          "lower": 120.561872
+          "lower": 120.623888
         },
         "delta_safety": {
           "mean": 53.844318,
           "std": 13.749198,
-          "lower": 52.254025
+          "lower": 52.214487
         },
         "delta_fuel": {
           "mean": -0.246924,
           "std": 1.608941,
-          "lower": -0.448778
+          "lower": -0.459966
         },
         "delta_mission": {
           "mean": 71.060994,
           "std": 20.296573,
-          "lower": 68.664255
+          "lower": 68.676328
         }
       },
       "skills": [
@@ -20158,7 +20158,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 0.987805,
@@ -20196,22 +20196,22 @@
       "delta_r": {
         "mean": 48.402516,
         "std": 81.62719,
-        "lower": 39.894163
+        "lower": 39.579553
       },
       "delta_safety": {
         "mean": 130.270063,
         "std": 55.385881,
-        "lower": 124.412603
+        "lower": 124.547209
       },
       "delta_fuel": {
         "mean": -277.965359,
         "std": 32.928189,
-        "lower": -281.381599
+        "lower": -281.319814
       },
       "delta_mission": {
         "mean": 196.097812,
         "std": 22.769617,
-        "lower": 193.747948
+        "lower": 193.532973
       },
       "outcomes": {
         "mission_complete": 0.926829,
@@ -20225,22 +20225,22 @@
         "delta_r": {
           "mean": 120.46082,
           "std": 57.512992,
-          "lower": 114.183697
+          "lower": 114.16275
         },
         "delta_safety": {
           "mean": 51.515265,
           "std": 31.545219,
-          "lower": 48.086631
+          "lower": 47.90214
         },
         "delta_fuel": {
           "mean": -2.37301,
           "std": 10.219445,
-          "lower": -3.492568
+          "lower": -3.464895
         },
         "delta_mission": {
           "mean": 71.318565,
           "std": 22.845957,
-          "lower": 68.816975
+          "lower": 68.903761
         }
       },
       "skills": [
@@ -20249,7 +20249,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 0.970588,
@@ -20287,22 +20287,22 @@
       "delta_r": {
         "mean": 28.861843,
         "std": 69.891486,
-        "lower": 15.688823
+        "lower": 15.182357
       },
       "delta_safety": {
         "mean": 119.471222,
         "std": 39.301194,
-        "lower": 112.011455
+        "lower": 112.032682
       },
       "delta_fuel": {
         "mean": -289.256622,
         "std": 35.636334,
-        "lower": -296.308462
+        "lower": -296.463978
       },
       "delta_mission": {
         "mean": 198.647243,
         "std": 20.152157,
-        "lower": 194.616391
+        "lower": 194.472237
       },
       "outcomes": {
         "mission_complete": 0.955882,
@@ -20316,22 +20316,22 @@
         "delta_r": {
           "mean": 127.659328,
           "std": 38.743829,
-          "lower": 119.730269
+          "lower": 119.559784
         },
         "delta_safety": {
           "mean": 55.414296,
           "std": 17.39749,
-          "lower": 51.852285
+          "lower": 51.581959
         },
         "delta_fuel": {
           "mean": -0.726994,
           "std": 3.559737,
-          "lower": -1.490258
+          "lower": -1.522259
         },
         "delta_mission": {
           "mean": 72.972028,
           "std": 21.750011,
-          "lower": 68.485931
+          "lower": 68.483921
         }
       },
       "skills": [
@@ -20340,7 +20340,7 @@
     },
     {
       "name": "mission_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.984615,
@@ -20378,22 +20378,22 @@
       "delta_r": {
         "mean": 45.42658,
         "std": 70.977978,
-        "lower": 37.269365
+        "lower": 36.930944
       },
       "delta_safety": {
         "mean": 127.462307,
         "std": 48.834208,
-        "lower": 121.70069
+        "lower": 121.831811
       },
       "delta_fuel": {
         "mean": -280.582366,
         "std": 30.72242,
-        "lower": -284.220307
+        "lower": -284.05609
       },
       "delta_mission": {
         "mean": 198.54664,
         "std": 17.414058,
-        "lower": 196.469762
+        "lower": 196.386163
       },
       "outcomes": {
         "mission_complete": 0.969231,
@@ -20407,22 +20407,22 @@
         "delta_r": {
           "mean": 128.218452,
           "std": 41.357954,
-          "lower": 123.177974
+          "lower": 122.97524
         },
         "delta_safety": {
           "mean": 54.446151,
           "std": 23.02649,
-          "lower": 51.592679
+          "lower": 51.449899
         },
         "delta_fuel": {
           "mean": -0.536685,
           "std": 3.267238,
-          "lower": -0.960781
+          "lower": -0.954578
         },
         "delta_mission": {
           "mean": 74.308986,
           "std": 17.759867,
-          "lower": 72.176971
+          "lower": 72.189088
         }
       },
       "skills": [
@@ -20431,7 +20431,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.957684,
@@ -20469,17 +20469,17 @@
       "delta_r": {
         "mean": 141.208854,
         "std": 157.804327,
-        "lower": 129.343775
+        "lower": 128.676458
       },
       "delta_safety": {
         "mean": 272.127948,
         "std": 133.164744,
-        "lower": 262.029542
+        "lower": 261.297012
       },
       "delta_fuel": {
         "mean": -130.919093,
         "std": 60.324724,
-        "lower": -135.825927
+        "lower": -135.662164
       },
       "delta_mission": {
         "mean": 0.0,
@@ -20498,17 +20498,17 @@
         "delta_r": {
           "mean": 24.146178,
           "std": 124.965633,
-          "lower": 14.043114
+          "lower": 14.322677
         },
         "delta_safety": {
           "mean": 53.146976,
           "std": 96.680749,
-          "lower": 45.637949
+          "lower": 45.333429
         },
         "delta_fuel": {
           "mean": -29.000798,
           "std": 59.936329,
-          "lower": -33.542017
+          "lower": -33.914414
         },
         "delta_mission": {
           "mean": 0.0,
@@ -20556,17 +20556,17 @@
           "delta_r": {
             "mean": 145.434036,
             "std": 157.495047,
-            "lower": 127.684775
+            "lower": 128.597047
           },
           "delta_safety": {
             "mean": 274.49355,
             "std": 135.595754,
-            "lower": 259.389502
+            "lower": 259.06422
           },
           "delta_fuel": {
             "mean": -129.059512,
             "std": 56.35468,
-            "lower": -135.578511
+            "lower": -135.203737
           },
           "delta_mission": {
             "mean": 0.0,
@@ -20585,17 +20585,17 @@
             "delta_r": {
               "mean": 29.291374,
               "std": 119.793236,
-              "lower": 16.161391
+              "lower": 16.082678
             },
             "delta_safety": {
               "mean": 55.35469,
               "std": 95.329798,
-              "lower": 44.822207
+              "lower": 44.628324
             },
             "delta_fuel": {
               "mean": -26.063314,
               "std": 53.760194,
-              "lower": -32.199525
+              "lower": -32.06882
             },
             "delta_mission": {
               "mean": 0.0,
@@ -20626,17 +20626,17 @@
           "delta_r": {
             "mean": 137.002451,
             "std": 157.999434,
-            "lower": 120.201263
+            "lower": 119.573602
           },
           "delta_safety": {
             "mean": 269.77286,
             "std": 130.657092,
-            "lower": 256.147923
+            "lower": 255.695565
           },
           "delta_fuel": {
             "mean": -132.770409,
             "std": 63.979418,
-            "lower": -140.591916
+            "lower": -139.760587
           },
           "delta_mission": {
             "mean": 0.0,
@@ -20655,17 +20655,17 @@
             "delta_r": {
               "mean": 19.023849,
               "std": 129.708053,
-              "lower": 4.708201
+              "lower": 5.189508
             },
             "delta_safety": {
               "mean": 50.949075,
               "std": 97.957786,
-              "lower": 39.907511
+              "lower": 40.372579
             },
             "delta_fuel": {
               "mean": -31.925227,
               "std": 65.378169,
-              "lower": -39.522805
+              "lower": -39.096494
             },
             "delta_mission": {
               "mean": 0.0,
@@ -20678,7 +20678,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.953488,
@@ -20716,17 +20716,17 @@
       "delta_r": {
         "mean": 138.973918,
         "std": 140.041922,
-        "lower": 118.696355
+        "lower": 118.91664
       },
       "delta_safety": {
         "mean": 254.499488,
         "std": 117.309367,
-        "lower": 237.353531
+        "lower": 238.191024
       },
       "delta_fuel": {
         "mean": -115.525569,
         "std": 56.840402,
-        "lower": -123.946218
+        "lower": -124.494647
       },
       "delta_mission": {
         "mean": 0.0,
@@ -20745,17 +20745,17 @@
         "delta_r": {
           "mean": 45.464879,
           "std": 118.255762,
-          "lower": 27.745263
+          "lower": 27.646711
         },
         "delta_safety": {
           "mean": 65.978318,
           "std": 89.95445,
-          "lower": 52.418058
+          "lower": 52.551311
         },
         "delta_fuel": {
           "mean": -20.513437,
           "std": 57.276919,
-          "lower": -29.513391
+          "lower": -29.28156
         },
         "delta_mission": {
           "mean": 0.0,
@@ -20769,7 +20769,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.964392,
@@ -20807,17 +20807,17 @@
       "delta_r": {
         "mean": 145.711919,
         "std": 129.59242,
-        "lower": 133.680849
+        "lower": 134.4802
       },
       "delta_safety": {
         "mean": 272.046428,
         "std": 106.126407,
-        "lower": 262.454571
+        "lower": 262.862907
       },
       "delta_fuel": {
         "mean": -126.334508,
         "std": 52.961363,
-        "lower": -131.253137
+        "lower": -131.0049
       },
       "delta_mission": {
         "mean": 0.0,
@@ -20836,17 +20836,17 @@
         "delta_r": {
           "mean": 40.495232,
           "std": 111.070237,
-          "lower": 30.847244
+          "lower": 30.170685
         },
         "delta_safety": {
           "mean": 66.442809,
           "std": 83.422648,
-          "lower": 58.761558
+          "lower": 58.750638
         },
         "delta_fuel": {
           "mean": -25.947577,
           "std": 54.924063,
-          "lower": -30.909753
+          "lower": -31.109304
         },
         "delta_mission": {
           "mean": 0.0,
@@ -20860,7 +20860,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 0.951128,
@@ -20898,17 +20898,17 @@
       "delta_r": {
         "mean": 136.823711,
         "std": 110.283744,
-        "lower": 124.830883
+        "lower": 125.603345
       },
       "delta_safety": {
         "mean": 240.826075,
         "std": 84.370186,
-        "lower": 231.771839
+        "lower": 232.234374
       },
       "delta_fuel": {
         "mean": -104.002364,
         "std": 48.798239,
-        "lower": -108.92109
+        "lower": -109.079065
       },
       "delta_mission": {
         "mean": 0.0,
@@ -20927,17 +20927,17 @@
         "delta_r": {
           "mean": 52.160584,
           "std": 100.5136,
-          "lower": 41.920985
+          "lower": 41.839349
         },
         "delta_safety": {
           "mean": 67.33902,
           "std": 76.247529,
-          "lower": 59.62191
+          "lower": 59.729886
         },
         "delta_fuel": {
           "mean": -15.178436,
           "std": 45.363672,
-          "lower": -19.982525
+          "lower": -19.982793
         },
         "delta_mission": {
           "mean": 0.0,
@@ -20951,7 +20951,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 0.989362,
@@ -20989,17 +20989,17 @@
       "delta_r": {
         "mean": 144.58976,
         "std": 67.988973,
-        "lower": 132.155942
+        "lower": 132.139207
       },
       "delta_safety": {
         "mean": 237.608804,
         "std": 59.523181,
-        "lower": 226.556808
+        "lower": 227.108199
       },
       "delta_fuel": {
         "mean": -93.019044,
         "std": 23.933371,
-        "lower": -97.318877
+        "lower": -97.506924
       },
       "delta_mission": {
         "mean": 0.0,
@@ -21018,17 +21018,17 @@
         "delta_r": {
           "mean": 81.946222,
           "std": 54.185769,
-          "lower": 71.999827
+          "lower": 72.321454
         },
         "delta_safety": {
           "mean": 88.018241,
           "std": 42.474698,
-          "lower": 80.042611
+          "lower": 80.206301
         },
         "delta_fuel": {
           "mean": -6.07202,
           "std": 22.61967,
-          "lower": -10.342908
+          "lower": -10.125893
         },
         "delta_mission": {
           "mean": 0.0,
@@ -21042,7 +21042,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.986111,
@@ -21080,17 +21080,17 @@
       "delta_r": {
         "mean": 127.203346,
         "std": 114.840488,
-        "lower": 113.403628
+        "lower": 114.138464
       },
       "delta_safety": {
         "mean": 235.199591,
         "std": 84.424024,
-        "lower": 225.055363
+        "lower": 225.573316
       },
       "delta_fuel": {
         "mean": -107.996245,
         "std": 58.251171,
-        "lower": -114.843105
+        "lower": -114.627795
       },
       "delta_mission": {
         "mean": 0.0,
@@ -21109,17 +21109,17 @@
         "delta_r": {
           "mean": 46.32881,
           "std": 107.928536,
-          "lower": 34.045645
+          "lower": 34.088823
         },
         "delta_safety": {
           "mean": 68.203231,
           "std": 75.043745,
-          "lower": 59.667051
+          "lower": 59.434062
         },
         "delta_fuel": {
           "mean": -21.874422,
           "std": 58.220582,
-          "lower": -28.471503
+          "lower": -28.634207
         },
         "delta_mission": {
           "mean": 0.0,
@@ -21133,7 +21133,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 1.0,
@@ -21171,17 +21171,17 @@
       "delta_r": {
         "mean": 115.803818,
         "std": 49.016606,
-        "lower": 110.577358
+        "lower": 110.917862
       },
       "delta_safety": {
         "mean": 199.402821,
         "std": 45.6811,
-        "lower": 194.730799
+        "lower": 194.668702
       },
       "delta_fuel": {
         "mean": -83.599004,
         "std": 16.894776,
-        "lower": -85.604565
+        "lower": -85.464024
       },
       "delta_mission": {
         "mean": 0.0,
@@ -21200,17 +21200,17 @@
         "delta_r": {
           "mean": 88.564487,
           "std": 25.231766,
-          "lower": 85.413191
+          "lower": 85.735553
         },
         "delta_safety": {
           "mean": 90.371165,
           "std": 10.660355,
-          "lower": 89.13377
+          "lower": 89.171018
         },
         "delta_fuel": {
           "mean": -1.806679,
           "std": 16.41491,
-          "lower": -3.85404
+          "lower": -3.753906
         },
         "delta_mission": {
           "mean": 0.0,
@@ -21224,7 +21224,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 1.0,
@@ -21262,17 +21262,17 @@
       "delta_r": {
         "mean": 104.859784,
         "std": 36.033344,
-        "lower": 97.935508
+        "lower": 98.044333
       },
       "delta_safety": {
         "mean": 188.799108,
         "std": 35.627238,
-        "lower": 181.929937
+        "lower": 182.000823
       },
       "delta_fuel": {
         "mean": -83.939323,
         "std": 4.128448,
-        "lower": -84.761287
+        "lower": -84.767778
       },
       "delta_mission": {
         "mean": 0.0,
@@ -21291,17 +21291,17 @@
         "delta_r": {
           "mean": 93.957843,
           "std": 3.733804,
-          "lower": 93.219615
+          "lower": 93.247126
         },
         "delta_safety": {
           "mean": 94.254078,
           "std": 3.903906,
-          "lower": 93.478036
+          "lower": 93.501945
         },
         "delta_fuel": {
           "mean": -0.296232,
           "std": 0.489974,
-          "lower": -0.399376
+          "lower": -0.399135
         },
         "delta_mission": {
           "mean": 0.0,
@@ -21315,7 +21315,7 @@
     },
     {
       "name": "ppo_pilot",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.994872,
@@ -21353,17 +21353,17 @@
       "delta_r": {
         "mean": 107.299688,
         "std": 57.96108,
-        "lower": 100.239878
+        "lower": 100.6865
       },
       "delta_safety": {
         "mean": 190.812563,
         "std": 51.743398,
-        "lower": 184.567995
+        "lower": 184.75532
       },
       "delta_fuel": {
         "mean": -83.512875,
         "std": 18.850485,
-        "lower": -86.109108
+        "lower": -85.882935
       },
       "delta_mission": {
         "mean": 0.0,
@@ -21382,17 +21382,17 @@
         "delta_r": {
           "mean": 85.51626,
           "std": 43.127009,
-          "lower": 79.995844
+          "lower": 79.374887
         },
         "delta_safety": {
           "mean": 87.910037,
           "std": 33.908677,
-          "lower": 83.410027
+          "lower": 83.178382
         },
         "delta_fuel": {
           "mean": -2.393777,
           "std": 17.482882,
-          "lower": -4.569392
+          "lower": -4.783272
         },
         "delta_mission": {
           "mean": 0.0,
@@ -21406,7 +21406,7 @@
     },
     {
       "name": "slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 449,
       "episodes": 449,
       "completion_rate": 0.988864,
@@ -21444,17 +21444,17 @@
       "delta_r": {
         "mean": 195.588071,
         "std": 77.439192,
-        "lower": 189.530928
+        "lower": 189.303011
       },
       "delta_safety": {
         "mean": 325.539986,
         "std": 74.682023,
-        "lower": 319.780125
+        "lower": 319.666127
       },
       "delta_fuel": {
         "mean": -129.951915,
         "std": 13.842851,
-        "lower": -131.081918
+        "lower": -131.12399
       },
       "delta_mission": {
         "mean": 0.0,
@@ -21473,17 +21473,17 @@
         "delta_r": {
           "mean": 18.430262,
           "std": 41.978848,
-          "lower": 14.79958
+          "lower": 14.899153
         },
         "delta_safety": {
           "mean": 17.058435,
           "std": 33.326893,
-          "lower": 14.255224
+          "lower": 14.263235
         },
         "delta_fuel": {
           "mean": 1.371826,
           "std": 13.121856,
-          "lower": 0.280255
+          "lower": 0.190725
         },
         "delta_mission": {
           "mean": 0.0,
@@ -21532,17 +21532,17 @@
           "delta_r": {
             "mean": 194.610436,
             "std": 82.913001,
-            "lower": 185.796838
+            "lower": 185.393928
           },
           "delta_safety": {
             "mean": 324.436803,
             "std": 79.950046,
-            "lower": 315.832819
+            "lower": 316.040621
           },
           "delta_fuel": {
             "mean": -129.826367,
             "std": 13.42459,
-            "lower": -131.484353
+            "lower": -131.436523
           },
           "delta_mission": {
             "mean": 0.0,
@@ -21561,17 +21561,17 @@
             "delta_r": {
               "mean": 17.090496,
               "std": 47.8755,
-              "lower": 11.600409
+              "lower": 11.432564
             },
             "delta_safety": {
               "mean": 15.543189,
               "std": 39.602842,
-              "lower": 11.000237
+              "lower": 10.914567
             },
             "delta_fuel": {
               "mean": 1.547307,
               "std": 12.950704,
-              "lower": -0.054172
+              "lower": -0.111575
             },
             "delta_mission": {
               "mean": 0.0,
@@ -21602,17 +21602,17 @@
           "delta_r": {
             "mean": 196.561362,
             "std": 71.561816,
-            "lower": 188.954584
+            "lower": 189.048953
           },
           "delta_safety": {
             "mean": 326.638266,
             "std": 69.021749,
-            "lower": 319.174264
+            "lower": 319.451662
           },
           "delta_fuel": {
             "mean": -130.076905,
             "std": 14.245963,
-            "lower": -131.784803
+            "lower": -131.633195
           },
           "delta_mission": {
             "mean": 0.0,
@@ -21631,17 +21631,17 @@
             "delta_r": {
               "mean": 19.764074,
               "std": 35.08807,
-              "lower": 15.615512
+              "lower": 15.417869
             },
             "delta_safety": {
               "mean": 18.566947,
               "std": 25.503947,
-              "lower": 15.490985
+              "lower": 15.359711
             },
             "delta_fuel": {
               "mean": 1.197125,
               "std": 13.287756,
-              "lower": -0.331896
+              "lower": -0.342897
             },
             "delta_mission": {
               "mean": 0.0,
@@ -21654,7 +21654,7 @@
     },
     {
       "name": "slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 129,
       "episodes": 129,
       "completion_rate": 0.984496,
@@ -21692,17 +21692,17 @@
       "delta_r": {
         "mean": 162.218576,
         "std": 62.590652,
-        "lower": 152.972682
+        "lower": 153.381262
       },
       "delta_safety": {
         "mean": 290.942176,
         "std": 52.335809,
-        "lower": 283.263973
+        "lower": 283.472056
       },
       "delta_fuel": {
         "mean": -128.7236,
         "std": 15.350181,
-        "lower": -131.165245
+        "lower": -131.048717
       },
       "delta_mission": {
         "mean": 0.0,
@@ -21721,17 +21721,17 @@
         "delta_r": {
           "mean": 17.282224,
           "std": 55.22273,
-          "lower": 8.441301
+          "lower": 8.662082
         },
         "delta_safety": {
           "mean": 17.532264,
           "std": 44.871316,
-          "lower": 10.394264
+          "lower": 10.571757
         },
         "delta_fuel": {
           "mean": -0.250039,
           "std": 15.194806,
-          "lower": -2.725263
+          "lower": -2.629869
         },
         "delta_mission": {
           "mean": 0.0,
@@ -21746,7 +21746,7 @@
     },
     {
       "name": "slow_descent>touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.991098,
@@ -21784,17 +21784,17 @@
       "delta_r": {
         "mean": 186.793883,
         "std": 55.951093,
-        "lower": 181.958945
+        "lower": 181.848599
       },
       "delta_safety": {
         "mean": 314.007313,
         "std": 55.516715,
-        "lower": 309.16624
+        "lower": 309.163073
       },
       "delta_fuel": {
         "mean": -127.21343,
         "std": 6.169886,
-        "lower": -127.826572
+        "lower": -127.823416
       },
       "delta_mission": {
         "mean": 0.0,
@@ -21813,17 +21813,17 @@
         "delta_r": {
           "mean": 24.027733,
           "std": 19.032199,
-          "lower": 22.262954
+          "lower": 22.290793
         },
         "delta_safety": {
           "mean": 21.316917,
           "std": 16.762286,
-          "lower": 19.791955
+          "lower": 19.804252
         },
         "delta_fuel": {
           "mean": 2.710816,
           "std": 4.426111,
-          "lower": 2.272978
+          "lower": 2.268667
         },
         "delta_mission": {
           "mean": 0.0,
@@ -23740,7 +23740,7 @@
     },
     {
       "name": "slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 266,
       "episodes": 266,
       "completion_rate": 1.0,
@@ -23778,17 +23778,17 @@
       "delta_r": {
         "mean": 152.451123,
         "std": 37.269371,
-        "lower": 148.569359
+        "lower": 148.573562
       },
       "delta_safety": {
         "mean": 273.847001,
         "std": 38.078287,
-        "lower": 269.895536
+        "lower": 269.917991
       },
       "delta_fuel": {
         "mean": -121.395878,
         "std": 4.414628,
-        "lower": -121.832658
+        "lower": -121.855616
       },
       "delta_mission": {
         "mean": 0.0,
@@ -23807,17 +23807,17 @@
         "delta_r": {
           "mean": 24.265894,
           "std": 10.767932,
-          "lower": 23.177141
+          "lower": 23.193154
         },
         "delta_safety": {
           "mean": 21.031268,
           "std": 10.804402,
-          "lower": 19.937166
+          "lower": 19.945067
         },
         "delta_fuel": {
           "mean": 3.234623,
           "std": 0.583366,
-          "lower": 3.174347
+          "lower": 3.173442
         },
         "delta_mission": {
           "mean": 0.0,
@@ -23832,7 +23832,7 @@
     },
     {
       "name": "slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 94,
       "episodes": 94,
       "completion_rate": 1.0,
@@ -23870,17 +23870,17 @@
       "delta_r": {
         "mean": 124.919292,
         "std": 47.341385,
-        "lower": 116.864345
+        "lower": 116.826314
       },
       "delta_safety": {
         "mean": 245.650582,
         "std": 48.258258,
-        "lower": 237.51879
+        "lower": 237.381515
       },
       "delta_fuel": {
         "mean": -120.73129,
         "std": 3.762301,
-        "lower": -121.364945
+        "lower": -121.360022
       },
       "delta_mission": {
         "mean": 0.0,
@@ -23899,17 +23899,17 @@
         "delta_r": {
           "mean": 26.475536,
           "std": 10.12053,
-          "lower": 24.827812
+          "lower": 24.729844
         },
         "delta_safety": {
           "mean": 23.642207,
           "std": 10.108764,
-          "lower": 21.994391
+          "lower": 21.896713
         },
         "delta_fuel": {
           "mean": 2.833327,
           "std": 0.483173,
-          "lower": 2.747324
+          "lower": 2.747428
         },
         "delta_mission": {
           "mean": 0.0,
@@ -23924,7 +23924,7 @@
     },
     {
       "name": "slow_descent>touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 1.0,
@@ -23962,17 +23962,17 @@
       "delta_r": {
         "mean": 148.736063,
         "std": 43.389839,
-        "lower": 143.945749
+        "lower": 143.685341
       },
       "delta_safety": {
         "mean": 267.512616,
         "std": 43.003072,
-        "lower": 262.714113
+        "lower": 262.645178
       },
       "delta_fuel": {
         "mean": -118.776554,
         "std": 5.677465,
-        "lower": -119.439769
+        "lower": -119.462854
       },
       "delta_mission": {
         "mean": 0.0,
@@ -23991,17 +23991,17 @@
         "delta_r": {
           "mean": 26.53271,
           "std": 21.918705,
-          "lower": 23.81716
+          "lower": 23.720958
         },
         "delta_safety": {
           "mean": 23.518992,
           "std": 20.425805,
-          "lower": 21.029906
+          "lower": 20.916671
         },
         "delta_fuel": {
           "mean": 3.013716,
           "std": 1.840294,
-          "lower": 2.771883
+          "lower": 2.775026
         },
         "delta_mission": {
           "mean": 0.0,
@@ -24246,7 +24246,7 @@
     },
     {
       "name": "slow_descent>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 246,
       "episodes": 246,
       "completion_rate": 1.0,
@@ -24284,17 +24284,17 @@
       "delta_r": {
         "mean": 77.844292,
         "std": 45.52438,
-        "lower": 73.286843
+        "lower": 73.210557
       },
       "delta_safety": {
         "mean": 191.299923,
         "std": 45.820263,
-        "lower": 186.696416
+        "lower": 186.606354
       },
       "delta_fuel": {
         "mean": -113.455631,
         "std": 3.778689,
-        "lower": -113.854573
+        "lower": -113.856491
       },
       "delta_mission": {
         "mean": 0.0,
@@ -24313,17 +24313,17 @@
         "delta_r": {
           "mean": 24.898462,
           "std": 11.161091,
-          "lower": 23.729893
+          "lower": 23.798005
         },
         "delta_safety": {
           "mean": 21.643848,
           "std": 11.229576,
-          "lower": 20.471116
+          "lower": 20.53554
         },
         "delta_fuel": {
           "mean": 3.254614,
           "std": 0.5359,
-          "lower": 3.198106
+          "lower": 3.20045
         },
         "delta_mission": {
           "mean": 0.0,
@@ -24338,7 +24338,7 @@
     },
     {
       "name": "slow_descent>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=0,falling_fast=1,beacon_scanned=0|episode_start",
       "samples": 68,
       "episodes": 68,
       "completion_rate": 1.0,
@@ -24376,17 +24376,17 @@
       "delta_r": {
         "mean": 62.096589,
         "std": 35.664581,
-        "lower": 55.470733
+        "lower": 55.015325
       },
       "delta_safety": {
         "mean": 179.127283,
         "std": 35.507315,
-        "lower": 172.35703
+        "lower": 172.024065
       },
       "delta_fuel": {
         "mean": -117.030693,
         "std": 3.60339,
-        "lower": -117.73563
+        "lower": -117.720707
       },
       "delta_mission": {
         "mean": 0.0,
@@ -24405,17 +24405,17 @@
         "delta_r": {
           "mean": 25.670977,
           "std": 12.489821,
-          "lower": 23.287976
+          "lower": 23.269168
         },
         "delta_safety": {
           "mean": 22.829733,
           "std": 12.349833,
-          "lower": 20.461307
+          "lower": 20.455952
         },
         "delta_fuel": {
           "mean": 2.841243,
           "std": 0.540938,
-          "lower": 2.735256
+          "lower": 2.732673
         },
         "delta_mission": {
           "mean": 0.0,
@@ -24804,7 +24804,7 @@
     },
     {
       "name": "slow_descent>touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.994872,
@@ -24842,17 +24842,17 @@
       "delta_r": {
         "mean": 75.975384,
         "std": 41.553437,
-        "lower": 71.299919
+        "lower": 71.324825
       },
       "delta_safety": {
         "mean": 187.167727,
         "std": 41.674007,
-        "lower": 182.497131
+        "lower": 182.591718
       },
       "delta_fuel": {
         "mean": -111.192344,
         "std": 3.838782,
-        "lower": -111.631434
+        "lower": -111.616174
       },
       "delta_mission": {
         "mean": 0.0,
@@ -24871,17 +24871,17 @@
         "delta_r": {
           "mean": 24.94658,
           "std": 14.092516,
-          "lower": 23.275507
+          "lower": 23.246522
         },
         "delta_safety": {
           "mean": 21.860123,
           "std": 14.15209,
-          "lower": 20.16347
+          "lower": 20.147976
         },
         "delta_fuel": {
           "mean": 3.086456,
           "std": 0.505122,
-          "lower": 3.026341
+          "lower": 3.026474
         },
         "delta_mission": {
           "mean": 0.0,
@@ -25570,7 +25570,7 @@
     },
     {
       "name": "touch_down",
-      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=0,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 337,
       "episodes": 337,
       "completion_rate": 0.934718,
@@ -25608,17 +25608,17 @@
       "delta_r": {
         "mean": 167.698571,
         "std": 113.552197,
-        "lower": 157.552616
+        "lower": 157.705677
       },
       "delta_safety": {
         "mean": 260.948484,
         "std": 103.0699,
-        "lower": 251.507735
+        "lower": 251.655208
       },
       "delta_fuel": {
         "mean": -93.249913,
         "std": 43.584342,
-        "lower": -97.248531
+        "lower": -97.497712
       },
       "delta_mission": {
         "mean": 0.0,
@@ -25637,17 +25637,17 @@
         "delta_r": {
           "mean": 67.131306,
           "std": 93.000256,
-          "lower": 59.174925
+          "lower": 58.705429
         },
         "delta_safety": {
           "mean": 83.654805,
           "std": 80.001775,
-          "lower": 76.752709
+          "lower": 76.398457
         },
         "delta_fuel": {
           "mean": -16.523499,
           "std": 43.641866,
-          "lower": -20.802947
+          "lower": -20.521569
         },
         "delta_mission": {
           "mean": 0.0,
@@ -27883,7 +27883,7 @@
     },
     {
       "name": "touch_down",
-      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=0,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 216,
       "episodes": 216,
       "completion_rate": 0.953704,
@@ -27921,17 +27921,17 @@
       "delta_r": {
         "mean": 139.766438,
         "std": 111.270399,
-        "lower": 127.05738
+        "lower": 126.69287
       },
       "delta_safety": {
         "mean": 230.93608,
         "std": 85.597775,
-        "lower": 220.973795
+        "lower": 220.986013
       },
       "delta_fuel": {
         "mean": -91.169641,
         "std": 52.620365,
-        "lower": -97.183181
+        "lower": -97.76728
       },
       "delta_mission": {
         "mean": 0.0,
@@ -27950,17 +27950,17 @@
         "delta_r": {
           "mean": 51.852318,
           "std": 105.086091,
-          "lower": 39.855362
+          "lower": 39.723844
         },
         "delta_safety": {
           "mean": 68.51871,
           "std": 77.514348,
-          "lower": 60.063418
+          "lower": 59.762869
         },
         "delta_fuel": {
           "mean": -16.666392,
           "std": 52.531904,
-          "lower": -22.986089
+          "lower": -22.989112
         },
         "delta_mission": {
           "mean": 0.0,
@@ -28272,7 +28272,7 @@
     },
     {
       "name": "touch_down",
-      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0",
+      "group": "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0,beacon_scanned=0|episode_start",
       "samples": 195,
       "episodes": 195,
       "completion_rate": 0.994872,
@@ -28310,17 +28310,17 @@
       "delta_r": {
         "mean": 119.952856,
         "std": 40.62423,
-        "lower": 115.378076
+        "lower": 115.350284
       },
       "delta_safety": {
         "mean": 196.022411,
         "std": 41.075379,
-        "lower": 191.430126
+        "lower": 191.390287
       },
       "delta_fuel": {
         "mean": -76.069555,
         "std": 4.834694,
-        "lower": -76.664248
+        "lower": -76.690042
       },
       "delta_mission": {
         "mean": 0.0,
@@ -28339,17 +28339,17 @@
         "delta_r": {
           "mean": 92.329468,
           "std": 11.292691,
-          "lower": 90.913899
+          "lower": 90.942792
         },
         "delta_safety": {
           "mean": 93.022341,
           "std": 9.489006,
-          "lower": 91.879122
+          "lower": 91.81537
         },
         "delta_fuel": {
           "mean": -0.692873,
           "std": 4.576677,
-          "lower": -1.310805
+          "lower": -1.301762
         },
         "delta_mission": {
           "mean": 0.0,

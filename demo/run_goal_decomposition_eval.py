@@ -93,8 +93,8 @@ GOAL = "land_on_pad"
 # The table was built from seeds 0-1999. Seeds 2000-2499 and 6000-6499 were looked at
 # while reviewing the plans, 3000-3199 while tuning skills and choosing the table's
 # settings, 8000-8499, 9000-9499 and 10000-10499 by earlier evaluations, and 11000-11499
-# by an earlier version of this one, so these are fresh.
-DEFAULT_START_SEED = 12000
+# and 12000-12499 by earlier versions of this one, so these are fresh.
+DEFAULT_START_SEED = 13000
 DEFAULT_SEEDS = 500
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 # The policies for when no plan is admitted, as the reports name them; the first is the default.

@@ -31,6 +31,7 @@ from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import NO_ENGINE, SUBSKILLS
 
 TILTED_START_SEED = 0
+ADMITTED_START_SEED = 6  # a tilted start where a plan is admitted at once
 UPRIGHT_START_SEED = 1  # starts away from the pad; lands with one leg's contact flickering off
 SAFETY_FIRST = Priorities(
     weights=(0.7, 0.3),
@@ -395,7 +396,7 @@ def test_a_refusal_in_mid_flight_stops_the_run(env, book, table, continuation):
     def source(observation):
         return next(answers, None)
 
-    observation, _ = env.reset(seed=TILTED_START_SEED)
+    observation, _ = env.reset(seed=ADMITTED_START_SEED)
     run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, source, continuation=continuation)
     assert run.status is GoalStatus.PRIORITIES_REFUSED
     [flown] = run.flown
@@ -414,7 +415,7 @@ def test_inputs_are_checked(env, book, table):
 
 
 def test_the_record_is_json_ready(env, book, table):
-    record = json.loads(json.dumps(run_goal(env, book, table, TILTED_START_SEED).record()))
+    record = json.loads(json.dumps(run_goal(env, book, table, ADMITTED_START_SEED).record()))
     assert record["status"] == "achieved" and record["replans"] == 0
     first = record["decisions"][0]
     assert first["plan"].startswith("plan:land_on_pad/")

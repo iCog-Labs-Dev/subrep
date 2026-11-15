@@ -39,7 +39,7 @@ from env.lunar_subskills import NO_ENGINE
 
 # Level, over the pad and high up: x, y, vx, vy, angle, spin, left leg, right leg.
 OBSERVATION = np.array([0.0, 1.4, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0])
-GROUP = "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0"
+GROUP = "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0|episode_start"
 TIMESTAMP = "2026-10-17T00:00:00+00:00"
 EVEN = Priorities(weights=(0.5, 0.5))
 
@@ -59,7 +59,7 @@ def gains(delta_r, delta_n):
 
 def table_of(plans, min_samples=30):
     """A table measuring each (skills, Δr, Δn) from episode starts around OBSERVATION; the gains are lower bounds."""
-    assert group_key(LUNAR_LANDER, lander_facts(OBSERVATION)) == GROUP
+    assert group_key(LUNAR_LANDER, lander_facts(OBSERVATION), episode_start=True) == GROUP
     entries = [
         {
             "name": plan_key(skills),

@@ -8,6 +8,7 @@ import pytest
 from decomposition import effects
 from decomposition.effects import (
     DEFAULT_TABLE_PATH,
+    EPISODE_START,
     GAMMA,
     IN_FLIGHT,
     EffectTable,
@@ -47,7 +48,7 @@ def episode_start(group, seeds=range(1000)):
     try:
         for seed in seeds:
             observation = replay(env, seed, ())
-            if group_key(LUNAR_LANDER, lander_facts(observation)) == group:
+            if group_key(LUNAR_LANDER, lander_facts(observation), episode_start=True) == group:
                 return observation
     finally:
         env.close()
@@ -220,7 +221,24 @@ def test_a_landing_plan_runs_until_the_episode_ends(env):
 def test_samples_are_grouped_by_their_start_facts(env):
     flight = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL)
     start_facts = lander_facts(replay(env, TILTED_START_SEED, ()))
-    assert flight.plan.group == flight.steps[0].group == group_key(LUNAR_LANDER, start_facts)
+    assert flight.plan.group == flight.steps[0].group == group_key(LUNAR_LANDER, start_facts, episode_start=True)
+
+
+def test_the_group_of_an_episode_start_is_marked():
+    facts = {name: True for name in LUNAR_LANDER.group_facts}
+    later = group_key(LUNAR_LANDER, facts, episode_start=False)
+    assert later == ",".join(f"{name}=1" for name in LUNAR_LANDER.group_facts)
+    assert group_key(LUNAR_LANDER, facts, episode_start=True) == f"{later}|{EPISODE_START}"
+
+
+def test_an_episode_start_is_grouped_apart_from_the_states_after_it(env):
+    flight = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL)
+    later = fly_plan(LUNAR_LANDER, env, TILTED_START_SEED, CAREFUL, prefix=(NO_ENGINE,))
+    reached = replay(env, TILTED_START_SEED, (NO_ENGINE,))
+    assert later.plan.elapsed == 1
+    assert later.plan.group == group_key(LUNAR_LANDER, lander_facts(reached), episode_start=False)
+    assert flight.plan.group.endswith(f"|{EPISODE_START}") and not later.plan.group.endswith(EPISODE_START)
+    assert len(flight.steps) > 1 and all(not step.group.endswith(EPISODE_START) for step in flight.steps[1:])
 
 
 def test_a_plan_needs_sub_skills(env):
@@ -442,7 +460,7 @@ def test_a_state_outside_the_group_support_is_not_measured_in_any_cell(celled_ta
         start = episode_start(entry["group"], range(4))
         lower = np.array(start, dtype=np.float64)
         lower[1] -= 0.5  # same facts, but half a unit lower than any measured start
-        if group_key(LUNAR_LANDER, lander_facts(lower)) == entry["group"]:
+        if group_key(LUNAR_LANDER, lander_facts(lower), episode_start=True) == entry["group"]:
             assert celled_table.plan(entry["skills"], start, 0) is not None
             assert celled_table.plan(entry["skills"], lower, 0) is None
             return
@@ -470,7 +488,7 @@ def test_the_support_holds_every_measured_start(small_table, env):
     for entry in small_table.data["plans"]:
         for seed in range(4):
             start = replay(env, seed, ())
-            if group_key(LUNAR_LANDER, lander_facts(start)) == entry["group"]:
+            if group_key(LUNAR_LANDER, lander_facts(start), episode_start=True) == entry["group"]:
                 assert small_table.supports(entry, start, 0)
 
 
@@ -497,7 +515,7 @@ def test_a_state_outside_the_support_is_not_measured(small_table):
     start = episode_start(entry["group"], range(4))
     lower = np.array(start, dtype=np.float64)
     lower[1] -= 0.5  # same facts, but half a unit lower than any measured start
-    assert group_key(LUNAR_LANDER, lander_facts(lower)) == entry["group"]
+    assert group_key(LUNAR_LANDER, lander_facts(lower), episode_start=True) == entry["group"]
     assert small_table.plan(entry["skills"], start, 0) is not None
     assert small_table.plan(entry["skills"], lower, 0) is None
 
@@ -507,6 +525,18 @@ def test_a_state_later_in_the_episode_than_any_measured_is_not_measured(small_ta
     start = episode_start(entry["group"], range(4))
     assert small_table.plan(entry["skills"], start, 0) is not None
     assert small_table.plan(entry["skills"], start, 400) is None
+
+
+def test_an_episode_start_is_answered_only_from_episode_starts(small_table):
+    entry = small_table.data["plans"][0]  # measured from episode starts only
+    assert entry["group"].endswith(f"|{EPISODE_START}")
+    start = episode_start(entry["group"], range(4))
+    assert small_table.plan(entry["skills"], start, 0).region == entry["group"]
+    later = {**entry, "group": entry["group"].removesuffix(f"|{EPISODE_START}"), "support": {
+        "low": [*entry["support"]["low"][:-1], 0.0], "high": [*entry["support"]["high"][:-1], 50.0]}}
+    only_later = EffectTable({**small_table.data, "plans": [later]}, LUNAR_LANDER)
+    assert only_later.plan(entry["skills"], start, 0) is None  # later states never answer for an episode start
+    assert only_later.plan(entry["skills"], start, 1).region == later["group"]
 
 
 def test_the_table_checks_its_format(small_table):
@@ -546,7 +576,18 @@ def test_committed_table_answers_from_states_reached_in_mid_flight(committed_tab
             reached = replay(env, seed, prefix)
             measured = [committed_table.plan(skills, reached, len(prefix)) for skills in plans(lander_facts(reached))]
             answered += any(estimate is not None for estimate in measured)
+            for estimate in (estimate for estimate in measured if estimate is not None):
+                assert (EPISODE_START in estimate.region) == (len(prefix) == 0)  # no frame flown yet: still the start
     assert answered > 30
+
+
+def test_committed_table_answers_an_episode_start_from_episode_starts(committed_table, env):
+    unseen = committed_table.data["seeds"]["stop"]
+    plans = plans_for(load_recipe_book(LUNAR_LANDER_BOOK, FACT_NAMES, LUNAR_LANDER.skills))
+    for seed in range(unseen, unseen + 10):
+        start = replay(env, seed, ())
+        for skills in plans(lander_facts(start)):
+            assert f"|{EPISODE_START}" in committed_table.plan(skills, start, 0).region, (seed, skills)
 
 
 def test_committed_table_refuses_a_state_no_flight_reached(committed_table):

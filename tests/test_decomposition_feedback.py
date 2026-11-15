@@ -17,7 +17,7 @@ from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 
-SEED = 0
+SEED = 6  # a start where a plan is admitted at once
 SAFETY_FIRST = Priorities(
     weights=(0.7, 0.3),
     region=MdnRegion(
@@ -56,7 +56,9 @@ def start(env):
 def verdicts(book, table, start):
     observation, facts = start
     candidates = propose(book, "land_on_pad", facts)
-    return verify(candidates, observation, table, SAFETY_FIRST, min_goal_rate=DEFAULT_MIN_GOAL_RATE, elapsed=0)
+    verdicts = verify(candidates, observation, table, SAFETY_FIRST, min_goal_rate=DEFAULT_MIN_GOAL_RATE, elapsed=0)
+    assert verdicts[0].admitted, "these tests need a start where a plan is admitted at once"
+    return verdicts
 
 
 def shifted(gains, by, count, spread=1.0):
@@ -101,7 +103,7 @@ def test_a_certificate_holds_when_realised_gains_meet_it(verdicts, start):
     [entry] = log.report()
     assert entry["status"] == CertificateStatus.HELD.value
     assert entry["plan"] == plan_skill_id(best.candidate) and entry["region"] == best.estimate.region
-    assert entry["region"].startswith(group_key(LUNAR_LANDER, facts))
+    assert entry["region"].startswith(group_key(LUNAR_LANDER, facts, episode_start=True))
     assert entry["samples"] == 40
     assert entry["delta_r"]["realised_mean"] > entry["delta_r"]["certified"]
     assert log.revoked() == frozenset()
@@ -220,7 +222,7 @@ def test_the_runtime_flies_a_revoked_plan_again_once_new_evidence_supports_it(en
     best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
     for realised in shifted(certified_gains(best), by=-10.0, count=40):
         log.record(best, realised)
-    rebuilt = with_claim_lowered(table, best.candidate.skills, group_key(LUNAR_LANDER, facts), by=20.0)
+    rebuilt = with_claim_lowered(table, best.candidate.skills, group_key(LUNAR_LANDER, facts, episode_start=True), by=20.0)
 
     def verdict_under(current):
         env.reset(seed=SEED)

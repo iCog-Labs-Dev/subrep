@@ -39,6 +39,15 @@ the beacon scan, the plan to the pad completes far less often from a state reach
 late, because the episode runs out first. Leaving the time out would average early
 states with late ones and misjudge both.
 
+The start of an episode is a state of its own kind: every episode has exactly
+one, drawn from the environment's start distribution before anything is flown. A
+state reached a few frames later can share its facts and lie close to it, yet
+fare differently: the lander is lower and already descending, so the same plan
+gains more from there. The runtime's first decision is always at an episode
+start, so starts are grouped apart: an episode start is judged only by
+measurements from other episode starts, and a later state only by measurements
+from later states.
+
 Samples are grouped by the facts of the state they start from and summarised
 by their mean, spread, count and a one-sided bootstrap lower confidence bound.
 One episode can add several samples to a group, from different states, and they
@@ -80,7 +89,7 @@ import numpy as np
 from baseline.improvement_calculator import ImprovementCalculator
 from decomposition.domain import GAMMA, Domain
 
-SCHEMA_VERSION = "subrep.effects.v6"
+SCHEMA_VERSION = "subrep.effects.v7"
 BASELINE_ID = "idle_policy_v1"
 CONFIDENCE = 0.95
 BOOTSTRAP_RESAMPLES = 2000
@@ -95,6 +104,7 @@ DEFAULT_TABLE_PATH = Path(__file__).resolve().parent / "data" / "lunar_effects.j
 LUNAR_BEACON_TABLE = Path(__file__).resolve().parent / "data" / "lunar_beacon_effects.json"
 
 IN_FLIGHT = "in_flight"
+EPISODE_START = "episode_start"  # marks the group of the first state of an episode
 
 DECIMALS = 6  # every value in a table is stored rounded to this many decimals
 
@@ -153,9 +163,14 @@ def improvement(
     return float(delta_r), tuple(float(value) for value in delta_n)
 
 
-def group_key(domain: Domain, facts: Mapping[str, bool]) -> str:
-    """The group of a state, for example ``"upright=1,over_pad=0,near_ground=0"``."""
-    return ",".join(f"{name}={int(facts[name])}" for name in domain.group_facts)
+def group_key(domain: Domain, facts: Mapping[str, bool], *, episode_start: bool) -> str:
+    """The group of a state, for example ``"upright=1,over_pad=0,near_ground=0"``.
+
+    The first state of an episode is grouped apart, as the module describes:
+    ``"upright=1,over_pad=0,near_ground=0|episode_start"``.
+    """
+    key = ",".join(f"{name}={int(facts[name])}" for name in domain.group_facts)
+    return f"{key}|{EPISODE_START}" if episode_start else key
 
 
 def state(observation: np.ndarray, elapsed: float) -> np.ndarray:
@@ -224,7 +239,7 @@ def _sample(
     frames: int,
     completed: bool,
 ) -> Sample:
-    group = group_key(domain, domain.facts(start))
+    group = group_key(domain, domain.facts(start), episode_start=elapsed == 0)
     observation = tuple(float(value) for value in np.asarray(start, dtype=np.float64).reshape(-1))
     return Sample(name, group, delta_r, delta_n, frames, completed, observation, seed, elapsed)
 
@@ -699,13 +714,13 @@ class EffectTable:
     """Measured effects of sub-skills and plans, looked up by the state they would start from.
 
     A lookup takes the observation and how many frames of the episode were flown
-    before it. It finds the group of the observation's facts and answers only if
-    the group was measured in at least ``min_samples`` episodes and the state lies
-    inside the group's support, widened on each side by ``support_margin`` times
-    its range; a state later in the episode than any measured is outside it. Every
-    other state is treated as unmeasured. A plan's group split into cells answers
-    from the cell whose centroid is nearest the state, in units of the group's
-    spread.
+    before it. It finds the group of the observation's facts, the start of an
+    episode apart, and answers only if the group was measured in at least
+    ``min_samples`` episodes and the state lies inside the group's support,
+    widened on each side by ``support_margin`` times its range; a state later in
+    the episode than any measured is outside it. Every other state is treated as
+    unmeasured. A plan's group split into cells answers from the cell whose
+    centroid is nearest the state, in units of the group's spread.
     """
 
     def __init__(self, data: Mapping[str, object], domain: Domain) -> None:
@@ -737,13 +752,13 @@ class EffectTable:
 
     def step(self, skill: str, observation: np.ndarray, elapsed: float) -> Optional[Estimate]:
         """The effect of ``skill`` from ``observation`` after ``elapsed`` frames; None if nothing measured applies."""
-        entry = self._steps.get((skill, self._group_of(observation)))
-        return self._estimate(entry, state(observation, elapsed))
+        values = state(observation, elapsed)
+        return self._estimate(self._steps.get((skill, self._group_of(observation, elapsed))), values)
 
     def plan(self, skills: Sequence[str], observation: np.ndarray, elapsed: float) -> Optional[Estimate]:
         """The effect of ``skills`` from ``observation`` after ``elapsed`` frames; None if nothing measured applies."""
-        entry = self._plans.get((plan_key(skills), self._group_of(observation)))
-        return self._estimate(entry, state(observation, elapsed))
+        values = state(observation, elapsed)
+        return self._estimate(self._plans.get((plan_key(skills), self._group_of(observation, elapsed))), values)
 
     def rough_value(self, skills: Sequence[str], weights: Sequence[float]) -> float:
         """A rough worth of a plan under ``weights``: its mean gains over all states it was measured from.
@@ -789,8 +804,8 @@ class EffectTable:
         widen = self.support_margin * (high - low)
         return bool(values.shape == low.shape and np.all((values >= low - widen) & (values <= high + widen)))
 
-    def _group_of(self, observation: np.ndarray) -> str:
-        return group_key(self.domain, self.domain.facts(observation))
+    def _group_of(self, observation: np.ndarray, elapsed: float) -> str:
+        return group_key(self.domain, self.domain.facts(observation), episode_start=elapsed == 0)
 
     def nearest_cell(self, entry: Mapping[str, Any], values: np.ndarray) -> Optional[int]:
         """The index of the entry's cell nearest the state ``values``, or None for an entry that is not split."""
