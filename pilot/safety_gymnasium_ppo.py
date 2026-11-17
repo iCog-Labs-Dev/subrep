@@ -51,8 +51,12 @@ class SafetyPPOPilot(nn.Module):
         action_high: Iterable[float],
         hidden_sizes: Iterable[int] = (128, 128),
         separate_critic: bool = False,
+        actor_mean_type: str = "tanh",
     ) -> None:
         super().__init__()
+        if actor_mean_type not in ("tanh", "linear"):
+            raise ValueError("actor_mean_type must be tanh or linear")
+        self.actor_mean_type = actor_mean_type
         self.observation_dim = int(observation_dim)
         self.action_dim = int(action_dim)
         self.hidden_sizes = tuple(int(size) for size in hidden_sizes)
@@ -117,7 +121,8 @@ class SafetyPPOPilot(nn.Module):
     def forward(self, obs: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         obs, is_single = self._prepare_observation(obs)
         features = self.backbone(obs)
-        unit_mean = torch.tanh(self.actor_mean(features))
+        logits = self.actor_mean(features)
+        unit_mean = torch.tanh(logits) if self.actor_mean_type == "tanh" else logits
         center = (self.action_high + self.action_low) / 2.0
         scale = (self.action_high - self.action_low) / 2.0
         mean = center + unit_mean * scale
@@ -183,6 +188,7 @@ class SafetyPPOPilot(nn.Module):
             "action_high": self.action_high.detach().cpu().tolist(),
             "hidden_sizes": self.hidden_sizes,
             "separate_critic": self.separate_critic,
+            "actor_mean_type": self.actor_mean_type,
             "metadata": _metadata_to_python(metadata or {}),
         }
         torch.save(payload, path)
@@ -204,6 +210,7 @@ class SafetyPPOPilot(nn.Module):
             action_high=payload["action_high"],
             hidden_sizes=tuple(payload.get("hidden_sizes", (128, 128))),
             separate_critic=bool(payload.get("separate_critic", False)),
+            actor_mean_type=payload.get("actor_mean_type", "tanh"),
         )
         model.load_state_dict(payload["state_dict"])
         model.to(map_location if isinstance(map_location, torch.device) else torch.device(map_location))

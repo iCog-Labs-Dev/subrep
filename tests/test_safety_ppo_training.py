@@ -153,8 +153,9 @@ def test_training_monitor_with_fake_environment(tmp_path, monkeypatch, lagrangia
     assert result['evaluation']['goal_reached_rate']==1.
     assert output.exists()
     rows=[json.loads(x) for x in (tmp_path/'policy_run/metrics.jsonl').read_text().splitlines()]
-    assert len(rows)==2 and rows[-1]['environment_steps']==4
-    assert len(list((tmp_path/'policy_run').glob('update_*.pt')))==2
+    assert len(rows)==3 and rows[-1]['environment_steps']==4
+    assert rows[0]['phase']=='initial' and rows[0]['environment_steps']==0
+    assert len(list((tmp_path/'policy_run').glob('update_*.pt')))==3
     with pytest.raises(FileExistsError):
         train_safety_ppo(env_id='fake',output_path=output,config=SafetyPPOConfig())
 
@@ -222,3 +223,24 @@ def test_finite_cost_bootstraps_only_rollout_boundary_and_resets_time(rollout_st
         completed_returns=[],completed_costs=[],current_cost_penalty=1.,cost_critic=RemainingCost())
     np.testing.assert_allclose(r['cost_returns'], [4.,2.,4.][:rollout_steps])
     np.testing.assert_allclose(r['cost_observations'][:,-1], [1.,.5,1.][:rollout_steps])
+
+
+def test_action_reward_audit_carries_history_and_resets():
+    import torch
+    class Model(ValueModel):
+        action_low=torch.tensor([-1.])
+        action_high=torch.tensor([1.])
+        def act(self, obs, **kwargs):
+            return np.ones(1),np.ones(1),0.,float(obs[0])
+    env=EpisodeEnv('terminated',0.)
+    config=SafetyPPOConfig(rollout_steps=1,effort_penalty=.1,smoothness_penalty=.2)
+    common=dict(env=env,model=Model(),config=config,device='cpu',completed_returns=[],completed_costs=[],current_cost_penalty=0.)
+    a=_collect_rollout(**common,obs=np.zeros(1),episode_return=0.,episode_cost=0.,episode_length=0,previous_action=-np.ones(1))
+    assert a['reward_audit']['effort_penalty_mean']==pytest.approx(.1)
+    assert a['reward_audit']['smoothness_penalty_mean']==pytest.approx(.2)
+    assert a['reward_audit']['critic_reward_mean_before_bootstrap']==pytest.approx(.7)
+    b=_collect_rollout(**common,obs=a['next_obs'],episode_return=a['episode_return'],episode_cost=0.,episode_length=1,previous_action=a['previous_action'])
+    assert b['reward_audit']['smoothness_penalty_mean']==0
+    assert b['previous_action'] is None
+    with pytest.raises(ValueError,match='previous action'):
+        _collect_rollout(**common,obs=np.zeros(1),episode_return=0.,episode_cost=0.,episode_length=1)
