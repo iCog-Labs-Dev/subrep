@@ -197,6 +197,125 @@ def test_the_summary_diagnostics_are_measured(noop_run):
         assert f"on {sensitive}/{STEPS} steps" in output
 
 
+def test_an_all_fail_step_after_an_approved_step_reports_no_old_approval(tmp_path, monkeypatch):
+    """Each step reports its own verdicts, even when the pipeline is skipped.
+
+    Fake records, no flight: on step 0 `left_engine` lands and is admitted;
+    on step 1 every candidate crashes, so every one fails the guard and the
+    pipeline is never called. Step 1 must not show step 0's approval.
+    """
+    from utils.mdn_contracts import CandidateSkillRecord
+
+    ids = ("left_engine", "main_engine", "right_engine", "random")
+
+    def record(skill_id, *, lands, seed):
+        return CandidateSkillRecord(
+            skill_id=skill_id,
+            delta_r=200.0 if lands else 0.0,
+            delta_n=(300.0, -50.0) if lands else (-300.0, -60.0),
+            is_certified=False,
+            gate_type="PDS",
+            baseline_id="noop",
+            metadata={"seed": seed, "steps": 200 if lands else 70, "landing_success": lands,
+                      "crashed": not lands, "truncated": False},
+        )
+
+    def fake_evaluate(env, candidates, *, seed, **_):
+        baseline = {
+            "baseline_payoff": -100.0, "baseline_motives": np.zeros(2),
+            "baseline_id": "noop", "seed": seed,
+            "info": {"start_obs": np.full(8, 0.01 * seed), "crashed": True},
+        }
+        first_step = seed == SEED
+        return baseline, [record(i, lands=first_step and i == "left_engine", seed=seed) for i in ids]
+
+    def fake_execute(env, policy, *, seed, **_):
+        lands = policy.skill_id == "left_engine" and seed == SEED
+        info = {"steps": 200 if lands else 70, "landing_success": lands, "crashed": not lands,
+                "truncated": False, "stop_reason": "terminated", "max_steps": None}
+        return (200.0 if lands else 0.0), np.array([300.0, -50.0] if lands else [0.0, 0.0]), info
+
+    monkeypatch.setattr(lunar_demo, "evaluate_candidates", fake_evaluate)
+    monkeypatch.setattr(lunar_demo, "execute_candidate", fake_execute)
+
+    path = tmp_path / "stale.json"
+    code, _, _ = run_demo(
+        ["--steps", "2", "--seed", str(SEED), "--candidates", "ci",
+         "--epsilon-scale", "on", "--json-out", str(path)]
+    )
+    assert code == 0
+    first, second = json.loads(path.read_text(encoding="utf-8"))["steps"]
+
+    admitted_first = {c["skill_id"]: c["admitted"] for c in first["candidates"]}
+    assert admitted_first["left_engine"] is True
+    assert first["selected"] == "left_engine"
+
+    assert second["admitted_count"] == 0 and second["selected"] is None
+    assert second["task_failures"] == len(ids)
+    for candidate in second["candidates"]:
+        assert candidate["admitted"] is False, candidate["skill_id"]
+        assert candidate["task_failure"] is True
+    for step in (first, second):
+        assert step["admitted_count"] == sum(c["admitted"] for c in step["candidates"])
+
+
+def test_without_the_epsilon_scale_the_json_has_no_scale_fields(noop_run):
+    _, data, _ = noop_run
+    assert "epsilon_scale" not in data["config"]
+    for step in data["steps"]:
+        assert "pds_tolerance" not in step and "task_failures" not in step
+        assert all("task_failure" not in c for c in step["candidates"])
+    assert "task_failures_total" not in data["summary"]
+
+
+def test_the_epsilon_scale_records_the_tolerance_and_the_task_failures(tmp_path):
+    from env.lunar_lander_metamo import lunar_lander_epsilon_scale
+
+    scale = lunar_lander_epsilon_scale()
+    path = tmp_path / "scaled.json"
+    code, output, _ = run_demo(
+        ["--steps", "2", "--seed", str(SEED), "--candidates", "ci",
+         "--epsilon-scale", "on", "--json-out", str(path)]
+    )
+    assert code == 0
+    assert " tol " in output and " fail " in output
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["config"]["epsilon_scale"] == {
+        "unit": scale.unit, "payoff_floor": scale.payoff_floor
+    }
+    for step in data["steps"]:
+        assert step["pds_tolerance"] == pytest.approx(step["signal"]["epsilon"] * scale.unit)
+        assert step["task_failures"] == sum(c["task_failure"] for c in step["candidates"])
+        for candidate in step["candidates"]:
+            if candidate["crashed"]:
+                assert candidate["task_failure"] and not candidate["admitted"]
+        assert step["pds_only_admitted"] == lunar_demo.pds_admitted_count(
+            step["candidates"], step["signal"]["epsilon"], scale
+        )
+    summary = data["summary"]
+    assert summary["task_failures_total"] == sum(s["task_failures"] for s in data["steps"])
+    sensitive = sum(1 for s in data["steps"] if lunar_demo.eps_sensitive(s["candidates"], scale))
+    assert summary["eps_sensitive_steps"] == sensitive
+
+
+@pytest.mark.skipif(
+    not lunar_demo.PILOT_CHECKPOINT.is_file(),
+    reason="PPO checkpoint models/pilot_ppo.pt not found",
+)
+def test_the_tradeoff_candidates_are_listed(tmp_path):
+    path = tmp_path / "tradeoff.json"
+    code, _, _ = run_demo(
+        ["--steps", "1", "--seed", str(SEED), "--candidates", "tradeoff",
+         "--epsilon-scale", "on", "--json-out", str(path)]
+    )
+    assert code == 0
+    ids = json.loads(path.read_text(encoding="utf-8"))["config"]["candidate_ids"]
+    for skill_id in ("ppo_deterministic", "ppo_then_side_tradeoff",
+                     "ppo_waste_main_12", "ppo_waste_main_15", "ppo_waste_main_18",
+                     "ppo_waste_main_20", "ppo_waste_side_15", "ppo_waste_side_20"):
+        assert skill_id in ids
+
+
 @pytest.mark.skipif(
     not lunar_demo.PILOT_CHECKPOINT.is_file(),
     reason="PPO checkpoint models/pilot_ppo.pt not found",

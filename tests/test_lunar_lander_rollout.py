@@ -201,6 +201,25 @@ def test_task_reward_is_not_the_sum_of_the_objectives(env):
         assert r_hat != pytest.approx(float(np.sum(n_hat)), abs=1e-3), action
 
 
+def test_safety_includes_the_landing_result(env):
+    """The landing counts in both the payoff and Safety, by decision.
+
+    See "Payoff and Safety" in docs/subrep_metamo_integration.md. Doing nothing
+    from seed 1 crashes, so the landing result is -100 and non-zero.
+    """
+    recording = _RecordingEnv(env)
+    r_hat, n_hat, info = run_episode(
+        recording, _fixed_action_policy(0), seed=SEED, gamma=1.0
+    )
+    terminal = sum(float(step["terminal_reward"]) for step in recording.infos)
+    shaping = sum(float(step["shaping_reward"]) for step in recording.infos)
+
+    assert info["crashed"]
+    assert r_hat == terminal == -100.0
+    assert float(n_hat[0]) == pytest.approx(terminal + shaping, rel=1e-5, abs=1e-3)
+    assert float(n_hat[0]) - r_hat == pytest.approx(shaping, rel=1e-5, abs=1e-3)
+
+
 def test_info_reports_the_episode(env):
     _, n_hat, info = run_episode(env, _fixed_action_policy(0), seed=SEED, gamma=GAMMA)
     obs, _ = env.reset(seed=SEED)

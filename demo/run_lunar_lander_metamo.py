@@ -10,6 +10,7 @@ Run:
     python demo/run_lunar_lander_metamo.py
     python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo
     python demo/run_lunar_lander_metamo.py --steps 16 --json-out runs/run.json
+    python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on
 
 What to watch:
   * `secur` / `thresh` against `eps` / `alpha`: both budgets tighten as caution
@@ -17,14 +18,20 @@ What to watch:
   * `Safety` against `Fuel`: the weights SubRep selects with.
   * `adm`, `selected` and `result`: which candidates passed the gates, which
     one flew, and whether it landed.
+  * With `--epsilon-scale on`, `tol` is the PDS tolerance eps * U and `fail`
+    the candidates rejected for failing the task before the PDS gate.
 
 Current behaviour the summary measures rather than assumes:
   * MetaMo's caution modulators follow the outcomes rather than pinning at 1.0,
     so eps keeps moving on the ppo candidates. When every episode crashes
     (the ci candidates), Securing settles above 0.75, where the bridge's
     budget gain takes eps to 0.
-  * eps cannot change a LunarLander admission at the current scale: eps is at
-    most 0.5, while the objective changes are in the hundreds.
+  * Without the epsilon scale, eps cannot change a LunarLander admission: eps
+    is at most 0.5, while the objective changes are in the hundreds.
+  * With it (bridge/epsilon_scale.py), the gate tolerates eps * U, U = 300.9,
+    and crashes are rejected at every eps. The trade-off candidates
+    (env/lunar_lander_candidates.py) land with margins close enough to zero
+    for eps to decide them; the summary counts the steps where it would.
 """
 
 from __future__ import annotations
@@ -44,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from bridge._loader import find_metamo_root  # noqa: E402
 from bridge.budget import BudgetCoefficients  # noqa: E402
 from bridge.controller import MetaMoController  # noqa: E402
+from bridge.epsilon_scale import EpsilonScale  # noqa: E402
 from bridge.protocol import SkillOutcome  # noqa: E402
 from certification.pds_test import PDSGate  # noqa: E402
 from data_collector.collect_candidate_sets import (  # noqa: E402
@@ -53,6 +61,7 @@ from data_collector.collect_candidate_sets import (  # noqa: E402
 )
 from env.lunar_lander_metamo import (  # noqa: E402
     LUNAR_LANDER_OBJECTIVES,
+    lunar_lander_epsilon_scale,
     make_lunar_lander_governor,
 )
 from env.lunar_lander_rollout import (  # noqa: E402
@@ -85,7 +94,10 @@ EPSILON_MAX = BudgetCoefficients().epsilon_max
 
 
 def build_candidates(env: SubRepEnv, kind: str) -> Tuple[CandidatePolicy, ...]:
-    """The candidate set. `ci` needs no PPO checkpoint; the others do."""
+    """The candidate set. `ci` needs no PPO checkpoint; the others do.
+
+    `tradeoff` is the extended set plus the fuel-wasting PPO candidates.
+    """
     if kind == "ci":
         return (
             CandidatePolicy("noop", _fixed_action_policy(0)),
@@ -104,54 +116,38 @@ def build_candidates(env: SubRepEnv, kind: str) -> Tuple[CandidatePolicy, ...]:
         if kind == "ppo"
         else build_extended_candidate_policies
     )
-    return build(env, pilot_checkpoint=str(PILOT_CHECKPOINT))
+    candidates = tuple(build(env, pilot_checkpoint=str(PILOT_CHECKPOINT)))
+    if kind == "tradeoff":
+        from env.lunar_lander_candidates import build_tradeoff_candidate_policies
+
+        candidates += build_tradeoff_candidate_policies(pilot_checkpoint=str(PILOT_CHECKPOINT))
+    return candidates
 
 
-class RecordingPipeline:
-    """Forwards certification unchanged and keeps the records it returns.
-
-    `MetaMoController.step()` reports only counts, so this is how the demo sees
-    each candidate's verdict (`is_certified`) as the pipeline decided it,
-    including the CVaR gate when it is on.
-    """
-
-    def __init__(self, pipeline: RuntimeCertificationPipeline) -> None:
-        self._pipeline = pipeline
-        self.last_records: List[Any] = []
-
-    def certify_candidate_skills(self, **kwargs: Any) -> List[Any]:
-        records = self._pipeline.certify_candidate_skills(**kwargs)
-        self.last_records = list(records)
-        return records
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._pipeline, name)
-
-
-def build_pipeline(*, seed: int, use_cvar: bool, cvar_samples: int) -> RecordingPipeline:
+def build_pipeline(*, seed: int, use_cvar: bool, cvar_samples: int) -> RuntimeCertificationPipeline:
     """A fresh, seeded pipeline around an untrained MDN.
 
     The W_x store stays empty (no support training after certification), so
     the PDS gate decides with the full simplex, Δr + min Δn. That is what the
-    summary's eps-sensitivity check recomputes.
+    summary's eps-sensitivity check recomputes. Each candidate's verdict,
+    including the CVaR gate's when it is on, is read from the controller's
+    `last_records`.
     """
     import torch
 
     torch.manual_seed(seed)
     model = MotiveDecompositionNetwork(input_dim=OBS_DIM, num_objectives=NUM_OBJECTIVES)
     model.eval()
-    return RecordingPipeline(
-        RuntimeCertificationPipeline(
-            model=model,
-            weight_store=WeightSetStore(num_objectives=NUM_OBJECTIVES),
-            config=RuntimePipelineConfig(
-                gate_type="PDS",
-                use_cvar=use_cvar,
-                require_cds_or_cvar=True,
-                cvar_samples=cvar_samples,
-                train_support_after_certify=False,
-            ),
-        )
+    return RuntimeCertificationPipeline(
+        model=model,
+        weight_store=WeightSetStore(num_objectives=NUM_OBJECTIVES),
+        config=RuntimePipelineConfig(
+            gate_type="PDS",
+            use_cvar=use_cvar,
+            require_cds_or_cvar=True,
+            cvar_samples=cvar_samples,
+            train_support_after_certify=False,
+        ),
     )
 
 
@@ -186,13 +182,23 @@ def pds_margin(delta_r: float, delta_n: Sequence[float]) -> float:
     return float(delta_r) + float(np.min(np.asarray(delta_n, dtype=np.float64)))
 
 
-def pds_admitted_count(candidates: Sequence[Dict[str, Any]], epsilon: float) -> int:
-    """How many candidates the PDS gate alone admits at `epsilon`."""
-    gate = PDSGate(epsilon=epsilon)
+def pds_admitted_count(
+    candidates: Sequence[Dict[str, Any]],
+    epsilon: float,
+    scale: Optional[EpsilonScale] = None,
+) -> int:
+    """How many candidates the PDS gate alone admits at `epsilon`.
+
+    With an epsilon scale, the same rule the controller applies: candidates
+    marked `task_failure` are rejected, and the tolerance is epsilon * unit.
+    """
+    tolerance = epsilon if scale is None else scale.tolerance(epsilon)
+    gate = PDSGate(epsilon=tolerance)
     return sum(
         1
         for c in candidates
-        if gate.admit(c["delta_r"], np.asarray(c["delta_n"], dtype=np.float64))
+        if not c.get("task_failure", False)
+        and gate.admit(c["delta_r"], np.asarray(c["delta_n"], dtype=np.float64))
     )
 
 
@@ -207,13 +213,25 @@ def episode_result(info: Dict[str, Any]) -> str:
     return "ended"
 
 
-def eps_sensitive(candidates: Sequence[Dict[str, Any]]) -> bool:
+def eps_sensitive(
+    candidates: Sequence[Dict[str, Any]],
+    scale: Optional[EpsilonScale] = None,
+) -> bool:
     """Whether eps anywhere in [0, eps_max] changes this step's PDS admissions."""
-    return pds_admitted_count(candidates, 0.0) != pds_admitted_count(candidates, EPSILON_MAX)
+    return pds_admitted_count(candidates, 0.0, scale) != pds_admitted_count(
+        candidates, EPSILON_MAX, scale
+    )
 
 
-def summarise(steps: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """Measured diagnostics over the run."""
+def summarise(
+    steps: Sequence[Dict[str, Any]],
+    scale: Optional[EpsilonScale] = None,
+) -> Dict[str, Any]:
+    """Measured diagnostics over the run.
+
+    With an epsilon scale, also the number of task-failure rejections and the
+    PDS tolerance range.
+    """
     eps = [s["signal"]["epsilon"] for s in steps]
     alpha = [s["signal"]["alpha"] for s in steps]
     securing = [s["modulators"]["securing"] for s in steps]
@@ -221,7 +239,7 @@ def summarise(steps: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         (s["step"] for s in steps if s["modulators"]["securing"] >= SATURATION_LEVEL),
         None,
     )
-    return {
+    summary = {
         "epsilon_range": [min(eps), max(eps)],
         "alpha_range": [min(alpha), max(alpha)],
         "securing_range": [min(securing), max(securing)],
@@ -233,8 +251,13 @@ def summarise(steps: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "selections": dict(sorted(Counter(s["selected"] or "-" for s in steps).items())),
         "results": dict(sorted(Counter(s["result"] for s in steps).items())),
         "securing_saturated_at_step": saturated_at,
-        "eps_sensitive_steps": sum(1 for s in steps if eps_sensitive(s["candidates"])),
+        "eps_sensitive_steps": sum(1 for s in steps if eps_sensitive(s["candidates"], scale)),
     }
+    if scale is not None:
+        tolerance = [s["pds_tolerance"] for s in steps]
+        summary["pds_tolerance_range"] = [min(tolerance), max(tolerance)]
+        summary["task_failures_total"] = sum(s["task_failures"] for s in steps)
+    return summary
 
 
 def _weights_text(weights: Sequence[float]) -> str:
@@ -256,9 +279,17 @@ def parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1, help="first seed; step k uses seed + k")
     parser.add_argument(
         "--candidates",
-        choices=("ci", "ppo", "extended"),
+        choices=("ci", "ppo", "extended", "tradeoff"),
         default=None,
-        help="candidate set (default: ppo if the PPO checkpoint exists, else ci)",
+        help="candidate set (default: ppo if the PPO checkpoint exists, else ci); "
+        "tradeoff is extended plus PPO candidates that burn extra fuel",
+    )
+    parser.add_argument(
+        "--epsilon-scale",
+        choices=("off", "on"),
+        default="off",
+        help="on: PDS tolerates eps * U and rejects task failures first "
+        "(bridge/epsilon_scale.py); off: raw eps, as before",
     )
     parser.add_argument(
         "--no-selection",
@@ -307,7 +338,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         pipeline = build_pipeline(
             seed=args.seed, use_cvar=args.cvar, cvar_samples=args.cvar_samples
         )
-        controller = MetaMoController(governor, pipeline, seed=args.seed)
+        scale = lunar_lander_epsilon_scale() if args.epsilon_scale == "on" else None
+        controller = MetaMoController(governor, pipeline, seed=args.seed, epsilon_scale=scale)
 
         config = {
             "steps": args.steps,
@@ -321,6 +353,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             "payoff_scale": payoff_scale,
             "motive_scale": motive_scale,
         }
+        # Only with the scale on, so a scale-off run's JSON is as before.
+        if scale is not None:
+            config["epsilon_scale"] = {"unit": scale.unit, "payoff_floor": scale.payoff_floor}
 
         print("=" * 100)
         print("MetaMo -> SubRep, MO-LunarLander (2 objectives: Safety, Fuel)")
@@ -330,12 +365,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"gates: {config['gates']}   nothing admitted: {args.no_selection}   "
               f"MetaMo commit: {config['metamo_commit']}")
         print(f"appraisal scales: payoff={payoff_scale:.3f}  motive={motive_scale:.3f}")
+        if scale is not None:
+            print(f"epsilon scale: PDS tolerates eps * {scale.unit:g}; candidates with "
+                  f"own payoff < {scale.payoff_floor:g} fail the task and are rejected first")
         if not args.cvar:
             print("alpha is reported but unused: no gate reads it without --cvar")
 
         header = (
             f"{'step':>4} {'seed':>4} {'secur':>6} {'thresh':>6} {'appr':>6} "
-            f"{'eps':>7} {'alpha':>6} {'Safety':>6} {'Fuel':>6} {'adm':>5}"
+            f"{'eps':>7}"
+            + (f" {'tol':>6}" if scale is not None else "")
+            + f" {'alpha':>6} {'Safety':>6} {'Fuel':>6} {'adm':>5}"
+            + (f" {'fail':>4}" if scale is not None else "")
             + (f" {'pds':>4}" if args.cvar else "")
             + f"  {'selected':<22} {'result':<8} {'d_r':>8} {'min d_n':>9}"
         )
@@ -379,7 +420,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 seed=args.seed,
             )
 
-            verdicts = {r.skill_id: bool(r.is_certified) for r in pipeline.last_records}
+            # This step's own decisions, from the controller: the pipeline's
+            # verdicts plus the task failures, which never reach the pipeline
+            # and are marked rejected.
+            verdicts = {r.skill_id: bool(r.is_certified) for r in controller.last_records}
             step_candidates = [
                 {
                     "skill_id": r.skill_id,
@@ -392,6 +436,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 }
                 for r in records
             ]
+            if scale is not None:
+                for c, r in zip(step_candidates, records):
+                    c["task_failure"] = scale.fails_task(r, baseline_stats)
             selected = record.selected_skill_id
             step = {
                 "step": record.step,
@@ -404,7 +451,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "modulators": {k: float(v) for k, v in record.modulators.items()},
                 "candidate_count": record.candidate_count,
                 "admitted_count": record.admitted_count,
-                "pds_only_admitted": pds_admitted_count(step_candidates, record.pds_epsilon),
+                "pds_only_admitted": pds_admitted_count(
+                    step_candidates, record.pds_epsilon, scale
+                ),
                 "candidates": step_candidates,
                 "selected": selected,
                 "flown_skill_id": flown["skill_id"],
@@ -413,6 +462,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "flown_delta_n": flown["delta_n"],
                 "flown_steps": flown["steps"],
             }
+            if scale is not None:
+                step["pds_tolerance"] = float(record.pds_tolerance)
+                step["task_failures"] = int(record.task_failures)
             steps.append(step)
 
             if selected is not None:
@@ -426,25 +478,34 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(
                 f"{step['step']:>4} {seed:>4} {mods['securing']:>6.3f} "
                 f"{mods['threshold']:>6.3f} {mods['approach']:>6.3f} "
-                f"{step['signal']['epsilon']:>7.4f} {step['signal']['alpha']:>6.3f} "
+                f"{step['signal']['epsilon']:>7.4f}"
+                + (f" {step['pds_tolerance']:>6.1f}" if scale is not None else "")
+                + f" {step['signal']['alpha']:>6.3f} "
                 f"{weights[SAFETY]:>6.3f} {weights[1]:>6.3f} "
                 f"{record.admitted_count:>2}/{record.candidate_count:<2}"
+                + (f" {step['task_failures']:>4}" if scale is not None else "")
                 + (f" {step['pds_only_admitted']:>4}" if args.cvar else "")
                 + f"  {shown:<22} {flown['result']:<8} "
                 f"{flown['delta_r']:>+8.1f} {min(flown['delta_n']):>+9.1f}"
             )
             if args.verbose:
                 for c in step_candidates:
+                    if c["admitted"]:
+                        verdict = "admitted"
+                    elif c.get("task_failure", False):
+                        verdict = "rejected (task failure)"
+                    else:
+                        verdict = "rejected"
                     print(
                         f"{'':>11}{c['skill_id']:<24} d_r={c['delta_r']:>+7.1f}  "
                         f"d_n=[{', '.join(f'{v:+.1f}' for v in c['delta_n'])}]  "
                         f"margin={c['pds_margin']:>+8.1f}  "
-                        f"{'admitted' if c['admitted'] else 'rejected'}"
+                        f"{verdict}"
                     )
     finally:
         env.close()
 
-    summary = summarise(steps)
+    summary = summarise(steps, scale)
     final_modulators = governor.modulator_summary()
 
     print("-" * len(header))
@@ -465,6 +526,10 @@ def main(argv: Optional[List[str]] = None) -> int:
            else f"securing >= {SATURATION_LEVEL}: not reached")
         + f"; after the last step: {final_modulators['securing']:.3f}"
     )
+    if scale is not None:
+        low, high = summary["pds_tolerance_range"]
+        print(f"pds tolerance range: [{low:.1f}, {high:.1f}]   task failures rejected "
+              f"before PDS: {summary['task_failures_total']}/{summary['scored_total']}")
     sensitive = summary["eps_sensitive_steps"]
     if sensitive:
         print(f"eps sensitivity: eps in [0, {EPSILON_MAX}] changes the PDS admissions "

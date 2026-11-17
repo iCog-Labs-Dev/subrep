@@ -239,18 +239,91 @@ should be revisited against real episode outcomes.
 **Known limitations of the LunarLander loop**
 (`env/lunar_lander_rollout.py`, `tests/test_lunar_lander_integration.py`):
 
-- **The landing result is counted twice.** The task reward Δr is the landing
-  result alone, but the wrapper's Safety objective also includes the terminal
-  landing reward (`env/lunar_lander_wrapper.py`, `_map_rewards`). So a landing
-  or crash shows up in both Δr and Δn_Safety.
-- **ε cannot decide an admission at the current scale.** ε is at most 0.5,
+- **The landing result counts in both Δr and Δn_Safety, by decision.** See
+  "Payoff and Safety" below for why, and what counting it once would change.
+- **Without the ε scale, ε cannot decide an admission.** ε is at most 0.5,
   while Δn values are in the hundreds, so crash-only candidates are rejected
-  and landings admitted whatever ε is.
+  and landings admitted whatever ε is. With `--epsilon-scale on`, ε can decide
+  the trade-off candidates (see "ε in LunarLander units" below), but the live
+  ε stays small after landings: 0–0.109 in the measured run, so the
+  tolerance stays under 33.
 - **Evidence and execution share a seed.** Each decision step certifies the
   candidates and flies the chosen one from the same start. This shows the loop
   is wired correctly, not that a certificate holds on unseen starts.
 - **CVaR is off.** The MDN is untrained, and an untrained MDN makes the CVaR
   gate admit nearly everything, so the loop certifies with PDS only.
+
+### Payoff and Safety
+
+**The convention.** The payoff r̂ is the landing result alone (+100 landed,
+−100 crashed; `env/lunar_lander_rollout.py:174`). Safety is the landing result
+plus the dense shaping (`env/lunar_lander_wrapper.py:73`). So a landing or crash
+counts in both Δr and Δn_Safety. This is kept on purpose, and
+`tests/test_lunar_lander_rollout.py::test_safety_includes_the_landing_result`
+pins it.
+
+**Why it is harmless.** The two conventions were compared on the same rollouts.
+With γ = 1, the count-once Safety delta is exactly ΔSafety − Δr, so no second set
+of episodes is needed. Measured with MetaMo `4171b1d`:
+
+| | Landing counted twice (kept) | Counted once |
+|---|---|---|
+| PDS admissions, ε in [0, 0.5], 800 candidate–seed pairs (seeds 1–40) | — | identical |
+| Selected skill, weights (0.8, 0.2), (0.7, 0.3), (0.6, 0.4), 40 seeds | — | identical |
+| Objective that binds min Δn | Fuel 592, Safety 208 | identical |
+| Motive scale from `appraisal_scales`, seeds 1–20 | 250.9 | 226.0 |
+| Demo, `--candidates ppo`, seeds 1–16: steps with ε = 0 | 1/16 | 3/16 |
+| Demo, `--candidates extended`, seeds 1–16: steps with ε = 0 | 2/16 | 6/16 |
+| Demo, `--candidates ci` | — | identical (nothing is admitted) |
+
+Fuel is the objective that binds in most pairs, and the double count shifts
+every landing's Safety by the same amount, so no admission or selection moves.
+
+**The alternative: counting the landing once,** in the payoff only and in this
+rollout only.
+
+*Benefits:*
+- **A cleaner meaning for Safety.** It would measure only how the flight went
+  (the shaping: distance, speed, tilt and leg contact), and the payoff alone
+  would carry the landing result.
+- **No shared term.** Δr and Δn_Safety would be independent, so the PDS sum
+  Δr + min Δn would never count the landing twice when Safety is the objective
+  that binds.
+- **Safer for rules that depend on the size of Safety,** for example
+  per-objective scaling: the landing would not inflate it.
+
+*Downsides:*
+- **No measured decision gain:** admissions and selections are identical (table
+  above). The only change is the smaller motive scale, which moves any rule
+  built on it.
+- **More caution with the current risk signal.** A median landing's risk rises
+  from 0.393 to 0.435, and its novelty falls from 0.760 to 0.461 (novelty lowers
+  Securing, `openpsi/appraisal.py:79-84`). The demo has more steps with ε = 0
+  (table above), and after 30 identical landings fed to the real governor,
+  Securing ends at 0.943 instead of 0.896.
+- **Two meanings of Safety in one codebase:** shaping only in this rollout, and
+  landing plus shaping everywhere else.
+- **Every documented LunarLander number changes,** and a flag is needed to
+  reproduce the current ones.
+- **More code and tests to maintain:** the flag has to pass through
+  `run_episode`, `evaluate_candidates`, `execute_candidate` and the demo, and be
+  recorded in its JSON.
+
+Under sustained crashes, Securing reaches 0.998–0.999 under both conventions, so
+the choice does not change how MetaMo behaves under threat.
+
+**Why the wrapper is not changed instead.** `SkillExecutor` builds its payoff
+as the sum of the objective vector (`env/skill_executor.py:44`), and goal
+decomposition follows it (`decomposition/effects.py:109-125`). Removing the
+landing from Safety in the wrapper would remove it from their payoff altogether.
+With the wrapper patched that way, four tests fail: the PPO pilot's payoff gain
+over idling becomes −9.5 and it no longer passes any gate. The committed effect
+tables in `decomposition/data/` would also no longer match the objectives they
+were measured with.
+
+**When to revisit.** Recheck this choice if a rule makes decisions depend on the
+size of Safety, for example per-objective scaling, or if the risk signal fed
+back to MetaMo changes.
 
 ### Running the LunarLander demo
 
@@ -265,7 +338,8 @@ python demo/run_lunar_lander_metamo.py --steps 10 --candidates ci      # no PPO 
 | Option | Meaning |
 |---|---|
 | `--steps`, `--seed` | number of decision steps, and the first seed |
-| `--candidates ci\|ppo\|extended` | the candidate set; defaults to `ppo` when `models/pilot_ppo.pt` exists, otherwise `ci` |
+| `--candidates ci\|ppo\|extended\|tradeoff` | the candidate set; defaults to `ppo` when `models/pilot_ppo.pt` exists, otherwise `ci`. `tradeoff` is `extended` plus six PPO candidates that burn extra fuel (`env/lunar_lander_candidates.py`) |
+| `--epsilon-scale off\|on` | `on`: PDS tolerates ε·U with U = 300.9, and candidates that crash are rejected first; adds the `tol` and `fail` columns. Default `off` |
 | `--no-selection noop\|stop` | when nothing is admitted: fly the noop baseline, or fly nothing. Both feed MetaMo a zero-Δ outcome with `admitted=False` |
 | `--cvar`, `--cvar-samples` | also apply the CVaR gate (OR semantics); a `pds` column then shows the PDS-only count |
 | `--verbose` | print every candidate's Δr, Δn, PDS margin and verdict |
@@ -292,6 +366,10 @@ The summary reports measured diagnostics: the ε and α ranges, the first and
 last weights, admissions, selections and flown results, the first step where
 Securing reaches 0.95, and the number of steps where ε anywhere in [0, 0.5]
 would change a PDS admission.
+
+With `--epsilon-scale on`, the PDS-only count (`pds` column) and the
+ε-sensitivity check apply the same rule as the gate: task failures are
+rejected, and the tolerance is ε·U.
 
 **Comparing two runs.** Save each run with `--json-out`, using the same options
 and seeds, for example before and after updating the MetaMo submodule. Then
@@ -337,6 +415,35 @@ commit and point the loader at it:
 git -C external/metamo archive ceb108e | (mkdir -p /tmp/metamo_ceb108e && tar -x -C /tmp/metamo_ceb108e)
 SUBREP_METAMO_PATH=/tmp/metamo_ceb108e \
   python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo
+```
+
+### ε in LunarLander units
+
+With `--epsilon-scale on`, the PDS gate tolerates ε·U, U = 300.9
+(`LUNAR_LANDER_EPSILON_UNIT`), and candidates whose own payoff is below 0, the
+crashes, are rejected first. The design decision and the alternatives are in
+"ε in environment units" in `bridge/README.md`.
+
+The same run with the scale off and on (`--steps 16 --candidates tradeoff`,
+seeds 1–16, MetaMo `4171b1d`):
+
+| | Scale off | Scale on |
+|---|---|---|
+| ε range | 0–0.109 | 0–0.109 |
+| PDS tolerance | equal to ε | 0–32.7 |
+| Rejected as task failures, before PDS | — | 99/224 |
+| Admitted | 75/224 | 76/224 |
+| Steps where some ε in [0, 0.5] would change an admission | 0/16 | 8/16 |
+| Selections | ppo_deterministic 8, ppo_stochastic 6, ppo_waste_main_12 1, ppo_waste_side_15 1 | identical, step for step |
+| Flown results | 16/16 landed | 16/16 landed |
+
+ε could now decide half the steps, but the live ε is small, so it decides one
+in this run: at step 15, `ppo_waste_side_15` lands with margin −7 and is
+admitted under a tolerance of 11.8. The scale is off by default, and with it
+off the demo's output and JSON carry no scale fields.
+
+```bash
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --verbose
 ```
 
 ---
@@ -492,6 +599,17 @@ Regression guard: `test_s1c_cached_approval_is_not_selected_after_epsilon_tighte
 runs one pipeline, one context and one skill through the controller at
 ε = 0.10 and then 0.00. The skill is selected at the first and not at the second,
 and the historical certificate survives.
+
+**An optional scale puts ε into the environment's units.** ε is dimensionless,
+but the PDS gate compares it with Δr + min Δn, which is in reward units. Given
+an `EpsilonScale(unit, payoff_floor)` (`bridge/epsilon_scale.py`), the
+controller stamps the tolerance ε·U instead of ε, and first rejects any
+candidate whose own payoff (baseline payoff + Δr) is below the floor. Those
+candidates never reach the pipeline, so they are never cached and never grow
+W_x, and their records carry `metadata["rejection_reason"] == "task_failure"`.
+`StepRecord` gains `pds_tolerance` and `task_failures`. With the scale, the
+stored ε is the tolerance, so the recheck above compares tolerances. Without
+it, nothing changes. See "ε in environment units" in `bridge/README.md`.
 
 ---
 

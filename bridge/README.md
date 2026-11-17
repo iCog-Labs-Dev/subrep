@@ -73,6 +73,88 @@ Regression guards: `test_bridge_e2e.py::test_s1c_cached_approval_is_not_selected
 (through the controller, down to selection) and the budget-recheck tests in
 `test_mdn_runtime_pipeline.py`.
 
+## ε in environment units
+
+**The problem.** ε is dimensionless, in [0, 0.5] (`budget.py`). The PDS gate
+compares it directly with Δr + min Δn, which is in the environment's reward
+units. On the Minecraft stub those margins sit inside (−0.1, 0), so ε decides
+admissions. On MO-LunarLander they are in the hundreds: across 800
+candidate–seed pairs on seeds 1–40, no candidate changes admission between
+ε 0 and 0.5.
+
+**The decision: a fixed unit with a task-failure guard**, in
+`epsilon_scale.py`, optional and off by default:
+
+- **The unit.** The PDS tolerance becomes ε·U, so ε reads as a fraction of a
+  typical candidate change. U is measured once on calibration seeds and stays
+  fixed. On LunarLander, U = s_r + s_n = 50.0 + 250.9 = 300.9 (the
+  `appraisal_scales` formula, extended candidates, seeds 1–20; per-seed CV
+  0.234), stored as `LUNAR_LANDER_EPSILON_UNIT` in `env/lunar_lander_metamo.py`.
+  Δr and Δn are not rescaled, so selection scores and stored certificates keep
+  their meaning; only the admission line moves.
+- **The guard.** A candidate whose own payoff (baseline payoff + Δr) is below
+  `payoff_floor` fails the task and is rejected at every ε, before the
+  pipeline. On LunarLander the floor is 0: a crash scores −100, a timeout 0,
+  a landing +100. Under ε·U, crashes against a crashing baseline sit within
+  1–40 units of the band, so without the guard a loose ε would admit them.
+  Because it acts before the pipeline, a failing candidate never enters the
+  certificate cache or W_x.
+- **Guard rejections are counted apart from PDS rejections.** The record says
+  why (`metadata["rejection_reason"] == "task_failure"`), `StepRecord` counts
+  them (`task_failures`), and the demo prints them in a `fail` column, so a
+  report never credits the PDS gate with rejecting crashes.
+- **It fails closed.** With the scale on, nothing can pass by default:
+  - a missing or non-finite baseline payoff, or a non-finite Δr, raises
+    `ValueError` instead of reading as a pass;
+  - a record the scale cannot stamp and mark rejected (it needs the dataclass
+    fields `epsilon`, `is_certified` and `metadata`, as `CandidateSkillRecord`
+    has) raises `TypeError` before anything runs;
+  - every candidate sent to the pipeline has its approval cleared first, so the
+    pipeline's verdict is the only approval that can come back.
+- **Reports read this step's decisions.** `MetaMoController.last_records` is set
+  on every `certify()` call, including the task failures. When every candidate
+  fails and the pipeline is skipped, the demo and `experiments/epsilon_scale/live.py`
+  still show this step's rejections, not the previous step's approvals.
+
+**Why not the alternatives** (held-out seeds 21–40, the same records):
+
+| Alternative | Why not |
+|---|---|
+| Raw ε | 0 of 400 admissions change between ε 0 and 0.5 |
+| Normalise Δr and Δn by their scales | admits 115 crashes at some ε, and changes the selection scores, so selection and cached certificates change too |
+| Normalise per step, from the current candidates | one candidate's admission depends on which other candidates are present |
+| A fixed unit with no guard | admits 120 crashes at some ε |
+| A fixed unit, with failures kept at raw ε | measured the same as the guard here, but a failure whose margin is within ε of zero would still be admitted: crash safety would depend on the units, not on a rule |
+| Raise ε_max in `budget.py` | the same arithmetic, but it puts LunarLander's units into the signal MetaMo emits, so ε means something different in every environment |
+
+**What it gives**, measured with `experiments/epsilon_scale/`:
+
+- no crash is admitted at any ε;
+- 20 of 120 trade-off candidates (`env/lunar_lander_candidates.py`) change
+  admission between ε 0 and 0.5;
+- every `ppo_deterministic` landing is admitted at ε 0.1 (18 of 18);
+- admission is monotonic in ε;
+- timeouts (own payoff 0) pass the guard and are sometimes admitted, but on
+  seeds 1–40, at any ε in [0, 0.5] and any Safety weight in [0, 1], a timeout
+  is never selected: an admitted landing's Δr is 100 higher.
+
+**What it does not fix.** The live ε stays small after landings, because a
+clean landing still reads as moderately risky to MetaMo. In the demo
+(`--candidates tradeoff --epsilon-scale on`, seeds 1–16), ε ranges over
+0–0.109, so the tolerance stays under 33, and the scale changes one admission
+and no selection. The scale makes ε able to decide; how much it decides in the
+live loop depends on the feedback MetaMo receives.
+
+**Recalibrating U.** Re-run `experiments/epsilon_scale/collect.py` and
+`analyse.py` when the candidates, the baseline or the reward mapping change,
+and update the constant and its comment together. For a new environment,
+measure its own U the same way; the bridge code does not change.
+
+Regression guards: `tests/test_bridge_epsilon_scale.py` (synthetic, no MetaMo),
+and in `tests/test_lunar_lander_integration.py`,
+`test_a_tighter_epsilon_rejects_a_real_trade_off_landing` and
+`test_real_crashes_are_rejected_at_the_loosest_epsilon`.
+
 ## Layout
 
 | File | Imports MetaMo? | Purpose |
@@ -81,6 +163,7 @@ Regression guards: `test_bridge_e2e.py::test_s1c_cached_approval_is_not_selected
 | `budget.py` | no | ε/α formulas — **the sign correction lives here** |
 | `weights.py` | no | `w_meta`: 8 goals → 6 objectives |
 | `stimulus.py` | no | outcome → appraisal inputs |
+| `epsilon_scale.py` | no | optional: ε → PDS tolerance ε·U, plus the task-failure guard |
 | `controller.py` | no | per-step orchestration, torch seeding |
 | `_loader.py` | path only | locates the MetaMo checkout |
 | `governor.py` | **yes — only here** | `MetaMoGovernor`, plus `FakeGovernor` |

@@ -13,6 +13,10 @@ Safety = terminal result + dense shaping
 Fuel   = main engine cost + side engine cost
 ```
 
+The MetaMo LunarLander rollout (`lunar_lander_rollout.py`) keeps this mapping: its
+payoff is the landing result alone, so a landing counts in both the payoff and
+Safety. See "Payoff and Safety" in `docs/subrep_metamo_integration.md`.
+
 Contract:
 
 - observation shape: `(8,)`
