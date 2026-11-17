@@ -103,6 +103,18 @@ candidate–seed pairs on seeds 1–40, no candidate changes admission between
   why (`metadata["rejection_reason"] == "task_failure"`), `StepRecord` counts
   them (`task_failures`), and the demo prints them in a `fail` column, so a
   report never credits the PDS gate with rejecting crashes.
+- **It fails closed.** With the scale on, nothing can pass by default:
+  - a missing or non-finite baseline payoff, or a non-finite Δr, raises
+    `ValueError` instead of reading as a pass;
+  - a record the scale cannot stamp and mark rejected (it needs the dataclass
+    fields `epsilon`, `is_certified` and `metadata`, as `CandidateSkillRecord`
+    has) raises `TypeError` before anything runs;
+  - every candidate sent to the pipeline has its approval cleared first, so the
+    pipeline's verdict is the only approval that can come back.
+- **Reports read this step's decisions.** `MetaMoController.last_records` is set
+  on every `certify()` call, including the task failures. When every candidate
+  fails and the pipeline is skipped, the demo and `experiments/epsilon_scale/live.py`
+  still show this step's rejections, not the previous step's approvals.
 
 **Why not the alternatives** (held-out seeds 21–40, the same records):
 

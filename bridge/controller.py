@@ -15,8 +15,14 @@ seeds before each certification pass and records the seed it used.
 Epsilon scale (optional, off by default): given an `EpsilonScale`
 (bridge/epsilon_scale.py), the controller first rejects candidates that fail
 the task, without sending them to the pipeline, then stamps the others with
-the tolerance epsilon * unit instead of the raw epsilon. Without one, every
-call is exactly as before.
+the tolerance epsilon * unit instead of the raw epsilon. It fails closed: a
+missing or non-finite payoff, or a record it cannot stamp and mark rejected,
+raises instead of letting a candidate through. Without one, every call is
+exactly as before.
+
+`last_records` holds the records of the latest `certify()` call, so reports
+show this step's decisions, including candidates rejected before the
+pipeline ran.
 """
 
 from __future__ import annotations
@@ -48,19 +54,40 @@ def _with_epsilon(candidate: Any, epsilon: float) -> Any:
     return candidate
 
 
+# Fields the epsilon scale must be able to set on every candidate record.
+_SCALED_RECORD_FIELDS = frozenset({"epsilon", "is_certified", "metadata"})
+
+
+def _require_scalable(candidate: Any) -> None:
+    """Refuse a record the epsilon scale cannot stamp and mark rejected.
+
+    With the scale on, every candidate needs its tolerance stamped
+    (`epsilon`), its approval cleared or set (`is_certified`) and, when it
+    fails the task, its reason recorded (`metadata`). A record lacking any of
+    these would keep whatever approval it arrived with, or reach the gate with
+    the pipeline's static epsilon instead of the tolerance, so it is rejected
+    up front rather than passed through.
+    """
+    names = {f.name for f in fields(candidate)} if is_dataclass(candidate) else set()
+    missing = _SCALED_RECORD_FIELDS - names
+    if missing:
+        raise TypeError(
+            "the epsilon scale needs candidate records it can stamp and mark "
+            "rejected, such as CandidateSkillRecord: a dataclass with the fields "
+            f"{sorted(_SCALED_RECORD_FIELDS)}; got {type(candidate).__name__}, "
+            f"missing {sorted(missing)}"
+        )
+
+
 def _as_task_failure(candidate: Any) -> Any:
     """Mark a candidate rejected because it failed the task.
 
-    Duck-typed like `_with_epsilon`: a stand-in that is not a dataclass with
-    `is_certified` and `metadata` is returned unchanged; it is still kept out
-    of the pipeline, so it is never admitted.
+    Only called on records `_require_scalable` accepted, so the result is
+    always unapproved, whatever approval the record arrived with.
     """
-    names = {f.name for f in fields(candidate)} if is_dataclass(candidate) else set()
-    if {"is_certified", "metadata"} <= names:
-        metadata = dict(candidate.metadata or {})
-        metadata["rejection_reason"] = TASK_FAILURE
-        return replace(candidate, is_certified=False, metadata=metadata)
-    return candidate
+    metadata = dict(candidate.metadata or {})
+    metadata["rejection_reason"] = TASK_FAILURE
+    return replace(candidate, is_certified=False, metadata=metadata)
 
 
 @dataclass
@@ -115,6 +142,9 @@ class MetaMoController:
         self.seed = int(seed)
         self.epsilon_scale = epsilon_scale
         self.history: List[StepRecord] = []
+        # The records the last `certify()` call returned: this step's
+        # decisions, including candidates rejected before the pipeline.
+        self.last_records: List[Any] = []
         self._step_index = 0
 
     def certify(
@@ -141,7 +171,11 @@ class MetaMoController:
         With an epsilon scale, candidates that fail the task are returned
         rejected (`metadata["rejection_reason"] == TASK_FAILURE`) without
         reaching the pipeline, and the rest are stamped with the tolerance
-        epsilon * unit. Records come back in the input order either way.
+        epsilon * unit and with their approval cleared, so the pipeline's
+        verdict is the only approval that can come back. Every record must be
+        one the scale can stamp (see `_require_scalable`); otherwise TypeError
+        is raised before anything runs. Records come back in the input order
+        either way, and are kept as `last_records`.
         """
         effective_seed = self.seed if seed is None else int(seed)
         _seed_torch(effective_seed)
@@ -152,18 +186,27 @@ class MetaMoController:
                 _with_epsilon(candidate, signal.pds_epsilon)
                 for candidate in candidate_skills
             ]
-            return self.pipeline.certify_candidate_skills(
-                context=np.asarray(context),
-                candidate_skills=budgeted,
-                baseline_stats=baseline_stats,
-                weights_used=signal.weights,
-                cvar_confidence=signal.cvar_tail_level,
+            records = list(
+                self.pipeline.certify_candidate_skills(
+                    context=np.asarray(context),
+                    candidate_skills=budgeted,
+                    baseline_stats=baseline_stats,
+                    weights_used=signal.weights,
+                    cvar_confidence=signal.cvar_tail_level,
+                )
             )
+            self.last_records = records
+            return records
 
+        for candidate in candidate_skills:
+            _require_scalable(candidate)
         tolerance = scale.tolerance(signal.pds_epsilon)
         failing = [scale.fails_task(c, baseline_stats) for c in candidate_skills]
+        # A record that fails the gates comes back from the pipeline exactly as
+        # it went in (utils/mdn_runtime_pipeline.py), so a stale approval is
+        # cleared here, not trusted.
         passing = [
-            _with_epsilon(candidate, tolerance)
+            replace(candidate, epsilon=float(tolerance), is_certified=False)
             for candidate, fails in zip(candidate_skills, failing)
             if not fails
         ]
@@ -178,10 +221,12 @@ class MetaMoController:
             if passing
             else []
         )
-        return [
+        records = [
             _as_task_failure(candidate) if fails else next(certified)
             for candidate, fails in zip(candidate_skills, failing)
         ]
+        self.last_records = records
+        return records
 
     def select(
         self,

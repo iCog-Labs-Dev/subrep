@@ -124,51 +124,30 @@ def build_candidates(env: SubRepEnv, kind: str) -> Tuple[CandidatePolicy, ...]:
     return candidates
 
 
-class RecordingPipeline:
-    """Forwards certification unchanged and keeps the records it returns.
-
-    `MetaMoController.step()` reports only counts, so this is how the demo sees
-    each candidate's verdict (`is_certified`) as the pipeline decided it,
-    including the CVaR gate when it is on.
-    """
-
-    def __init__(self, pipeline: RuntimeCertificationPipeline) -> None:
-        self._pipeline = pipeline
-        self.last_records: List[Any] = []
-
-    def certify_candidate_skills(self, **kwargs: Any) -> List[Any]:
-        records = self._pipeline.certify_candidate_skills(**kwargs)
-        self.last_records = list(records)
-        return records
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._pipeline, name)
-
-
-def build_pipeline(*, seed: int, use_cvar: bool, cvar_samples: int) -> RecordingPipeline:
+def build_pipeline(*, seed: int, use_cvar: bool, cvar_samples: int) -> RuntimeCertificationPipeline:
     """A fresh, seeded pipeline around an untrained MDN.
 
     The W_x store stays empty (no support training after certification), so
     the PDS gate decides with the full simplex, Δr + min Δn. That is what the
-    summary's eps-sensitivity check recomputes.
+    summary's eps-sensitivity check recomputes. Each candidate's verdict,
+    including the CVaR gate's when it is on, is read from the controller's
+    `last_records`.
     """
     import torch
 
     torch.manual_seed(seed)
     model = MotiveDecompositionNetwork(input_dim=OBS_DIM, num_objectives=NUM_OBJECTIVES)
     model.eval()
-    return RecordingPipeline(
-        RuntimeCertificationPipeline(
-            model=model,
-            weight_store=WeightSetStore(num_objectives=NUM_OBJECTIVES),
-            config=RuntimePipelineConfig(
-                gate_type="PDS",
-                use_cvar=use_cvar,
-                require_cds_or_cvar=True,
-                cvar_samples=cvar_samples,
-                train_support_after_certify=False,
-            ),
-        )
+    return RuntimeCertificationPipeline(
+        model=model,
+        weight_store=WeightSetStore(num_objectives=NUM_OBJECTIVES),
+        config=RuntimePipelineConfig(
+            gate_type="PDS",
+            use_cvar=use_cvar,
+            require_cds_or_cvar=True,
+            cvar_samples=cvar_samples,
+            train_support_after_certify=False,
+        ),
     )
 
 
@@ -441,9 +420,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 seed=args.seed,
             )
 
-            # Task failures never reach the pipeline, so they have no verdict
-            # there and read as rejected.
-            verdicts = {r.skill_id: bool(r.is_certified) for r in pipeline.last_records}
+            # This step's own decisions, from the controller: the pipeline's
+            # verdicts plus the task failures, which never reach the pipeline
+            # and are marked rejected.
+            verdicts = {r.skill_id: bool(r.is_certified) for r in controller.last_records}
             step_candidates = [
                 {
                     "skill_id": r.skill_id,

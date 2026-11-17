@@ -72,10 +72,28 @@ class EpsilonScale:
     def fails_task(self, candidate: Any, baseline_stats: Mapping[str, Any]) -> bool:
         """Whether `candidate` fails the task, so must be rejected at every epsilon.
 
-        False when the guard is off, or when `baseline_stats` has no
-        "baseline_payoff" to measure the candidate's own payoff from.
+        False when the guard is off (no `payoff_floor`). With the guard on, the
+        candidate's own payoff must be measurable: a missing or non-finite
+        "baseline_payoff", or a non-finite `delta_r`, raises ValueError rather
+        than letting the candidate through, because a payoff that cannot be
+        compared with the floor must not read as a pass.
         """
-        if self.payoff_floor is None or "baseline_payoff" not in baseline_stats:
+        if self.payoff_floor is None:
             return False
-        own_payoff = float(baseline_stats["baseline_payoff"]) + float(candidate.delta_r)
-        return own_payoff < self.payoff_floor
+        if "baseline_payoff" not in baseline_stats:
+            raise ValueError(
+                "the task-failure guard needs baseline_stats['baseline_payoff'] "
+                "to measure each candidate's own payoff; none was given"
+            )
+        baseline_payoff = float(baseline_stats["baseline_payoff"])
+        if not math.isfinite(baseline_payoff):
+            raise ValueError(
+                f"the task-failure guard needs a finite baseline payoff, got {baseline_payoff}"
+            )
+        delta_r = float(candidate.delta_r)
+        if not math.isfinite(delta_r):
+            name = getattr(candidate, "skill_id", type(candidate).__name__)
+            raise ValueError(
+                f"the task-failure guard needs a finite delta_r, got {delta_r} for {name!r}"
+            )
+        return baseline_payoff + delta_r < self.payoff_floor
