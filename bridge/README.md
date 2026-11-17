@@ -153,7 +153,10 @@ change against the baseline, not danger. On MO-LunarLander the noop baseline
 crashes, so a clean landing still spends more fuel than doing nothing and reads
 as moderately risky: about 0.39 for a median landing. Fed 30 landings, MetaMo's
 Securing stays at 0.905 and ε at 0.028, so caution never relaxes after good
-outcomes and ε never gets room to act.
+outcomes and ε never gets room to act. Across 840 episodes on seeds 1–40, the
+default risk also fails to separate crashes from landings: a random crash reads
+as riskier than a random landing only 45% of the time across all candidate sets
+(`experiments/caution_recovery/results.md`).
 
 **The decision: an optional measured risk on the outcome.**
 `SkillOutcome.risk: Optional[float] = None` (`protocol.py`), the last field,

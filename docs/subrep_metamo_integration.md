@@ -456,6 +456,39 @@ still spends more fuel than doing nothing, and reads as moderately risky (about
 0.39 for a median landing). Caution then stays high after landings, and ε stays
 near 0.
 
+**What MetaMo receives under the default risk** (seeds 1–40, 840 episodes, the
+landing counted in both payoff and Safety; `experiments/caution_recovery/`):
+
+| Outcome | Episodes | Risk: median (range) | 30 identical outcomes: Securing / ε |
+|---|---|---|---|
+| landing, task set | 75 | 0.407 (0.308–0.935) | 0.907 / 0.028 |
+| landing, all sets | 279 | 0.494 (0.308–0.972) | — |
+| landing, fuel-wasting trade-off set | 132 | 0.604 (0.393–0.972) | — |
+| crash, task set | 241 | 0.862 (0.152–1.000) | 0.998 / 0 |
+| crash, all sets | 417 | 0.407 (0.004–1.000) | — |
+| timeout, all sets | 104 | 0.852 (0.703–0.998) | 0.998 / 0 |
+| abstention, `noop` and `stop` | 40 / 1 | 0.250 (the rejection penalty) | 0.924 and 0.917 / 0 |
+
+- **The default risk does not tell a crash from a landing.** A crash drawn at
+  random reads as riskier than a landing drawn at random 71% of the time in
+  the task set, and 45% of the time across all candidate sets, which is worse
+  than chance.
+- **Some crashes read as safer than a clean landing.** When the pilot's engines
+  cut out early, the episode crashes much like noop does, so its worst
+  objective change against noop is small (median ΔSafety −0.6 and ΔFuel −17 for
+  `ppo_cut_50`), and so is its risk: a median of 0.115 for `ppo_cut_50` and 0.260
+  for `ppo_cut_100`.
+- **Fuel-wasting landings read as dangerous** (median 0.604). Repeated, 100 of
+  the 132 drive ε to 0, although every one of them lands.
+- **Landings alone hold Securing near 0.91 and ε near 0.03,** so caution never
+  relaxes after a run of good outcomes.
+
+The full tables, with the spread across episodes, the per-policy breakdown and
+the alternative Safety convention, are in
+`experiments/caution_recovery/results.md`. Regenerate them with
+`python experiments/caution_recovery/measure.py`, on Linux: flight results
+differ slightly by platform.
+
 With `--risk task`, each outcome carries the flown episode's own danger
 (`episode_outcome(..., task_risk=True)`, `env/lunar_lander_rollout.py`):
 
