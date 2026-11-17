@@ -24,8 +24,14 @@ environment, and the existing `run_episode` does the flying.
 The candidates are the task, borderline and trade-off sets of
 experiments/epsilon_scale/collect.py. The outcome fed to the governor for a
 type is the median outcome of the task set, and the appraisal scales come from
-the task set on the first seed, as the demo derives them. The first section of
-the report repeats an earlier measurement on seeds 1-20 as a check.
+the task set on the first seed, using the demo's formula.
+
+The first section of the report repeats, as a check, the seeds 1-20 comparison
+of the two Safety conventions, made with the same method when the landing
+reward's double count was settled. Its landing risk, novelty and
+Securing-after-30-landings values are published in
+docs/subrep_metamo_integration.md, "Payoff and Safety"; the crash and timeout
+values were not published.
 
 Flight results depend on the platform: run this on Linux to reproduce the
 committed numbers.
@@ -71,7 +77,7 @@ CANDIDATE_SETS_SCRIPT = REPO_ROOT / "experiments" / "epsilon_scale" / "collect.p
 # Development seeds. Anything outside this range is refused, so a mistyped
 # argument cannot touch seeds held back for evaluation.
 ALLOWED_SEEDS = range(1, 41)
-# The seeds of the earlier measurement the report checks itself against.
+# The seeds of the seeds 1-20 comparison the report checks itself against.
 REFERENCE_SEEDS = range(1, 21)
 
 TASK_SET = "task"
@@ -101,16 +107,16 @@ CONVENTIONS: Dict[str, Callable[[Dict[str, Any]], float]] = {
 }
 CONVENTION_TITLES = {
     KEPT: "kept: Safety = landing reward + shaping (the convention in use)",
-    ONCE: "once: Safety = shaping only (for a later re-check)",
+    ONCE: "once: Safety = shaping only (the alternative convention)",
 }
 
 STIMULUS_FIELDS = ("risk", "novelty", "conduciveness", "effort")
 TRACE_FIELDS = ("securing", "threshold", "epsilon", "safety_weight")
 PERCENTILES = (0, 10, 25, 50, 75, 90, 100)
 
-# The earlier measurement on seeds 1-20, medians, with the same MetaMo commit.
+# The seeds 1-20 comparison: medians, with the same MetaMo commit.
 # Stimulus: (risk, novelty, conduciveness). Runs: (Securing, eps) at the end;
-# None where the earlier measurement did not record the value.
+# None where the comparison did not record the value.
 REFERENCE_STIMULUS = {
     KEPT: {
         LANDING: (0.393, 0.760, 0.991),
@@ -618,7 +624,7 @@ def metamo_commit() -> str:
 
 
 def reference_section(check: Dict[str, Dict[str, Any]]) -> List[str]:
-    """This script's values on the reference seeds, beside the earlier measurement."""
+    """This script's values on the reference seeds, beside the seeds 1-20 comparison."""
 
     def compare(earlier: Optional[float], here: float, digits: int = 3) -> List[str]:
         if earlier is None:
@@ -627,12 +633,17 @@ def reference_section(check: Dict[str, Dict[str, Any]]) -> List[str]:
         return [f"{earlier:.{digits}f}", f"{here:.{digits}f}", f"{gap:+.{digits}f}"]
 
     lines = [
-        f"## 1. Check against the earlier measurement (seeds {REFERENCE_SEEDS[0]}–"
-        f"{REFERENCE_SEEDS[-1]})",
+        f"## 1. Check against the seeds {REFERENCE_SEEDS[0]}–{REFERENCE_SEEDS[-1]} comparison",
         "",
-        "The same method as below, limited to the seeds the earlier measurement used: "
-        "the stimulus of the task set's median outcome, and the governor runs fed that "
-        "outcome. `difference` is here minus earlier.",
+        f"`earlier` is the seeds {REFERENCE_SEEDS[0]}–{REFERENCE_SEEDS[-1]} comparison of the "
+        "two Safety conventions, made with the same method when the landing reward's double "
+        "count was settled. Its landing risk, novelty and Securing-after-30-landings values "
+        "are published in `docs/subrep_metamo_integration.md`, \"Payoff and Safety\"; the "
+        "crash and timeout values were not published.",
+        "",
+        "`here` is the same method as below, limited to those seeds: the stimulus of the "
+        "task set's median outcome, and the governor runs fed that outcome. `difference` is "
+        "here minus earlier.",
         "",
     ]
     body, worst = [], 0.0
@@ -919,7 +930,9 @@ def report(
             f"motive scale {motive:.1f}"
         )
     lines += [
-        f"- Scales are derived as in the demo: from the task set on seed {seeds[0]}.",
+        f"- Scales use the demo's formula (`appraisal_scales`) on the task set on seed {seeds[0]}. "
+        "The demo applies it to whichever candidate set it runs (66.7 / 266.7 with "
+        "`--candidates ppo`), so eps and Securing here are not directly comparable with the demo's.",
         "- Improvements are against the noop baseline flown from the same seed. "
         "Flown outcomes are appraised as admitted; a rejected one adds 0.25 to risk.",
         "- Conduciveness in sections 1 and 2 uses a fresh governor's weights "
@@ -968,7 +981,8 @@ def parse_seeds(text: str) -> List[int]:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--seeds", type=parse_seeds, default=list(ALLOWED_SEEDS))
-    parser.add_argument("--rollouts", type=Path, default=HERE / "rollouts.json",
+    parser.add_argument("--rollouts", type=Path,
+                        default=REPO_ROOT / "runs" / "caution_recovery" / "rollouts.json",
                         help="where the flown episodes are stored and reused from")
     parser.add_argument("--refresh", action="store_true", help="fly again even if stored")
     parser.add_argument("--out", type=Path, default=HERE / "results.md")
