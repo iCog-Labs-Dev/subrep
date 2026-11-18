@@ -110,7 +110,10 @@ candidate–seed pairs on seeds 1–40, no candidate changes admission between
     fields `epsilon`, `is_certified` and `metadata`, as `CandidateSkillRecord`
     has) raises `TypeError` before anything runs;
   - every candidate sent to the pipeline has its approval cleared first, so the
-    pipeline's verdict is the only approval that can come back.
+    pipeline's verdict is the only approval that can come back. The pipeline
+    itself also returns a candidate its gates reject as unapproved
+    (`utils/mdn_runtime_pipeline.py`, `certify_candidate_skills`), so the same
+    holds with the scale off.
 - **Reports read this step's decisions.** `MetaMoController.last_records` is set
   on every `certify()` call, including the task failures. When every candidate
   fails and the pipeline is skipped, the demo and `experiments/epsilon_scale/live.py`

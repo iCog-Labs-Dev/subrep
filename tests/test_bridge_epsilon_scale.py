@@ -343,8 +343,9 @@ def test_a_stale_approval_never_survives_the_gate():
     """A landing that passes the guard but fails PDS comes back rejected.
 
     Margin -200 against a tolerance of 30 (eps 0.1, U = 300): the pipeline
-    rejects it and returns the record as it received it, so an approval it
-    arrived with must already have been cleared.
+    rejects it. The approval it arrived with is cleared by the controller
+    before certification, and the pipeline also returns rejected records
+    unapproved.
     """
     stale = replace(landing("stale_landing", -200.0), is_certified=True)
     ctrl = controller(GUARDED)
@@ -356,6 +357,24 @@ def test_a_stale_approval_never_survives_the_gate():
     assert result.is_certified is False
     assert "rejection_reason" not in result.metadata  # rejected by PDS, not the guard
     assert ctrl.select([result], sig) == (None, None)
+
+
+def test_a_stale_approval_never_survives_the_gate_without_a_scale():
+    """The same with the epsilon scale off: the current check decides.
+
+    Raw eps 0.1 against margin -20 rejects the landing. It arrived approved,
+    and must come back unapproved and not be selected.
+    """
+    stale = replace(landing("stale_landing", -20.0), is_certified=True)
+    ctrl = controller()
+    sig = signal(0.1)
+
+    (result,) = ctrl.certify(
+        context=CONTEXT, candidate_skills=[stale], baseline_stats=BASELINE, signal=sig
+    )
+    assert result.is_certified is False
+    assert ctrl.select([result], sig) == (None, None)
+    assert [r.is_certified for r in ctrl.last_records] == [False]
 
 
 def test_last_records_follow_the_current_step():

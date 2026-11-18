@@ -268,6 +268,10 @@ class RuntimeCertificationPipeline:
         current budgets, and the returned record carries the CURRENT verdict,
         margin and epsilon -- so a skill certified under a looser budget is
         not admitted once the budget tightens past its margin.
+
+        A candidate the gates reject is returned with `is_certified=False`,
+        whatever approval it arrived with, so only this call's verdict can
+        approve a record it returns.
         """
         context_key = self.weight_store._context_key(context)
         weight_set = self.weight_store.get_weight_set(context)
@@ -368,7 +372,12 @@ class RuntimeCertificationPipeline:
                 )
                 continue
 
-            updated_records.append(candidate)
+            # Rejected: return it unapproved, whatever approval it arrived
+            # with (an earlier check's verdict, or a record reused from an
+            # earlier step), so it cannot reach selection.
+            updated_records.append(
+                candidate if not candidate.is_certified else replace(candidate, is_certified=False)
+            )
 
         return updated_records
 

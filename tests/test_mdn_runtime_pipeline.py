@@ -572,3 +572,53 @@ def test_cvar_tail_level_is_ignored_without_a_cvar_gate(monkeypatch):
     _certify_batch(pipeline, context, 0.10, cvar_confidence=0.05)
 
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Only this call's verdict can approve a returned record. A record can arrive
+# approved -- an earlier check's verdict, or a record reused from an earlier
+# step -- and must not stay approved when the gates reject it now.
+# ---------------------------------------------------------------------------
+
+
+def _arriving_approved(delta_n) -> CandidateSkillRecord:
+    return CandidateSkillRecord(
+        skill_id="arriving_approved",
+        delta_r=0.0,
+        delta_n=tuple(delta_n),
+        is_certified=True,
+        gate_type="PDS",
+        epsilon=0.0,
+    )
+
+
+def test_a_rejected_candidate_is_returned_unapproved():
+    """PDS at epsilon 0, margin -5: rejected, so the arriving approval is dropped."""
+    pipeline = _pds_pipeline()
+    context = np.array([0.1] * 8, dtype=np.float32)
+
+    (record,) = pipeline.certify_candidate_skills(
+        context=context,
+        candidate_skills=[_arriving_approved((-5.0, -5.0))],
+        baseline_stats=_baseline_stats(),
+        weights_used=UNIFORM,
+    )
+
+    assert record.is_certified is False
+    assert pipeline.get_certification_result(context=context, skill_id="arriving_approved") is None
+
+
+def test_an_admitted_candidate_is_returned_approved():
+    """The same record with margin +5 is admitted, and stays approved."""
+    pipeline = _pds_pipeline()
+    context = np.array([0.1] * 8, dtype=np.float32)
+
+    (record,) = pipeline.certify_candidate_skills(
+        context=context,
+        candidate_skills=[_arriving_approved((5.0, 5.0))],
+        baseline_stats=_baseline_stats(),
+        weights_used=UNIFORM,
+    )
+
+    assert record.is_certified is True
+    assert pipeline.get_certification_result(context=context, skill_id="arriving_approved").is_certified
