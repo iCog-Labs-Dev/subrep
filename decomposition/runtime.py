@@ -40,7 +40,9 @@ nothing is admitted, ``Continuation`` says what happens:
   certificate, but only if priorities were given, its last skill completed, and
   the rest of it was not rejected from this state: nothing was measured from
   states like this one, or it passed the gates but reaches its goal less often
-  than a new plan must. Its decisions are recorded as continued, never as
+  than a new plan must. Given a feedback log, it never goes on when the log has
+  revoked the certificate the plan was admitted under, or the measurements of
+  its rest from this state. Its decisions are recorded as continued, never as
   re-certified.
 
 A rest the gates reject or the planner no longer proposes is never continued;
@@ -298,7 +300,7 @@ def pursue(
                 chosen is None
                 and continuation is Continuation.KEEP_UNREJECTED_PLAN
                 and current is not None
-                and _may_continue(verdicts, remaining)
+                and _may_continue(verdicts, remaining, in_progress, feedback)
             )
             if chosen is not None:
                 in_progress, remaining = chosen, chosen.candidate.skills
@@ -417,13 +419,23 @@ def _choose_fallback(considered: Sequence[PlanVerdict], remaining: Tuple[str, ..
     return current if current is not None and current.goal_rate >= best.goal_rate else best
 
 
-def _may_continue(verdicts: Sequence[PlanVerdict], remaining: Tuple[str, ...]) -> bool:
+def _may_continue(
+    verdicts: Sequence[PlanVerdict],
+    remaining: Tuple[str, ...],
+    in_progress: Optional[PlanVerdict],
+    feedback: Optional[FeedbackLog],
+) -> bool:
     """Whether the continuation policy lets the plan in progress go on although nothing was admitted.
 
-    Only a rest the planner still proposes and the gates did not reject may go on.
+    Only a rest the planner still proposes and the gates did not reject may go on,
+    and never on evidence the feedback log has revoked: neither the certificate
+    ``in_progress`` was admitted under nor the measurements of the rest from this
+    state.
     """
     current = _verdict_for(verdicts, remaining) if remaining else None
-    return current is not None and current.reason in (NOT_MEASURED, GOAL_TOO_RARE)
+    if current is None or in_progress is None or current.reason not in (NOT_MEASURED, GOAL_TOO_RARE):
+        return False
+    return feedback is None or not (feedback.is_revoked(in_progress) or feedback.is_revoked(current))
 
 
 def goal_achieved(

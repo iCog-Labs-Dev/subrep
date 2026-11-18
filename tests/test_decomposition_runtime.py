@@ -11,7 +11,7 @@ from decomposition import runtime
 from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, Gains, build_table
 from decomposition.executor import Execution, StepRecord, StepStatus
 from decomposition.feedback import REVOKED_REASON, FeedbackLog
-from decomposition.planner import CandidatePlan, plans_for
+from decomposition.planner import CandidatePlan, generate, plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
 from decomposition.runtime import (
     LESS_SAFE_THAN_NOTHING,
@@ -487,7 +487,58 @@ def test_a_plan_in_progress_the_gates_now_reject_is_replaced():
     ],
 )
 def test_the_continuation_policy_covers_only_a_proposed_rest_the_gates_did_not_reject(verdicts, remaining, allowed):
-    assert _may_continue(verdicts, remaining) is allowed
+    in_progress = verdict(["a", *remaining], score=1.0)
+    assert _may_continue(verdicts, remaining, in_progress, None) is allowed
+
+
+def revoking_log(admitted):
+    """A feedback log whose flights fall far short of what ``admitted`` claims, so that it is revoked."""
+    log = FeedbackLog(LUNAR_LANDER, min_samples=2)
+    certificate = admitted.entry.certificate
+    far_short = Gains(certificate.delta_r - 1000.0, tuple(value - 1000.0 for value in certificate.delta_n))
+    for _ in range(3):
+        log.record(admitted, far_short)
+    return log
+
+
+def test_continuation_never_goes_on_under_a_revoked_certificate(env, book, table):
+    observation, _ = env.reset(seed=ADMITTED_START_SEED)
+    candidates = generate(book, ("land_on_pad",), lander_facts(observation)).candidates
+    verdicts = verify(candidates, observation, table, SAFETY_FIRST, elapsed=0)
+    admitted = next(v for v in verdicts if v.admitted and len(v.candidate.skills) > 1)
+    rest = verdict(admitted.candidate.skills[1:], reason=NOT_MEASURED)
+    remaining = rest.candidate.skills
+    assert _may_continue([rest], remaining, admitted, FeedbackLog(LUNAR_LANDER)) is True  # too few flights to judge
+    assert _may_continue([rest], remaining, admitted, revoking_log(admitted)) is False
+
+
+def test_continuation_never_flies_a_rest_whose_measurements_the_log_has_revoked(env, book, table, monkeypatch):
+    """The rest of the plan fails only the goal-rate check in mid-flight, from a region the log has revoked."""
+    measured = runtime.verify
+
+    def goal_too_rare_in_mid_flight(candidates, observation, table, priorities, timestamp=None, min_goal_rate=0.0, *, elapsed):
+        verdicts = measured(candidates, observation, table, priorities, timestamp, min_goal_rate, elapsed=elapsed)
+        if elapsed == 0:
+            return verdicts
+        return [
+            dataclasses.replace(v, reason=GOAL_TOO_RARE, entry=None, score=None) if v.admitted else v for v in verdicts
+        ]
+
+    monkeypatch.setattr(runtime, "verify", goal_too_rare_in_mid_flight)
+    keep = Continuation.KEEP_UNREJECTED_PLAN
+    unchecked = run_goal(env, book, table, ADMITTED_START_SEED, continuation=keep)
+    first, second = unchecked.flown[:2]
+    assert second.continued and not second.recertified
+    [rest] = [v for v in second.verdicts if v.candidate.skills == second.skills]
+    assert rest.reason == GOAL_TOO_RARE and rest.estimate is not None
+    state, elapsed = first.execution.observation, first.execution.frames
+    [admitted] = measured([rest.candidate], state, table, SAFETY_FIRST, elapsed=elapsed)  # its certificate, goal bar aside
+    assert admitted.admitted and admitted.estimate == rest.estimate
+
+    checked = run_goal(env, book, table, ADMITTED_START_SEED, continuation=keep, feedback=revoking_log(admitted))
+    assert checked.status is GoalStatus.NO_CERTIFIED_PLAN
+    assert checked.continued == 0 and len(checked.flown) == 1
+    assert checked.flown[0].skills == first.skills
 
 
 # Confirming a goal

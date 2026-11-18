@@ -144,6 +144,18 @@ def test_a_few_bad_outcomes_do_not_revoke_a_certificate(verdicts):
     assert log.revoked() == frozenset()
 
 
+def test_a_refused_plan_is_judged_by_the_bounds_it_was_measured_with(verdicts):
+    best, log = best_plan(verdicts), FeedbackLog(LUNAR_LANDER)
+    for realised in shifted(certified_gains(best), by=-10.0, count=40):
+        log.record(best, realised)
+    goal_too_rare = dataclasses.replace(best, reason="reaches its goal too rarely", entry=None, score=None)
+    never_measured = dataclasses.replace(goal_too_rare, estimate=None)
+    assert log.is_revoked(best) and log.is_revoked(goal_too_rare)
+    assert not log.is_revoked(never_measured)
+    assert not log.is_revoked(in_region(goal_too_rare, "states|cell=1"))
+    assert log.screen([goal_too_rare]) == (goal_too_rare,)  # screening only turns admitted plans into rejections
+
+
 def test_only_admitted_plans_can_be_recorded(book, table, start):
     observation, facts = start
     candidates = propose(book, "land_on_pad", facts)

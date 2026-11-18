@@ -144,13 +144,23 @@ class FeedbackLog:
         """The verdicts with revoked certificates turned into rejections, order kept."""
         return tuple(
             replace(verdict, reason=REVOKED_REASON, entry=None, score=None)
-            if verdict.admitted and self._revoked(verdict)
+            if verdict.admitted and self.is_revoked(verdict)
             else verdict
             for verdict in verdicts
         )
 
-    def _revoked(self, verdict: PlanVerdict) -> bool:
-        status = self.status(plan_skill_id(verdict.candidate), verdict.estimate.region, _certified(verdict))
+    def is_revoked(self, verdict: PlanVerdict) -> bool:
+        """Whether the flights recorded for the verdict's plan from its region fall short of what it claims.
+
+        An admitted verdict claims its certificate. A verdict refused after its plan
+        was measured claims the lower bounds a certificate would have carried, so a
+        refused plan cannot go on under evidence the flights have already revoked. A
+        plan never measured from such a state claims nothing and is never revoked.
+        """
+        if verdict.estimate is None:
+            return False
+        claimed = _certified(verdict) if verdict.admitted else verdict.estimate.lower
+        status = self.status(plan_skill_id(verdict.candidate), verdict.estimate.region, claimed)
         return status is CertificateStatus.REVOKED
 
     def _upper_bounds(self, key: Tuple[str, str]) -> Optional[np.ndarray]:
