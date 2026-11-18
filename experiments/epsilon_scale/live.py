@@ -89,7 +89,7 @@ def main(out_path: Path) -> None:
             outcome_for=outcome_for,
             seed=1,
         )
-        scaled_admitted = sorted(r.skill_id for r in pipeline.last_records if r.is_certified)
+        scaled_admitted = sorted(r.skill_id for r in controller.last_records if r.is_certified)
         log.append({
             "step": index, "seed": seed, "epsilon": eps, "pds_tolerance": step.pds_tolerance,
             "securing": governor.modulator_summary()["securing"],

@@ -120,11 +120,40 @@ def test_a_non_finite_floor_is_rejected():
         EpsilonScale(unit=UNIT, payoff_floor=math.nan)
 
 
-def test_the_guard_needs_a_floor_and_a_baseline_payoff():
+def test_the_guard_is_off_without_a_floor():
     failing = crash()
     assert GUARDED.fails_task(failing, BASELINE)
     assert not EpsilonScale(unit=UNIT).fails_task(failing, BASELINE)
-    assert not GUARDED.fails_task(failing, {"baseline_motives": np.zeros(M)})
+    # Without a floor nothing is checked, so a missing payoff is fine.
+    assert not EpsilonScale(unit=UNIT).fails_task(failing, {"baseline_motives": np.zeros(M)})
+
+
+def test_a_missing_baseline_payoff_is_an_error():
+    """With the guard on, a payoff that cannot be measured must not read as a pass."""
+    with pytest.raises(ValueError, match="baseline_payoff"):
+        GUARDED.fails_task(crash(), {"baseline_motives": np.zeros(M)})
+
+
+@pytest.mark.parametrize("payoff", [math.nan, math.inf, -math.inf])
+def test_a_non_finite_baseline_payoff_is_an_error(payoff):
+    with pytest.raises(ValueError, match="finite baseline payoff"):
+        GUARDED.fails_task(landing("l", -20.0), {"baseline_payoff": payoff})
+
+
+class _StandIn:
+    """A record that is not a CandidateSkillRecord, so nothing validates it."""
+
+    def __init__(self, skill_id="stand_in", delta_r=0.0, delta_n=(0.0, 0.0), is_certified=False):
+        self.skill_id = skill_id
+        self.delta_r = delta_r
+        self.delta_n = tuple(delta_n)
+        self.is_certified = is_certified
+        self.metadata = {}
+
+
+def test_a_non_finite_payoff_change_is_an_error():
+    with pytest.raises(ValueError, match="finite delta_r"):
+        GUARDED.fails_task(_StandIn(delta_r=math.nan), BASELINE)
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +295,128 @@ def test_all_failing_candidates_give_an_empty_admission():
     assert len(records) == 2
     assert admitted(records) == set()
     assert ctrl.select(records, signal(0.5)) == (None, None)
+
+
+class _CountingPipeline:
+    """Wraps a real pipeline and counts the calls that reach it."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.calls = 0
+
+    def certify_candidate_skills(self, **kwargs):
+        self.calls += 1
+        return self.inner.certify_candidate_skills(**kwargs)
+
+
+def test_the_controller_rejects_unsupported_records_with_the_scale_on():
+    """A record the scale cannot mark rejected is refused before anything runs."""
+    pipeline = _CountingPipeline(make_pipeline())
+    ctrl = controller(GUARDED, pipeline)
+    stale = _StandIn("stale_crash", delta_r=0.0, is_certified=True)
+
+    with pytest.raises(TypeError, match="CandidateSkillRecord"):
+        ctrl.certify(
+            context=CONTEXT,
+            candidate_skills=[landing("l1", 10.0), stale],
+            baseline_stats=BASELINE,
+            signal=signal(0.1),
+        )
+    assert pipeline.calls == 0
+
+
+def test_a_stale_approval_never_survives_the_guard():
+    """A crash arriving already approved comes back rejected, for the guard's reason."""
+    stale = replace(crash("stale_crash"), is_certified=True)
+    ctrl = controller(GUARDED)
+    sig = signal(0.5)
+
+    (result,) = ctrl.certify(
+        context=CONTEXT, candidate_skills=[stale], baseline_stats=BASELINE, signal=sig
+    )
+    assert result.is_certified is False
+    assert result.metadata["rejection_reason"] == TASK_FAILURE
+    assert ctrl.select([result], sig) == (None, None)
+
+
+def test_a_stale_approval_never_survives_the_gate():
+    """A landing that passes the guard but fails PDS comes back rejected.
+
+    Margin -200 against a tolerance of 30 (eps 0.1, U = 300): the pipeline
+    rejects it. The approval it arrived with is cleared by the controller
+    before certification, and the pipeline also returns rejected records
+    unapproved.
+    """
+    stale = replace(landing("stale_landing", -200.0), is_certified=True)
+    ctrl = controller(GUARDED)
+    sig = signal(0.1)
+
+    (result,) = ctrl.certify(
+        context=CONTEXT, candidate_skills=[stale], baseline_stats=BASELINE, signal=sig
+    )
+    assert result.is_certified is False
+    assert "rejection_reason" not in result.metadata  # rejected by PDS, not the guard
+    assert ctrl.select([result], sig) == (None, None)
+
+
+def test_a_stale_approval_never_survives_the_gate_without_a_scale():
+    """The same with the epsilon scale off: the current check decides.
+
+    Raw eps 0.1 against margin -20 rejects the landing. It arrived approved,
+    and must come back unapproved and not be selected.
+    """
+    stale = replace(landing("stale_landing", -20.0), is_certified=True)
+    ctrl = controller()
+    sig = signal(0.1)
+
+    (result,) = ctrl.certify(
+        context=CONTEXT, candidate_skills=[stale], baseline_stats=BASELINE, signal=sig
+    )
+    assert result.is_certified is False
+    assert ctrl.select([result], sig) == (None, None)
+    assert [r.is_certified for r in ctrl.last_records] == [False]
+
+
+def test_last_records_follow_the_current_step():
+    """An approved step, then a step where every candidate fails the guard.
+
+    The second step skips the pipeline. Its records must be its own
+    rejections, not the first step's approval.
+    """
+    pipeline = make_pipeline()
+    ctrl = controller(GUARDED, pipeline)
+    no_outcome = lambda _rec: SkillOutcome(delta_r=0.0, delta_n=np.zeros(M), admitted=False)
+
+    first = ctrl.step(
+        context=CONTEXT,
+        candidate_skills=[landing("pilot", 10.0), crash("engine")],
+        baseline_stats=BASELINE,
+        outcome_for=no_outcome,
+    )
+    assert first.selected_skill_id == "pilot"
+    assert {r.skill_id: r.is_certified for r in ctrl.last_records} == {"pilot": True, "engine": False}
+
+    second = ctrl.step(
+        context=np.full(OBS_DIM, 0.75),
+        candidate_skills=[crash("pilot"), crash("engine")],
+        baseline_stats=BASELINE,
+        outcome_for=no_outcome,
+    )
+    assert second.selected_skill_id is None and second.admitted_count == 0
+    assert [r.skill_id for r in ctrl.last_records] == ["pilot", "engine"]
+    assert all(r.is_certified is False for r in ctrl.last_records)
+    assert all(r.metadata["rejection_reason"] == TASK_FAILURE for r in ctrl.last_records)
+
+
+def test_last_records_are_set_without_a_scale():
+    ctrl = controller()
+    records = ctrl.certify(
+        context=CONTEXT,
+        candidate_skills=[landing("near", -0.05), landing("far", -20.0)],
+        baseline_stats=BASELINE,
+        signal=signal(0.1),
+    )
+    assert ctrl.last_records == records
 
 
 def test_step_records_the_tolerance_and_the_task_failures():
