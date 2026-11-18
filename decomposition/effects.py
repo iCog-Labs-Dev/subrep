@@ -53,7 +53,10 @@ by their mean, spread, count and a one-sided bootstrap lower confidence bound.
 One episode can add several samples to a group, from different states, and they
 share its start and its terrain, so the bootstrap resamples whole episodes and
 each entry records how many episodes it holds; an entry needs ``MIN_SAMPLES``
-episodes to answer. Each group also records its support: the lowest and highest
+episodes to answer. A plan's entry also records how its flights ended: the rate
+of every outcome over all flights, and how the flights of each episode ended,
+since episodes give different numbers of flights and a rate's confidence needs
+them per episode. Each group also records its support: the lowest and highest
 value of every number of the states it was measured from, the frames already
 flown included. States that share facts can still differ a lot: a lander at the
 start of an episode and one falling fast halfway down can both be not upright,
@@ -79,7 +82,7 @@ from __future__ import annotations
 
 import json
 import zlib
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TypeVar, Union
@@ -89,7 +92,7 @@ import numpy as np
 from baseline.improvement_calculator import ImprovementCalculator
 from decomposition.domain import GAMMA, Domain
 
-SCHEMA_VERSION = "subrep.effects.v7"
+SCHEMA_VERSION = "subrep.effects.v8"
 BASELINE_ID = "idle_policy_v1"
 CONFIDENCE = 0.95
 BOOTSTRAP_RESAMPLES = 2000
@@ -514,6 +517,19 @@ def _lloyd(points: np.ndarray, centres: np.ndarray) -> Tuple[np.ndarray, np.ndar
     return np.searchsorted(kept, labels), centres[kept]
 
 
+def episode_outcomes(flights: Sequence[PlanFlight]) -> List[List[object]]:
+    """How the flights of each episode ended, as ``[episodes, {outcome: flights}]`` for every combination seen.
+
+    The most common combination comes first; ties are listed in a fixed order.
+    """
+    by_episode: Dict[int, Counter] = {}
+    for flight in flights:
+        by_episode.setdefault(flight.seed, Counter())[flight.outcome] += 1
+    combinations = Counter(tuple(sorted(counts.items())) for counts in by_episode.values())
+    ordered = sorted(combinations.items(), key=lambda item: (-item[1], item[0]))
+    return [[episodes, dict(combination)] for combination, episodes in ordered]
+
+
 def _plan_summary(flights: Sequence[PlanFlight], domain: Domain, salt: Sequence[str] = ()) -> Dict[str, object]:
     """Summary of flights of one plan from one group of states, or from one cell of the group."""
     entry = summarise([flight.plan for flight in flights], domain.objectives, salt)
@@ -521,6 +537,7 @@ def _plan_summary(flights: Sequence[PlanFlight], domain: Domain, salt: Sequence[
         name: round(sum(flight.outcome == name for flight in flights) / len(flights), DECIMALS)
         for name in (*domain.outcomes, IN_FLIGHT)
     }
+    entry["episode_outcomes"] = episode_outcomes(flights)
     stepped = [flight for flight in flights if flight.steps]
     if stepped:
         entry["interaction"] = summarise_gains(
@@ -700,6 +717,8 @@ class Estimate:
     lower: Gains  # one-sided lower confidence bounds
     interaction: Optional[Gains] = None  # mean interaction; plans flown from the start of an episode only
     outcomes: Optional[Dict[str, float]] = None  # how plan flights really ended; plans only
+    # (episodes, {outcome: flights}) for each way the flights of an episode ended; plans only
+    episode_outcomes: Optional[Tuple[Tuple[int, Dict[str, int]], ...]] = None
     region: str = ""  # the states it was measured from: a group, or one cell of it such as "...|cell=2"
 
 
@@ -832,5 +851,10 @@ class EffectTable:
             lower=_gains(stats, objectives, "lower"),
             interaction=_gains(stats["interaction"], objectives, "mean") if "interaction" in stats else None,
             outcomes=dict(stats["outcomes"]) if "outcomes" in stats else None,
+            episode_outcomes=(
+                tuple((int(episodes), dict(counts)) for episodes, counts in stats["episode_outcomes"])
+                if "episode_outcomes" in stats
+                else None
+            ),
             region=region,
         )

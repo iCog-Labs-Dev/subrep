@@ -631,5 +631,39 @@ def test_estimates_report_how_plans_really_ended(small_table):
     entry = small_table.data["plans"][0]
     estimate = small_table.plan(entry["skills"], episode_start(entry["group"], range(4)), 0)
     assert estimate.outcomes == entry["outcomes"]
+    assert estimate.episode_outcomes == tuple((count, outcomes) for count, outcomes in entry["episode_outcomes"])
     step = first_steps(small_table)[0]
     assert small_table.step("stabilise", episode_start(step["group"], range(4)), 0).outcomes is None
+    assert small_table.step("stabilise", episode_start(step["group"], range(4)), 0).episode_outcomes is None
+
+
+def summaries_of(table):
+    for entry in table.data["plans"]:
+        yield entry
+        yield from entry.get("cells", [])
+
+
+def test_how_the_flights_of_each_episode_ended_adds_up_to_the_entry(small_table, committed_table):
+    for table in (small_table, committed_table):
+        for summary in summaries_of(table):
+            kinds = summary["episode_outcomes"]
+            flights = sum(count * sum(outcomes.values()) for count, outcomes in kinds)
+            assert sum(count for count, _ in kinds) == summary["episodes"]
+            assert flights == summary["samples"]
+            for name, rate in summary["outcomes"].items():
+                assert sum(count * outcomes.get(name, 0) for count, outcomes in kinds) / flights == pytest.approx(rate, abs=1e-5)
+            assert [count for count, _ in kinds] == sorted((count for count, _ in kinds), reverse=True)
+
+
+def test_episodes_give_different_numbers_of_flights_in_the_committed_table(committed_table):
+    sizes = {sum(outcomes.values()) for summary in summaries_of(committed_table) for _, outcomes in summary["episode_outcomes"]}
+    assert 1 in sizes and max(sizes) > 1
+
+
+def test_the_flights_of_each_episode_are_counted_by_how_they_ended():
+    def flight(seed, outcome):
+        return effects.PlanFlight(seed, ("brake",), sample(seed=seed), (), outcome)
+
+    flights = [flight(1, "won"), flight(1, "won"), flight(2, "lost"), flight(3, "won"), flight(4, "won"), flight(4, "lost")]
+    assert effects.episode_outcomes(flights) == [[1, {"lost": 1}], [1, {"lost": 1, "won": 1}], [1, {"won": 1}], [1, {"won": 2}]]
+    assert effects.episode_outcomes(flights * 2) == [[1, {"lost": 2}], [1, {"lost": 2, "won": 2}], [1, {"won": 2}], [1, {"won": 4}]]

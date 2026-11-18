@@ -62,6 +62,7 @@ from decomposition.effects import (
     Estimate,
     PlanFlight,
     SeedMeasurement,
+    episode_outcomes,
     gain_names,
     lower_bound,
 )
@@ -79,7 +80,7 @@ from decomposition.runtime import (
     GoalStatus,
     pursue,
 )
-from decomposition.verifier import Priorities, goal_rate_bound, wilson_lower
+from decomposition.verifier import Priorities, goal_rate, goal_rate_bound, wilson_lower
 from demo.build_lunar_effect_table import measure
 from demo.run_lunar_baseline import CONTROLLERS, EpisodeResult, run_episode, summarise
 from demo.run_lunar_subskill_reliability import SEQUENCES
@@ -370,8 +371,9 @@ def check_table(
     committed lower bound, which noise alone often does, and is refuted when even
     the one-sided upper confidence bound of that mean is below it, which a correct
     bound allows only rarely. ``goals`` names each goal's success outcomes; a
-    goal's rate is refuted when its Wilson upper bound on the unseen seeds is below
-    the committed Wilson lower bound.
+    goal's rate is refuted when its Wilson upper bound on the unseen seeds, over
+    their effective number of independent flights, is below the committed lower
+    bound, both counted as ``goal_rate_bound`` counts them.
     """
     gains = gain_names(committed.data["objectives"])
     flown: Dict[Tuple[str, str], List[PlanFlight]] = {}
@@ -393,13 +395,14 @@ def check_table(
         mean = np.round(values.mean(axis=0), DECIMALS)
         upper = np.round([-lower_bound(-values[:, index], index, seeds) for index in range(values.shape[1])], DECIMALS)
         goal_rates = {}
+        unseen_outcomes = episode_outcomes(flights)
         for goal, success in goals.items():
-            rate = sum(flight.outcome in success for flight in flights) / len(flights)
+            rate, trials = goal_rate(unseen_outcomes, success)
             bound = goal_rate_bound(estimate, success)
             goal_rates[goal] = {
                 "committed_lower": round(bound, 4),
                 "unseen": round(rate, 4),
-                "refuted": 1.0 - wilson_lower(1.0 - rate, episodes) < bound,
+                "refuted": 1.0 - wilson_lower(1.0 - rate, trials) < bound,
             }
         rows.append(
             {

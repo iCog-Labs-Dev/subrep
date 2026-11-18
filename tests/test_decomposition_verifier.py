@@ -28,6 +28,8 @@ from decomposition.verifier import (
     MdnRegion,
     Priorities,
     best_plan,
+    clustered_rate,
+    goal_rate,
     goal_rate_bound,
     verify,
     wilson_lower,
@@ -77,6 +79,7 @@ def table_of(plans, min_samples=30):
                 "timeout": 0.0,
                 "in_flight": 0.0,
             },
+            "episode_outcomes": [[90, {"landed_on_pad": 1}], [5, {"crashed": 1}], [5, {"landed_off_pad": 1}]],
             "interaction": gains(0.5, (0.5, 0.0)),
             **gains(delta_r, delta_n),
         }
@@ -174,9 +177,18 @@ def test_a_goal_with_no_final_outcome_has_no_rate_to_check():
     assert verdict.admitted and verdict.goal_rate is None
 
 
-@pytest.mark.parametrize("rate, samples, low, high", [(0.9, 100, 0.83, 0.9), (1.0, 100, 0.97, 1.0), (0.0, 100, 0.0, 0.01)])
-def test_the_goal_rate_bound_is_a_wilson_lower_bound(rate, samples, low, high):
-    estimate = Estimate(samples, samples, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes={"won": rate, "lost": 1.0 - rate})
+def flown(*kinds):
+    """An estimate from ``(episodes, {outcome: flights})`` kinds of episode, with the outcome rates over all flights."""
+    flights = sum(count * sum(outcomes.values()) for count, outcomes in kinds)
+    names = {name for _, outcomes in kinds for name in outcomes}
+    rates = {name: sum(count * outcomes.get(name, 0) for count, outcomes in kinds) / flights for name in names}
+    episodes = sum(count for count, _ in kinds)
+    return Estimate(flights, episodes, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes=rates, episode_outcomes=kinds)
+
+
+@pytest.mark.parametrize("won, low, high", [(90, 0.83, 0.9), (100, 0.97, 1.0), (0, 0.0, 0.01)])
+def test_the_goal_rate_bound_is_a_wilson_lower_bound(won, low, high):
+    estimate = flown(*[(n, {name: 1}) for n, name in ((won, "won"), (100 - won, "lost")) if n])
     assert low <= goal_rate_bound(estimate, ("won",)) <= high
 
 
@@ -187,11 +199,52 @@ def test_a_wilson_bound_is_below_the_rate_and_tightens_with_more_trials():
         wilson_lower(0.5, 0)
 
 
-def test_the_goal_rate_bound_counts_episodes_not_flights():
-    outcomes = {"won": 0.9, "lost": 0.1}
-    repeated = Estimate(1000, 100, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes=outcomes)
-    once = Estimate(100, 100, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes=outcomes)
-    assert goal_rate_bound(repeated, ("won",)) == goal_rate_bound(once, ("won",))
+def test_with_one_flight_per_episode_the_goal_rate_bound_is_the_wilson_bound_over_the_episodes():
+    once = flown((90, {"won": 1}), (10, {"lost": 1}))
+    assert goal_rate_bound(once, ("won",)) == pytest.approx(wilson_lower(0.9, 100), abs=1e-12)
+
+
+def test_flights_of_one_episode_that_agree_count_as_that_episode():
+    repeated = flown((90, {"won": 10}), (10, {"lost": 10}))
+    assert goal_rate_bound(repeated, ("won",)) == pytest.approx(wilson_lower(0.9, 100), abs=1e-12)
+
+
+def test_an_episode_giving_many_failing_flights_counts_for_less_than_separate_episodes():
+    """49 episodes give one won flight each and one episode gives 51 lost flights: 49% of the flights were won."""
+    lopsided = flown((49, {"won": 1}), (1, {"lost": 51}))
+    rate, trials = goal_rate(lopsided.episode_outcomes, ("won",))
+    assert rate == pytest.approx(0.49) and trials < 50
+    assert goal_rate_bound(lopsided, ("won",)) < wilson_lower(0.49, 50)  # counting each episode as one trial
+
+
+def test_episodes_of_different_sizes_give_the_clustered_number_of_independent_flights():
+    """70 won flights from one episode and 10 lost from each of three others: rate 0.7."""
+    rate, trials = clustered_rate([(1, 70, 70), (3, 0, 10)])
+    variance = ((70 - 0.7 * 70) ** 2 + 3 * (0 - 0.7 * 10) ** 2) / 100**2
+    assert rate == pytest.approx(0.7) and trials == pytest.approx(0.7 * 0.3 / variance)
+    assert trials == pytest.approx(3.5714, abs=1e-4) and trials < 4
+
+
+def test_related_flights_never_count_for_more_than_their_episodes():
+    """Every episode gives one won and one lost flight, so the rate does not vary between episodes at all."""
+    assert clustered_rate([(50, 1, 2)]) == (0.5, 50.0)
+    assert goal_rate_bound(flown((50, {"won": 1, "lost": 1})), ("won",)) == wilson_lower(0.5, 50)
+
+
+def test_a_goal_reached_by_several_outcomes_counts_them_all():
+    mixed = flown((60, {"won": 1}), (30, {"drew": 2}), (10, {"lost": 1}))
+    rate, _ = goal_rate(mixed.episode_outcomes, ("won", "drew"))
+    assert rate == pytest.approx(120 / 130)
+    assert goal_rate_bound(mixed, ("won", "drew")) > goal_rate_bound(mixed, ("won",))
+
+
+def test_a_goal_rate_needs_how_each_episode_ended():
+    rates_only = Estimate(100, 100, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes={"won": 0.9, "lost": 0.1})
+    with pytest.raises(ValueError, match="each episode"):
+        goal_rate_bound(rates_only, ("won",))
+    for bad in ([], [(0, 0, 1)], [(1, 0, 0)], [(1, 3, 2)]):
+        with pytest.raises(ValueError, match="successes"):
+            clustered_rate(bad)
 
 
 def test_plans_without_enough_measurements_are_not_certified():
