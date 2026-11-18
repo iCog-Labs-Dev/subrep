@@ -222,8 +222,8 @@ def test_a_revoked_fallback_is_not_flown_again(env, book, table):
     certificate = first.chosen.entry.certificate
     feedback = FeedbackLog(LUNAR_LANDER, min_samples=2)
     far_short = Gains(certificate.delta_r - 1000.0, tuple(value - 1000.0 for value in certificate.delta_n))
-    for _ in range(3):
-        feedback.record(first.chosen, far_short)
+    for episode in range(3):
+        feedback.record(first.chosen, far_short, episode=episode)
 
     run = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH, feedback=feedback)
     again = run.decisions[0]
@@ -496,8 +496,8 @@ def revoking_log(admitted):
     log = FeedbackLog(LUNAR_LANDER, min_samples=2)
     certificate = admitted.entry.certificate
     far_short = Gains(certificate.delta_r - 1000.0, tuple(value - 1000.0 for value in certificate.delta_n))
-    for _ in range(3):
-        log.record(admitted, far_short)
+    for episode in range(3):
+        log.record(admitted, far_short, episode=episode)
     return log
 
 

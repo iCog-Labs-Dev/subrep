@@ -7,7 +7,10 @@ nothing from the same state, and compares them with what was certified.
 
 A certificate is revoked when the realised gains are significantly below it:
 for Δr or any motive gain, the one-sided upper confidence bound of the realised
-mean falls below the certified value. Flights are grouped by the region of
+mean falls below the certified value. Flights from one episode are related, so
+each flight is recorded with its episode, the bound resamples whole episodes, and
+a certificate is judged only once its flights come from ``MIN_SAMPLES``
+episodes. Flights are grouped by the region of
 states their certificate was measured from: a group of states, or one cell of a
 group split into cells. The flights of a plan from a region judge every
 certificate for that plan from that region, not only the one they were flown
@@ -70,14 +73,15 @@ class Outcome:
     region: str  # the states the certificate was measured from, as the estimate names them
     certified: Gains
     realised: Gains
+    episode: int  # the episode the plan was flown in
 
 
 def _vector(gains: Gains) -> np.ndarray:
     return np.array([gains.delta_r, *gains.delta_n], dtype=np.float64)
 
 
-def _upper_bound(values: np.ndarray, seed: int) -> float:
-    return -lower_bound(-values, seed)
+def _upper_bound(values: np.ndarray, seed: int, episodes: Sequence[int]) -> float:
+    return -lower_bound(-values, seed, episodes)
 
 
 def _certified(verdict: PlanVerdict) -> Gains:
@@ -98,8 +102,8 @@ class FeedbackLog:
         self._report: Optional[List[Dict[str, object]]] = None
         self._upper: Dict[Tuple[str, str], Optional[np.ndarray]] = {}
 
-    def record(self, verdict: PlanVerdict, realised: Gains) -> Outcome:
-        """Record what an admitted plan really achieved from the state it was certified from."""
+    def record(self, verdict: PlanVerdict, realised: Gains, *, episode: int) -> Outcome:
+        """Record what an admitted plan really achieved from the state it was certified from, in ``episode``."""
         if not verdict.admitted:
             raise ValueError("only admitted plans have certificates to check")
         outcome = Outcome(
@@ -107,6 +111,7 @@ class FeedbackLog:
             region=verdict.estimate.region,
             certified=_certified(verdict),
             realised=realised,
+            episode=int(episode),
         )
         key = (outcome.plan, outcome.region)
         self._outcomes.setdefault(key, []).append(outcome)
@@ -164,13 +169,16 @@ class FeedbackLog:
         return status is CertificateStatus.REVOKED
 
     def _upper_bounds(self, key: Tuple[str, str]) -> Optional[np.ndarray]:
-        """Upper confidence bounds of the realised mean gains, or None with too few flights to tell."""
+        """Upper confidence bounds of the realised mean gains, or None with flights from too few episodes to tell."""
         if key not in self._upper:
             outcomes = self._outcomes.get(key, [])
+            episodes = [outcome.episode for outcome in outcomes]
             upper = None
-            if len(outcomes) >= self.min_samples:
+            if len(set(episodes)) >= self.min_samples:
                 realised = np.stack([_vector(outcome.realised) for outcome in outcomes])
-                upper = np.array([_upper_bound(realised[:, index], seed=index) for index in range(realised.shape[1])])
+                upper = np.array(
+                    [_upper_bound(realised[:, index], index, episodes) for index in range(realised.shape[1])]
+                )
             self._upper[key] = upper
         return self._upper[key]
 
@@ -192,6 +200,7 @@ class FeedbackLog:
             "plan": plan,
             "region": region,
             "samples": len(outcomes),
+            "episodes": len({outcome.episode for outcome in outcomes}),
             "confidence": CONFIDENCE,
             "status": self.status(plan, region, outcomes[-1].certified).value,
             **components,

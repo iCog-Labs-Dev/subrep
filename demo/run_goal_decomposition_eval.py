@@ -120,7 +120,7 @@ REPORT_ONLY = "report only"
 _COMPARISONS = {">=": operator.ge, "<=": operator.le, "==": operator.eq}
 CERTIFICATES_NOTE = (
     "Checked after every episode was flown: the runtime did not apply these revocations during the runs. "
-    f"A plan and start region with fewer than {MIN_SAMPLES} flights has too few samples and is not judged."
+    f"A plan and start region with flights from fewer than {MIN_SAMPLES} episodes has too few samples and is not judged."
 )
 
 PROFILES: Dict[str, Priorities] = {
@@ -336,7 +336,8 @@ def record_followed_plans(domain: Domain, feedback: FeedbackLog, env: Any, seed:
     for index, decision in enumerate(run.flown):
         if (decision.recertified or decision.fallback) and index >= followed_from:
             start = run.actions[:frames]
-            feedback.record(decision.chosen, realised_gains(domain, env, seed, run.rewards[frames:], start))
+            realised = realised_gains(domain, env, seed, run.rewards[frames:], start)
+            feedback.record(decision.chosen, realised, episode=seed)
         frames += decision.execution.frames
     return True
 
@@ -608,7 +609,7 @@ def revocation_criterion(runs: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
         revoked if judged else None,
         "==",
         0,
-        f"{len(judged)} of {len(entries)} plan and start regions had at least {MIN_SAMPLES} flights",
+        f"{len(judged)} of {len(entries)} plan and start regions had flights from at least {MIN_SAMPLES} episodes",
     )
 
 
@@ -688,8 +689,8 @@ def reliability_lines(goal_runs: Mapping[str, Mapping[str, Any]]) -> List[str]:
         "",
         "## Certificate reliability",
         "",
-        f"Plan and start regions whose certificates held, were revoked, or had fewer than {MIN_SAMPLES} flights to "
-        "judge them, and the runs stopped in the middle of a plan, which were not compared.",
+        f"Plan and start regions whose certificates held, were revoked, or had flights from fewer than {MIN_SAMPLES} "
+        "episodes to judge them, and the runs stopped in the middle of a plan, which were not compared.",
         "",
         "| Priorities | Held | Revoked | Too few flights | Runs not compared |",
         "|---|---|---|---|---|",
