@@ -457,7 +457,9 @@ still spends more fuel than doing nothing, and reads as moderately risky (about
 near 0.
 
 **What MetaMo receives under the default risk** (seeds 1–40, 840 episodes, the
-landing counted in both payoff and Safety; `experiments/caution_recovery/`):
+landing counted in both payoff and Safety; `experiments/caution_recovery/`).
+The fixed points feed a fresh governor 30 copies of the task set's median
+outcome of each type:
 
 | Outcome | Episodes | Risk: median (range) | 30 identical outcomes: Securing / ε |
 |---|---|---|---|
@@ -466,7 +468,8 @@ landing counted in both payoff and Safety; `experiments/caution_recovery/`):
 | landing, fuel-wasting trade-off set | 132 | 0.604 (0.393–0.972) | — |
 | crash, task set | 241 | 0.862 (0.152–1.000) | 0.998 / 0 |
 | crash, all sets | 417 | 0.407 (0.004–1.000) | — |
-| timeout, all sets | 104 | 0.852 (0.703–0.998) | 0.998 / 0 |
+| timeout, task set | 4 | 0.971 (0.776–0.998) | 0.998 / 0 |
+| timeout, all sets | 104 | 0.852 (0.703–0.998) | — |
 | abstention, `noop` and `stop` | 40 / 1 | 0.250 (the rejection penalty) | 0.924 and 0.917 / 0 |
 
 - **The default risk does not tell a crash from a landing.** A crash drawn at
