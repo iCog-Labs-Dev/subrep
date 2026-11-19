@@ -1,9 +1,10 @@
 """Certify and rank candidate plans with SubRep's existing admission gates.
 
-Each candidate is looked up in the effect table by the current observation,
-which answers only where its measurements apply, and the one-sided lower
-confidence bounds of its measured gains
-(Δr, Δn) go through the gates the rest of SubRep uses:
+Each candidate is looked up in the effect table by the current state: the
+observation and how many frames of the episode have been flown, since a plan
+started late may run out of time. The table answers only where its measurements
+apply, and the one-sided lower confidence bounds of the measured gains (Δr, Δn)
+go through the gates the rest of SubRep uses:
 
 - the CDS gate first, as the stronger guarantee;
 - the PDS gate with the priorities' ε when CDS fails;
@@ -21,7 +22,9 @@ The gates compare discounted rewards, and the discount favours flights that end
 soon. A controller can therefore outscore a plan while reaching the goal less
 often. So a plan for a terminal goal must also reach it: with ``min_goal_rate``
 set, the one-sided lower confidence bound of the measured rate at which flights
-ended in one of the goal's ``success_outcomes`` must reach that rate.
+ended in one of the goal's ``success_outcomes`` must reach that rate. The rate is
+over all flights, and its bound treats episodes as the independent units, since
+an episode can give several related flights (``clustered_rate``).
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -182,23 +185,81 @@ def verify(
     priorities: Priorities,
     timestamp: Optional[str] = None,
     min_goal_rate: float = 0.0,
+    *,
+    elapsed: float,
 ) -> List[PlanVerdict]:
-    """Certify every candidate from ``observation``; admitted plans come first, best first."""
+    """Certify every candidate from ``observation``, reached after ``elapsed`` frames; admitted plans come first."""
     timestamp = timestamp or datetime.now(timezone.utc).isoformat()
-    verdicts = [
-        _verify(candidate, table.plan(candidate.skills, observation), table, priorities, timestamp, min_goal_rate)
-        for candidate in candidates
-    ]
+    verdicts = []
+    for candidate in candidates:
+        estimate = table.plan(candidate.skills, observation, elapsed)
+        verdicts.append(_verify(candidate, estimate, table, priorities, timestamp, min_goal_rate))
     return sorted(verdicts, key=_rank)
 
 
 def goal_rate_bound(estimate: Estimate, success_outcomes: Sequence[str]) -> float:
-    """One-sided Wilson lower confidence bound of the rate at which flights reached the goal."""
-    rate = sum((estimate.outcomes or {}).get(outcome, 0.0) for outcome in success_outcomes)
-    n, z = estimate.samples, _WILSON_Z
-    centre = rate + z * z / (2 * n)
-    margin = z * math.sqrt(rate * (1 - rate) / n + z * z / (4 * n * n))
-    return (centre - margin) / (1 + z * z / n)
+    """One-sided 95% lower confidence bound of the rate at which flights reached the goal.
+
+    The rate is over all flights, as the estimate's outcome rates are. Its bound is
+    the Wilson bound over the effective number of independent flights that
+    ``clustered_rate`` finds from how the flights of each episode ended.
+    """
+    if estimate.episode_outcomes is None:
+        raise ValueError("a goal rate needs how the flights of each episode ended")
+    return wilson_lower(*goal_rate(estimate.episode_outcomes, success_outcomes))
+
+
+def goal_rate(
+    episode_outcomes: Iterable[Tuple[int, Mapping[str, int]]], success_outcomes: Sequence[str]
+) -> Tuple[float, float]:
+    """The rate at which flights ended in one of ``success_outcomes``, and the effective number of flights behind it.
+
+    ``episode_outcomes`` holds ``(episodes, {outcome: flights})`` for each way the
+    flights of an episode ended, as a table entry records them.
+    """
+    success = set(success_outcomes)
+    return clustered_rate(
+        (episodes, sum(n for outcome, n in counts.items() if outcome in success), sum(counts.values()))
+        for episodes, counts in episode_outcomes
+    )
+
+
+def clustered_rate(episodes: Iterable[Tuple[int, int, int]]) -> Tuple[float, float]:
+    """A rate over flights, and the effective number of independent flights behind it.
+
+    ``episodes`` holds ``(count, successes, flights)``: ``count`` episodes each gave
+    ``flights`` flights, of which ``successes`` succeeded. The rate is all successes
+    over all flights. Flights from one episode are related and episodes give
+    different numbers of them, so the rate's variance takes the episodes as the
+    independent units: the linearised variance of a ratio, the sum over episodes of
+    (successes - rate * flights)^2 over the square of all flights. The effective
+    number of flights is the binomial variance rate * (1 - rate) over that variance,
+    capped at the number of episodes, so related flights never count for more than
+    separate episodes would. With one flight per episode it is the number of
+    episodes, and so it is when every episode gives as many flights and they all
+    succeed or all fail. A large episode whose flights all go one way counts for
+    less, since it moves the rate more than a small one.
+    """
+    rows = [(int(count), int(successes), int(flights)) for count, successes, flights in episodes]
+    if not rows or any(count < 1 or flights < 1 or not 0 <= successes <= flights for count, successes, flights in rows):
+        raise ValueError("every kind of episode needs a count and flights of at least 1, and 0 <= successes <= flights")
+    total_episodes = sum(count for count, _, _ in rows)
+    total_flights = sum(count * flights for count, _, flights in rows)
+    rate = sum(count * successes for count, successes, _ in rows) / total_flights
+    variance = sum(count * (successes - rate * flights) ** 2 for count, successes, flights in rows) / total_flights**2
+    if variance <= 0.0:
+        return rate, float(total_episodes)
+    return rate, min(float(total_episodes), rate * (1.0 - rate) / variance)
+
+
+def wilson_lower(rate: float, trials: float) -> float:
+    """One-sided 95% Wilson lower confidence bound of a rate observed over ``trials`` independent trials."""
+    if trials <= 0:
+        raise ValueError(f"a rate needs a positive number of trials, got {trials}")
+    rate, z = min(max(rate, 0.0), 1.0), _WILSON_Z  # rounded rates can add up to a hair over 1
+    centre = rate + z * z / (2 * trials)
+    margin = z * math.sqrt(rate * (1 - rate) / trials + z * z / (4 * trials * trials))
+    return (centre - margin) / (1 + z * z / trials)
 
 
 def best_plan(verdicts: Sequence[PlanVerdict]) -> Optional[PlanVerdict]:
@@ -313,7 +374,9 @@ def _gains_record(gains: Gains) -> Dict[str, object]:
 
 def _estimate_record(estimate: Estimate) -> Dict[str, object]:
     return {
+        "region": estimate.region,
         "samples": estimate.samples,
+        "episodes": estimate.episodes,
         "completion_rate": estimate.completion_rate,
         "mean_frames": estimate.mean_frames,
         "mean": _gains_record(estimate.mean),

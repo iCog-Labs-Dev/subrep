@@ -1,22 +1,37 @@
 """Tests for pursuing goals with planning, certification before every skill and replanning (decomposition/runtime.py)."""
 
 import dataclasses
+import itertools
 import json
 
 import numpy as np
 import pytest
 
-from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, build_table
-from decomposition.planner import CandidatePlan, plans_for
+from decomposition import runtime
+from decomposition.effects import DEFAULT_TABLE_PATH, EffectTable, Gains, build_table
+from decomposition.executor import Execution, StepRecord, StepStatus
+from decomposition.feedback import REVOKED_REASON, FeedbackLog
+from decomposition.planner import CandidatePlan, generate, plans_for
 from decomposition.recipe_book import LUNAR_LANDER_BOOK, load_recipe_book
-from decomposition.runtime import Continuation, GoalStatus, _choose, _may_continue, goal_achieved, pursue
-from decomposition.verifier import GOAL_TOO_RARE, NOT_MEASURED, MdnRegion, PlanVerdict, Priorities
+from decomposition.runtime import (
+    LESS_SAFE_THAN_NOTHING,
+    MAX_DECISIONS,
+    Continuation,
+    GoalStatus,
+    _choose,
+    _choose_fallback,
+    _may_continue,
+    goal_achieved,
+    pursue,
+)
+from decomposition.verifier import GOAL_TOO_RARE, NOT_MEASURED, MdnRegion, PlanVerdict, Priorities, plan_skill_id, verify
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, landing_outcome, lander_facts
 from env.lunar_lander_wrapper import SubRepEnv
 from env.lunar_subskills import NO_ENGINE, SUBSKILLS
 
 TILTED_START_SEED = 0
+ADMITTED_START_SEED = 6  # a tilted start where a plan is admitted at once
 UPRIGHT_START_SEED = 1  # starts away from the pad; lands with one leg's contact flickering off
 SAFETY_FIRST = Priorities(
     weights=(0.7, 0.3),
@@ -27,6 +42,16 @@ SAFETY_FIRST = Priorities(
         support_values=(1.0, 0.3),
     ),
 )
+BALANCED = Priorities(
+    weights=(0.55, 0.45),
+    region=MdnRegion(
+        context=(1.0,),
+        alpha=(2.0, 2.0),
+        support_directions=((1.0, 0.0), (0.0, 1.0)),
+        support_values=(1.0, 0.5),
+    ),
+)
+NO_PLAN_IS_GOOD_ENOUGH = 1.0  # no measured rate has a lower bound of 1, so every plan fails the goal-rate check
 
 
 @pytest.fixture
@@ -105,16 +130,106 @@ def test_recovering_stability_leaves_the_lander_upright_in_flight(env, book, tab
     assert not run.episode_over and run.frames > 0
 
 
-def test_without_a_certified_plan_nothing_is_flown(env, book, table):
+@pytest.mark.parametrize("continuation", list(Continuation))
+def test_without_measurements_nothing_is_flown_under_any_policy(env, book, table, continuation):
     observation, _ = env.reset(seed=TILTED_START_SEED)
     nothing_measured = EffectTable({**table.data, "plans": []}, LUNAR_LANDER)
-    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, nothing_measured, SAFETY_FIRST)
+    run = pursue(
+        LUNAR_LANDER, env, observation, "land_on_pad", book, nothing_measured, SAFETY_FIRST, continuation=continuation
+    )
     assert run.status is GoalStatus.NO_CERTIFIED_PLAN
     [decision] = run.decisions
-    assert decision.execution is None and decision.chosen is None
+    assert decision.execution is None and decision.chosen is None and not decision.fallback
     assert {verdict.reason for verdict in decision.verdicts} == {NOT_MEASURED}
     assert run.frames == 0
     np.testing.assert_array_equal(run.observation, observation)
+
+
+def test_a_plan_that_fails_only_the_goal_rate_check_is_flown_as_a_fallback(env, book, table):
+    strict = run_goal(
+        env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH, continuation=Continuation.STOP
+    )
+    assert strict.status is GoalStatus.NO_CERTIFIED_PLAN and strict.frames == 0
+    assert GOAL_TOO_RARE in {verdict.reason for verdict in strict.decisions[0].verdicts}
+
+    run = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH)
+    assert run.status is GoalStatus.ACHIEVED
+    assert run.flown and all(d.fallback and not d.recertified and not d.continued for d in run.flown)
+    assert run.fallbacks == len(run.flown)
+    first = run.decisions[0]
+    assert first.chosen.admitted and first.chosen.goal_rate < NO_PLAN_IS_GOOD_ENOUGH
+    assert first.chosen.estimate.lower.delta_n[LUNAR_LANDER.objectives.index("safety")] >= 0.0
+
+
+def test_a_fallback_records_its_evidence_certificate_and_outcome(env, book, table):
+    run = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH)
+    record = json.loads(json.dumps(run.record()))
+    assert record["fallbacks"] == len(run.flown) and record["status"] == "achieved"
+    first = record["decisions"][0]
+    assert first["fallback"] is True and first["recertified"] is False
+    assert first["certificate"]["skill_id"] == first["plan"]
+    assert first["certificate"]["gate_type"] == first["gate"]
+    assert first["evidence"]["goal_rate"] < NO_PLAN_IS_GOOD_ENOUGH
+    assert first["evidence"]["estimate"]["samples"] >= table.min_samples
+    assert first["steps"][0]["status"] == "completed"
+    chosen = first["fallbacks_considered"][0]
+    assert chosen["plan"] == first["plan"] and chosen["admitted"] is True
+    assert chosen["goal_rate"] == first["evidence"]["goal_rate"]
+
+
+@pytest.mark.parametrize("safety_objective", ["fuel", None])  # every landing burns fuel that doing nothing saves
+def test_a_fallback_must_be_no_worse_than_doing_nothing_on_the_safety_objective(env, book, table, safety_objective):
+    domain = dataclasses.replace(LUNAR_LANDER, safety_objective=safety_objective)
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(
+        domain, env, observation, "land_on_pad", book, table, SAFETY_FIRST, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH
+    )
+    assert run.status is GoalStatus.NO_CERTIFIED_PLAN
+    assert run.frames == 0 and run.fallbacks == 0
+    considered = run.decisions[0].fallback_verdicts
+    if safety_objective is None:
+        assert considered == ()  # a domain without a safety objective has no fallback to consider
+    else:
+        assert considered and {verdict.reason for verdict in considered} == {LESS_SAFE_THAN_NOTHING}
+        assert not any(verdict.admitted for verdict in considered)
+
+
+def test_a_domain_names_a_safety_objective_it_has():
+    with pytest.raises(ValueError, match="safety objective"):
+        dataclasses.replace(LUNAR_LANDER, safety_objective="comfort")
+
+
+def test_a_fallback_is_checked_under_the_priorities_of_its_own_decision(env, book, table):
+    given = itertools.cycle((BALANCED, SAFETY_FIRST))
+
+    def source(observation):
+        return next(given)
+
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(
+        LUNAR_LANDER, env, observation, "land_on_pad", book, table, source, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH
+    )
+    assert run.flown and run.flown[0].weights == BALANCED.weights
+    regions = {SAFETY_FIRST.weights: SAFETY_FIRST.region, BALANCED.weights: BALANCED.region}
+    for decision in run.flown:
+        certificate = decision.chosen.entry.certificate
+        assert decision.fallback
+        assert tuple(certificate.wx_support_values) == regions[decision.weights].support_values
+
+
+def test_a_revoked_fallback_is_not_flown_again(env, book, table):
+    first = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH).decisions[0]
+    certificate = first.chosen.entry.certificate
+    feedback = FeedbackLog(LUNAR_LANDER, min_samples=2)
+    far_short = Gains(certificate.delta_r - 1000.0, tuple(value - 1000.0 for value in certificate.delta_n))
+    for episode in range(3):
+        feedback.record(first.chosen, far_short, episode=episode)
+
+    run = run_goal(env, book, table, TILTED_START_SEED, min_goal_rate=NO_PLAN_IS_GOOD_ENOUGH, feedback=feedback)
+    again = run.decisions[0]
+    assert again.chosen is None or plan_skill_id(again.chosen.candidate) != plan_skill_id(first.chosen.candidate)
+    [revoked] = [v for v in again.fallback_verdicts if v.candidate.skills == first.chosen.candidate.skills]
+    assert revoked.reason == REVOKED_REASON and not revoked.admitted
 
 
 def test_the_rest_of_a_plan_without_current_approval_is_not_flown(env, book, starts_only):
@@ -172,6 +287,36 @@ def test_failures_run_out(env, book, table, monkeypatch):
     assert not run.episode_over
 
 
+def test_a_run_that_never_gets_anywhere_ends_after_the_decision_cap(env, book, table, monkeypatch):
+    def going_nowhere(domain, env, book, skills, observation, settle=False):
+        facts = domain.facts(observation)
+        step = StepRecord(skills[0], StepStatus.COMPLETED, 0, facts, facts, True)
+        rewards = np.zeros((0, domain.num_objectives))
+        return Execution(tuple(skills), (step,), (), rewards, 0, observation, False, None)
+
+    monkeypatch.setattr(runtime, "execute", going_nowhere)
+    run = run_goal(env, book, table, TILTED_START_SEED)
+    assert run.status is GoalStatus.FAILED and not run.episode_over
+    assert len(run.decisions) == MAX_DECISIONS and run.frames == 0
+
+
+def test_every_decision_is_certified_with_the_frames_flown_so_far(env, book, table, monkeypatch):
+    seen = []
+
+    def recording(*args, elapsed, **kwargs):
+        seen.append(elapsed)
+        return verify(*args, elapsed=elapsed, **kwargs)
+
+    monkeypatch.setattr(runtime, "verify", recording)
+    observation, _ = env.reset(seed=TILTED_START_SEED)
+    run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, SAFETY_FIRST, start_frame=0)
+    frames = np.cumsum([0] + [len(decision.execution.rewards) for decision in run.flown])
+    decided_at = list(dict.fromkeys(seen))  # a fallback is checked at the same moment as the plans it follows
+    assert decided_at[: len(run.flown)] == list(frames[: len(run.flown)]) and len(run.flown) > 1
+    with pytest.raises(ValueError, match="start_frame"):
+        pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, SAFETY_FIRST, start_frame=-1)
+
+
 def test_a_landing_beside_the_pad_is_not_achieved(env, book, table):
     runs = (run_goal(env, book, table, seed) for seed in range(2000))
     run = next(r for r in runs if r.info and landing_outcome(r.info, r.observation) == "landed_off_pad")
@@ -189,7 +334,8 @@ def test_a_crash_is_a_failure(env, book, table, monkeypatch):
 
 
 def test_a_plan_that_ends_quickly_but_misses_the_pad_is_not_chosen(env, book, table):
-    run = next(r for r in (run_goal(env, book, table, seed) for seed in range(2000, 2100)) if r.decisions)
+    runs = (run_goal(env, book, table, seed) for seed in range(2000, 2100))
+    run = next(r for r in runs if r.decisions and r.decisions[0].recertified)
     rushed = [v for v in run.decisions[0].verdicts if v.reason == GOAL_TOO_RARE]
     chosen = run.decisions[0].chosen
     assert all(v.goal_rate < 0.9 for v in rushed)
@@ -250,7 +396,7 @@ def test_a_refusal_in_mid_flight_stops_the_run(env, book, table, continuation):
     def source(observation):
         return next(answers, None)
 
-    observation, _ = env.reset(seed=TILTED_START_SEED)
+    observation, _ = env.reset(seed=ADMITTED_START_SEED)
     run = pursue(LUNAR_LANDER, env, observation, "land_on_pad", book, table, source, continuation=continuation)
     assert run.status is GoalStatus.PRIORITIES_REFUSED
     [flown] = run.flown
@@ -269,12 +415,15 @@ def test_inputs_are_checked(env, book, table):
 
 
 def test_the_record_is_json_ready(env, book, table):
-    record = json.loads(json.dumps(run_goal(env, book, table, TILTED_START_SEED).record()))
+    record = json.loads(json.dumps(run_goal(env, book, table, ADMITTED_START_SEED).record()))
     assert record["status"] == "achieved" and record["replans"] == 0
     first = record["decisions"][0]
     assert first["plan"].startswith("plan:land_on_pad/")
     assert first["gate"] == "CDS" and first["recertified"] and first["continued"] is False
+    assert first["fallback"] is False and first["certificate"]["skill_id"] == first["plan"]
+    assert first["evidence"]["goal_rate"] >= 0.9
     assert record["continued"] == 0
+    assert record["fallbacks"] == sum(decision["fallback"] for decision in record["decisions"])
     assert first["goal_graph"]["goal"] == "land_on_pad"
     last = record["decisions"][-1]
     assert last["steps"][-1]["skill"] == "touch_down"
@@ -284,10 +433,27 @@ def test_the_record_is_json_ready(env, book, table):
 # Choosing between plans at a decision
 
 
-def verdict(skills, score=None, reason="rejected by the CDS and PDS gates"):
+def verdict(skills, score=None, reason="rejected by the CDS and PDS gates", goal_rate=None):
     candidate = CandidatePlan("g", "m", ("m",), tuple(skills), {})
     entry = object() if score is not None else None
-    return PlanVerdict(candidate, reason=reason, entry=entry, score=score)
+    return PlanVerdict(candidate, reason=reason, entry=entry, score=score, goal_rate=goal_rate)
+
+
+def test_the_fallback_flown_is_the_one_that_reaches_its_goal_most_often():
+    lands_at_once = verdict(["touch_down"], score=330.0, goal_rate=0.63)
+    goes_to_the_pad = verdict(["cruise_to_pad", "touch_down"], score=270.0, goal_rate=0.89)
+    assert _choose_fallback([lands_at_once, goes_to_the_pad], ()) is goes_to_the_pad
+    as_often = verdict(["slow_descent", "touch_down"], score=300.0, goal_rate=0.89)
+    assert _choose_fallback([goes_to_the_pad, as_often], ()) is as_often  # equal rates: the better score
+    assert _choose_fallback([verdict(["a"], goal_rate=0.95), lands_at_once], ()) is lands_at_once  # only admitted
+
+
+def test_a_fallback_in_progress_goes_on_unless_another_reaches_its_goal_more_often():
+    current = verdict(["b"], score=100.0, goal_rate=0.8)
+    assert _choose_fallback([verdict(["a"], score=500.0, goal_rate=0.8), current], ("b",)) is current
+    more_often = verdict(["a"], score=50.0, goal_rate=0.85)
+    assert _choose_fallback([more_often, current], ("b",)) is more_often
+    assert _choose_fallback([verdict(["a"], goal_rate=0.9)], ()) is None
 
 
 def test_the_plan_in_progress_is_kept_unless_clearly_beaten():
@@ -321,7 +487,58 @@ def test_a_plan_in_progress_the_gates_now_reject_is_replaced():
     ],
 )
 def test_the_continuation_policy_covers_only_a_proposed_rest_the_gates_did_not_reject(verdicts, remaining, allowed):
-    assert _may_continue(verdicts, remaining) is allowed
+    in_progress = verdict(["a", *remaining], score=1.0)
+    assert _may_continue(verdicts, remaining, in_progress, None) is allowed
+
+
+def revoking_log(admitted):
+    """A feedback log whose flights fall far short of what ``admitted`` claims, so that it is revoked."""
+    log = FeedbackLog(LUNAR_LANDER, min_samples=2)
+    certificate = admitted.entry.certificate
+    far_short = Gains(certificate.delta_r - 1000.0, tuple(value - 1000.0 for value in certificate.delta_n))
+    for episode in range(3):
+        log.record(admitted, far_short, episode=episode)
+    return log
+
+
+def test_continuation_never_goes_on_under_a_revoked_certificate(env, book, table):
+    observation, _ = env.reset(seed=ADMITTED_START_SEED)
+    candidates = generate(book, ("land_on_pad",), lander_facts(observation)).candidates
+    verdicts = verify(candidates, observation, table, SAFETY_FIRST, elapsed=0)
+    admitted = next(v for v in verdicts if v.admitted and len(v.candidate.skills) > 1)
+    rest = verdict(admitted.candidate.skills[1:], reason=NOT_MEASURED)
+    remaining = rest.candidate.skills
+    assert _may_continue([rest], remaining, admitted, FeedbackLog(LUNAR_LANDER)) is True  # too few flights to judge
+    assert _may_continue([rest], remaining, admitted, revoking_log(admitted)) is False
+
+
+def test_continuation_never_flies_a_rest_whose_measurements_the_log_has_revoked(env, book, table, monkeypatch):
+    """The rest of the plan fails only the goal-rate check in mid-flight, from a region the log has revoked."""
+    measured = runtime.verify
+
+    def goal_too_rare_in_mid_flight(candidates, observation, table, priorities, timestamp=None, min_goal_rate=0.0, *, elapsed):
+        verdicts = measured(candidates, observation, table, priorities, timestamp, min_goal_rate, elapsed=elapsed)
+        if elapsed == 0:
+            return verdicts
+        return [
+            dataclasses.replace(v, reason=GOAL_TOO_RARE, entry=None, score=None) if v.admitted else v for v in verdicts
+        ]
+
+    monkeypatch.setattr(runtime, "verify", goal_too_rare_in_mid_flight)
+    keep = Continuation.KEEP_UNREJECTED_PLAN
+    unchecked = run_goal(env, book, table, ADMITTED_START_SEED, continuation=keep)
+    first, second = unchecked.flown[:2]
+    assert second.continued and not second.recertified
+    [rest] = [v for v in second.verdicts if v.candidate.skills == second.skills]
+    assert rest.reason == GOAL_TOO_RARE and rest.estimate is not None
+    state, elapsed = first.execution.observation, first.execution.frames
+    [admitted] = measured([rest.candidate], state, table, SAFETY_FIRST, elapsed=elapsed)  # its certificate, goal bar aside
+    assert admitted.admitted and admitted.estimate == rest.estimate
+
+    checked = run_goal(env, book, table, ADMITTED_START_SEED, continuation=keep, feedback=revoking_log(admitted))
+    assert checked.status is GoalStatus.NO_CERTIFIED_PLAN
+    assert checked.continued == 0 and len(checked.flown) == 1
+    assert checked.flown[0].skills == first.skills
 
 
 # Confirming a goal

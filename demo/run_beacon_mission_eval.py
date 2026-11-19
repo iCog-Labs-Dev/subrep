@@ -7,13 +7,16 @@ Every controller flies one episode from the start of every seed:
 - the mission's skills in a fixed order, with the runtime checks but no certification;
 - the goal runtime under several priorities, with ``scan_then_land`` and
   ``land_on_pad`` both on offer, so that priorities can decide between them.
-  Mission-first priorities are also flown under the continuation policy,
-  reported apart from the criteria.
+  When no plan is admitted it may fly a fallback admitted from the current
+  state. Mission-first priorities are also flown under the strict policy, which
+  never falls back, and under the continuation policy, and once more with
+  revocations applied during the runs, all reported apart from the criteria.
 
 It also moves the beacon and repeats the mission with the same recipe book, and
 flies with a limit on how many plans are measured at each decision. Certified
 plans are checked against what they really achieved after every episode has been
-flown, so a revocation found there was not applied during the runs. The criteria
+flown, so a revocation found there was not applied during the runs. A run the
+runtime stopped in the middle of a plan is counted but not checked. The criteria
 at the top of this file were written before the evaluation seeds were flown, and
 the report says which of them were met, which were missed and which had too
 little evidence to judge.
@@ -42,25 +45,37 @@ from decomposition.mdn_priorities import priorities_from_weights
 from decomposition.recipe_book import RecipeBook
 from decomposition.runtime import Continuation, GoalRun, pursue
 from decomposition.verifier import Priorities
-from demo.build_lunar_effect_table import build_mission_table, mission_book
+from demo.build_lunar_effect_table import build_mission_table, measure, mission_book
 from demo.run_goal_decomposition_eval import (
     CERTIFICATES_NOTE,
-    continuation_lines,
+    OTHER_POLICIES,
+    POLICY_NAMES,
+    Safeguards,
+    check_table,
     criteria_table,
     criterion,
+    frozen_settings,
+    goal_outcomes,
+    live_revocation_lines,
+    policy_lines,
     record_followed_plans,
+    reliability_lines,
     revocation_criterion,
+    settings_line,
     share_criterion,
     shortfalls,
+    table_check_lines,
+    unchecked_note,
 )
 from demo.train_lunar_mdn import load_mission_mdn
-from env.lunar_beacon import BEACON_MISSION, MISSION_COMPLETE, beacon_domain
+from env.lunar_beacon import BEACON_MISSION, DEFAULT_BEACON, MISSION_COMPLETE, beacon_domain
 from env.lunar_pilots import mission_pilots
 
 GOALS = ("scan_then_land", "land_on_pad")
 # The mission table was built from seeds 0-1999 and the moved-beacon tables from 0-999.
-# The skills were tuned on seeds 3000-3199, and an earlier evaluation flew 8000-8499.
-DEFAULT_START_SEED = 10000
+# The skills were tuned and the table's settings chosen on seeds 3000-3199, earlier evaluations
+# flew 8000-8499 and 10000-10499, and earlier versions of this one 11000-11499 and 12000-12499.
+DEFAULT_START_SEED = 13000
 DEFAULT_SEEDS = 500
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 FIXED_MISSION = ("go_to_beacon", "cruise_to_pad", "slow_descent", "touch_down")
@@ -152,15 +167,21 @@ def evaluate_runtime(
     seeds: Sequence[int],
     limit: Optional[int] = None,
     check_certificates: bool = True,
-    continuation: Continuation = Continuation.STOP,
+    continuation: Continuation = Continuation.FALLBACK,
+    revoke_live: bool = False,
 ) -> Dict[str, Any]:
-    """Pursue the mission's goals from every seed under one source of priorities."""
+    """Pursue the mission's goals from every seed under one source of priorities.
+
+    With ``revoke_live``, the runtime is given the feedback log, so a certificate
+    the flights so far have revoked is refused during the later runs.
+    """
     episodes: List[MissionEpisode] = []
     statuses: Counter = Counter()
     first_goals: Counter = Counter()
     first_plans: Counter = Counter()
     stops: Counter = Counter()
-    rechecks = recertified = continued = switches = replans = checked = held = 0
+    rechecks = recertified = switches = replans = checked = held = unchecked = 0
+    safeguards = Safeguards()
     feedback = FeedbackLog(domain)
     records: List[Dict[str, Any]] = []
     for seed in seeds:
@@ -173,6 +194,7 @@ def evaluate_runtime(
             book,
             table,
             priorities,
+            feedback=feedback if revoke_live else None,
             timestamp=TIMESTAMP,
             limit=limit,
             continuation=continuation,
@@ -185,9 +207,9 @@ def evaluate_runtime(
         first_plans[">".join(first.candidate.skills) if first else "none"] += 1
         rechecks += run.rechecks
         recertified += run.recertified_rechecks
-        continued += run.continued
         switches += run.switches
         replans += run.replans
+        safeguards.add(run, episode.outcome, seed)
         for decision in run.flown:
             stopped = decision.execution.stopped_at
             if stopped is not None:
@@ -201,10 +223,11 @@ def evaluate_runtime(
                 "status": run.status.value,
                 "first_plan": ">".join(first.candidate.skills) if first else None,
                 "goal": run.goal if run.flown else None,
+                "fallbacks": run.fallbacks,
             }
         )
-        if check_certificates:
-            record_followed_plans(domain, feedback, env, seed, run)
+        if (check_certificates or revoke_live) and run.flown:
+            unchecked += not record_followed_plans(domain, feedback, env, seed, run)
     return {
         "summary": rates(episodes, domain.outcomes),
         "statuses": dict(statuses),
@@ -212,12 +235,13 @@ def evaluate_runtime(
         "first_plans": dict(first_plans),
         "rechecks": rechecks,
         "recertified_rechecks": recertified,
-        "continued": continued,
         "switches": switches,
         "replans": replans,
+        **safeguards.record(),
         "plan_stops": dict(stops),
         "predictions": {"checked": checked, "held": held},
         "feedback": feedback.report(),
+        "feedback_unchecked_runs": unchecked,
         "episodes": records,
     }
 
@@ -319,9 +343,13 @@ def evaluate(
     seeds: range,
     profiles: Mapping[str, Any] = PROFILES,
     moved: Sequence[Tuple[float, float]] = MOVED_BEACONS,
-    continuing: Sequence[str] = ("mission_first",),
+    compared: Sequence[str] = ("mission_first",),
 ) -> Dict[str, Any]:
-    """Fly every controller from every seed; the profiles in ``continuing`` also fly under the continuation policy."""
+    """Fly every controller from every seed.
+
+    The profiles in ``compared`` also fly under the other policies for when no plan
+    is admitted, and with revocations applied during the runs.
+    """
     table = EffectTable.load(LUNAR_BEACON_TABLE, BEACON_MISSION)
     measured = range(table.data["seeds"]["start"], table.data["seeds"]["stop"])
     if len(seeds) == 0:
@@ -334,14 +362,14 @@ def evaluate(
     int_seeds = [int(seed) for seed in seeds]
     try:
         controllers: Dict[str, Dict[str, Any]] = {}
-        policies = {
+        pilots = {
             "idle": lambda obs: domain.idle_action,
             "heuristic": domain.skills["heuristic_pilot"].policy,
             "ppo_landing": domain.skills["ppo_pilot"].policy,
             "mission_ppo": domain.skills["mission_pilot"].policy,
         }
-        for name, policy in policies.items():
-            episodes = [fly_controller(domain, env, policy, seed) for seed in int_seeds]
+        for name, pilot in pilots.items():
+            episodes = [fly_controller(domain, env, pilot, seed) for seed in int_seeds]
             controllers[name] = {"summary": rates(episodes, domain.outcomes), "episodes": [asdict(e) for e in episodes]}
         fixed = [fly_fixed(domain, env, book, seed) for seed in int_seeds]
         controllers["fixed_mission_skills"] = {"summary": rates(fixed, domain.outcomes), "episodes": [asdict(e) for e in fixed]}
@@ -352,25 +380,35 @@ def evaluate(
             split = 0.0
         goal_runs["mdn"] = evaluate_runtime(domain, env, book, table, load_mission_mdn(), int_seeds)
         limited = evaluate_runtime(domain, env, book, table, profiles["mission_first"], int_seeds, MEASURING_LIMIT, False)
-        continued_runs = {
-            name: evaluate_runtime(
-                domain, env, book, table, profiles[name], int_seeds, continuation=Continuation.KEEP_UNREJECTED_PLAN
-            )
-            for name in continuing
-            if name in profiles
+        names = [name for name in compared if name in profiles]
+        policies = {
+            name: {
+                POLICY_NAMES[policy]: evaluate_runtime(
+                    domain, env, book, table, profiles[name], int_seeds, continuation=policy
+                )
+                for policy in OTHER_POLICIES
+            }
+            for name in names
+        }
+        live = {
+            name: evaluate_runtime(domain, env, book, table, profiles[name], int_seeds, revoke_live=True)
+            for name in names
         }
     finally:
         env.close()
     moved_runs = [evaluate_moved_beacon(beacon, book, int_seeds, profiles["mission_first"]) for beacon in moved]
     report = {
         "seeds": {"start": int(seeds[0]), "count": len(seeds)},
+        "settings": frozen_settings(table),
         "goals": list(GOALS),
         "controllers": controllers,
         "goal_runs": goal_runs,
-        "continuation": continued_runs,
+        "policies": policies,
+        "live_revocation": live,
         "goal_split": split,
         "limit": compare_limit(goal_runs["mission_first"], limited),
         "moved_beacons": moved_runs,
+        "table_check": check_table(table, measure(seeds, DEFAULT_BEACON), goal_outcomes(book)),
     }
     report["criteria"] = check_criteria(report)
     return report
@@ -382,6 +420,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "# Scan-then-land mission evaluation",
         "",
         f"Seeds {seeds['start']}-{seeds['start'] + seeds['count'] - 1} ({seeds['count']} episodes per controller).",
+        "",
+        settings_line(report["settings"]),
         "",
         "## Criteria written before the evaluation",
         "",
@@ -396,20 +436,36 @@ def to_markdown(report: Mapping[str, Any]) -> str:
     ]
     rows = [(name, data["summary"]) for name, data in report["controllers"].items()]
     rows += [(f"runtime_{name}", run["summary"]) for name, run in report["goal_runs"].items()]
+    rows += [
+        (f"runtime_{name}_{policy}", run["summary"])
+        for name, runs in report.get("policies", {}).items()
+        for policy, run in runs.items()
+    ]
     for name, s in rows:
         low, high = wilson_interval(round(s["mission_complete_rate"] * s["episodes"]), s["episodes"])
         lines.append(
             f"| {name} | {s['mission_complete_rate']:.3f} ({low:.3f}-{high:.3f}) | {s['landed_on_pad_rate']:.3f} | {s['landed_off_pad_rate']:.3f} | "
             f"{s['crashed_rate']:.3f} | {s['timeout_rate']:.3f} | {s['mean_safety']:.1f} | {s['mean_fuel']:.1f} | {s['mean_mission']:.1f} | {s['mean_frames']:.0f} |"
         )
-    lines += ["", "## Goal runtime", "", "| Priorities | Statuses | First goal | Re-checks | Re-certified | Switches | Replans | Predictions held | Plan stops |", "|---|---|---|---|---|---|---|---|---|"]
+    lines += [
+        "",
+        "## Goal runtime",
+        "",
+        "| Priorities | Statuses | First goal | Re-checks | Re-certified | Switches | Replans | Predictions held | "
+        "Plan stops | Fallback decisions (runs) | Runs with a fallback ended |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
     for name, run in report["goal_runs"].items():
         p = run["predictions"]
         lines.append(
             f"| {name} | {_counts(run['statuses'])} | {_counts(run['first_goals'])} | {run['rechecks']} | {run['recertified_rechecks']} | "
-            f"{run['switches']} | {run['replans']} | {p['held']}/{p['checked']} | {_counts(run['plan_stops']) or '-'} |"
+            f"{run['switches']} | {run['replans']} | {p['held']}/{p['checked']} | {_counts(run['plan_stops']) or '-'} | "
+            f"{run['fallbacks']} ({run['runs_with_fallback']}) | {_counts(run['fallback_outcomes']) or '-'} |"
         )
-    lines += continuation_lines(report, f"{MISSION_COMPLETE}_rate", "Mission done")
+    success = f"{MISSION_COMPLETE}_rate"
+    lines += policy_lines(report, success, "Mission done")
+    lines += reliability_lines(report["goal_runs"])
+    lines += live_revocation_lines(report, success, "Mission done")
     lines += ["", "## First plans", ""]
     for name, run in report["goal_runs"].items():
         lines.append(f"- {name}: {_counts(run['first_plans'])}")
@@ -419,7 +475,7 @@ def to_markdown(report: Mapping[str, Any]) -> str:
         "",
         CERTIFICATES_NOTE,
         "",
-        "| Priorities | Plan | Start group | Samples | Certified Δr | Realised mean Δr | Status | Fell short on |",
+        "| Priorities | Plan | Start region | Samples | Certified Δr | Realised mean Δr | Status | Fell short on |",
         "|---|---|---|---|---|---|---|---|",
     ]
     unjudged = 0
@@ -429,11 +485,17 @@ def to_markdown(report: Mapping[str, Any]) -> str:
                 unjudged += 1
                 continue
             lines.append(
-                f"| {name} | {entry['plan']} | {entry['group']} | {entry['samples']} | "
+                f"| {name} | {entry['plan']} | {entry['region']} | {entry['samples']} | "
                 f"{entry['delta_r']['certified']:.1f} | {entry['delta_r']['realised_mean']:.1f} | {entry['status']} | "
                 f"{shortfalls(entry)} |"
             )
-    lines += ["", f"{unjudged} more plan and start groups had too few samples and are not listed."]
+    lines += [
+        "",
+        f"{unjudged} more plan and start regions had too few samples and are not listed.",
+        "",
+        unchecked_note(report["goal_runs"]),
+    ]
+    lines += table_check_lines(report["table_check"])
     lines += ["", "## The beacon moved, the recipe book unchanged", "", "| Beacon | Runtime: mission done | Runtime: crashed | PPO trained on the first beacon: mission done |", "|---|---|---|---|"]
     for moved in report["moved_beacons"]:
         s = moved["runtime"]["summary"]

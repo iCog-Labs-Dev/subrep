@@ -170,6 +170,7 @@ def beacon_domain(
         final_facts=_confirmed_final_facts,
         make_env=lambda seed: BeaconMissionEnv(seed=seed, beacon=beacon),
         gamma=MISSION_GAMMA,
+        safety_objective="safety",
     )
 
 

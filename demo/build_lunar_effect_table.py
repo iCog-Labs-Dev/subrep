@@ -24,8 +24,10 @@ import torch
 from decomposition.domain import Domain
 from decomposition.effects import (
     DEFAULT_TABLE_PATH,
+    CELL_EPISODES,
     LUNAR_BEACON_TABLE,
     MAX_STATES_PER_SEED,
+    MIN_SAMPLES,
     EffectTable,
     SeedMeasurement,
     measure_seeds,
@@ -40,6 +42,7 @@ from env.lunar_pilots import mission_pilots
 
 DEFAULT_WORKERS = max(1, (os.cpu_count() or 2) // 2)
 _CHUNK = 20  # seeds handed to a process at a time
+_THREAD_SETTINGS = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
 
 
 def landing_book() -> RecipeBook:
@@ -63,18 +66,35 @@ def _measure(job: Tuple[Sequence[int], Optional[Tuple[float, float]]]) -> List[S
     return measure_seeds(domain, seeds, plans_for(book), MAX_STATES_PER_SEED)
 
 
-def build(
+def measure(
     seeds: range, beacon: Optional[Tuple[float, float]] = None, workers: int = DEFAULT_WORKERS
+) -> List[SeedMeasurement]:
+    """Measure every plan at every decision state of ``seeds``, in seed order whatever the number of processes.
+
+    With a ``beacon``, the plans are those of the scan-then-land mission with the beacon there.
+    """
+    # Each process runs one small network at a time. One BLAS thread each also keeps
+    # the memory every process reserves at start small, so many processes fit.
+    for name in _THREAD_SETTINGS:
+        os.environ.setdefault(name, "1")
+    jobs = [(list(seeds[start : start + _CHUNK]), beacon) for start in range(0, len(seeds), _CHUNK)]
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        return [measurement for chunk in pool.map(_measure, jobs) for measurement in chunk]
+
+
+def build(
+    seeds: range,
+    beacon: Optional[Tuple[float, float]] = None,
+    workers: int = DEFAULT_WORKERS,
+    min_samples: int = MIN_SAMPLES,
+    cell_episodes: Optional[int] = CELL_EPISODES,
 ) -> EffectTable:
-    """Build the table for ``seeds``, in order whatever the number of processes.
+    """Build the table for ``seeds``, the same whatever the number of processes.
 
     With a ``beacon``, the table is for the scan-then-land mission with the beacon there.
     """
-    jobs = [(list(seeds[start : start + _CHUNK]), beacon) for start in range(0, len(seeds), _CHUNK)]
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        measured = [measurement for chunk in pool.map(_measure, jobs) for measurement in chunk]
     domain, _ = _setup(beacon)
-    return table_from_measurements(domain, seeds, measured)
+    return table_from_measurements(domain, seeds, measure(seeds, beacon, workers), min_samples, cell_episodes)
 
 
 def build_mission_table(seeds: range, beacon: Tuple[float, float] = DEFAULT_BEACON) -> EffectTable:
@@ -84,7 +104,7 @@ def build_mission_table(seeds: range, beacon: Tuple[float, float] = DEFAULT_BEAC
 def to_text(table: EffectTable) -> str:
     """A plain-text overview of the table: one row per plan or step and group."""
     header = (
-        f"{'name':<62} {'group':<60} {'n':>4} {'done':>5} {'on pad':>6} "
+        f"{'name':<62} {'group':<60} {'n':>5} {'eps':>4} {'cells':>5} {'done':>5} {'on pad':>6} "
         f"{'Δr':>8} {'Δr low':>8} {'ΔSafety':>8} {'ΔFuel':>8}"
     )
     lines = []
@@ -92,8 +112,9 @@ def to_text(table: EffectTable) -> str:
         lines += ["", kind, header]
         for entry in table.data[kind]:
             on_pad = f"{entry['outcomes']['landed_on_pad']:.2f}" if "outcomes" in entry else "-"
+            cells = len(entry.get("cells", ())) or 1
             lines.append(
-                f"{entry['name']:<62} {entry['group']:<60} {entry['samples']:>4} "
+                f"{entry['name']:<62} {entry['group']:<60} {entry['samples']:>5} {entry['episodes']:>4} {cells:>5} "
                 f"{entry['completion_rate']:>5.2f} {on_pad:>6} {entry['delta_r']['mean']:>8.2f} "
                 f"{entry['delta_r']['lower']:>8.2f} {entry['delta_safety']['mean']:>8.2f} "
                 f"{entry['delta_fuel']['mean']:>8.2f}"

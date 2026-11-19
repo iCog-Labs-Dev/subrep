@@ -22,30 +22,67 @@ its steps' effects. Every plan flight also records how the episode really ended
 that completes, such as legs touching down, is not a landing until the final
 result confirms it.
 
-The table measures every plan the planner proposes at the states where the
-runtime decides: the start of the episode and the state after each skill of each
-plan flown from it. The rest of a plan can therefore be certified from the real
-state in mid-flight, from measurements on other seeds. Replaying the seed being
-flown would answer more exactly, but it would show the lander its own future,
-which nothing outside a simulator can do. A plan the lander could switch to in
-mid-flight is measured too, but the states along it are not visited in turn: the
-number of such paths grows with every skill, and a plan flown past the measured
-states goes on under the certificate it already holds.
+The table measures every plan the planner proposes at every state where the
+runtime could decide: the start of the episode and, breadth first, the state
+after each skill of every plan flown, so the states along a plan the lander
+switches to in mid-flight are measured as well as those along the plans it
+starts with. ``MAX_STATES_PER_SEED`` bounds how many states one episode adds.
+The rest of a plan can therefore be certified from the real state in mid-flight,
+from measurements on other seeds. Replaying the seed being flown would answer
+more exactly, but it would show the lander its own future, which nothing outside
+a simulator can do.
+
+A state is an observation followed by how many frames of the episode have
+already been flown. The episode has a time limit the observation does not show,
+so the same position late in an episode leaves less time to finish a plan: after
+the beacon scan, the plan to the pad completes far less often from a state reached
+late, because the episode runs out first. Leaving the time out would average early
+states with late ones and misjudge both.
+
+The start of an episode is a state of its own kind: every episode has exactly
+one, drawn from the environment's start distribution before anything is flown. A
+state reached a few frames later can share its facts and lie close to it, yet
+fare differently: the lander is lower and already descending, so the same plan
+gains more from there. The runtime's first decision is always at an episode
+start, so starts are grouped apart: an episode start is judged only by
+measurements from other episode starts, and a later state only by measurements
+from later states.
 
 Samples are grouped by the facts of the state they start from and summarised
 by their mean, spread, count and a one-sided bootstrap lower confidence bound.
-Each group also records its support: the lowest and highest value of every
-observation number among the states it was measured from. States that share
-facts can still differ a lot: a lander at the start of an episode and one
-falling fast halfway down can both be not upright, not over the pad and not
-near the ground. A lookup therefore answers only for states inside the support,
-widened by a small margin, and treats every other state as unmeasured.
+One episode can add several samples to a group, from different states, and they
+share its start and its terrain, so the bootstrap resamples whole episodes and
+each entry records how many episodes it holds; an entry needs ``MIN_SAMPLES``
+episodes to answer. A plan's entry also records how its flights ended: the rate
+of every outcome over all flights, and how the flights of each episode ended,
+since episodes give different numbers of flights and a rate's confidence needs
+them per episode. Each group also records its support: the lowest and highest
+value of every number of the states it was measured from, the frames already
+flown included. States that share facts can still differ a lot: a lander at the
+start of an episode and one falling fast halfway down can both be not upright,
+not over the pad and not near the ground. A lookup therefore answers only for
+states inside the support, widened by a small margin, and treats every other
+state as unmeasured.
+
+A group can still mix states that fare differently: the states a plan usually
+starts from and rarer ones reached after a switch of plans in mid-flight. A
+group's averages would then understate what a plan achieves from the usual states
+and overstate it from the rare ones. Each plan's group is therefore split into
+cells of similar states, by the best of several k-means starts over the states
+scaled by their spread in the group, with about ``cell_episodes`` episodes per
+cell and at least ``MIN_SAMPLES`` in each; a cell with fewer is merged into its
+neighbours. The cells are found from the states alone, never from how the
+flights from them went, so an estimate from a cell is not biased towards cells
+where flights happened to go well. A lookup answers from the cell nearest the
+state, and names it as the region the estimate holds for. The support still
+decides whether a state is measured at all.
 """
 
 from __future__ import annotations
 
 import json
 import zlib
+from collections import Counter, deque
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TypeVar, Union
@@ -55,20 +92,24 @@ import numpy as np
 from baseline.improvement_calculator import ImprovementCalculator
 from decomposition.domain import GAMMA, Domain
 
-SCHEMA_VERSION = "subrep.effects.v3"
+SCHEMA_VERSION = "subrep.effects.v8"
 BASELINE_ID = "idle_policy_v1"
 CONFIDENCE = 0.95
 BOOTSTRAP_RESAMPLES = 2000
 MIN_SAMPLES = 30
 MAX_STATES_PER_SEED = 60  # bounds the states measured per seed when plans keep branching
-# Fraction of each observation range added on both sides of a group's support.
+CELL_EPISODES: Optional[int] = 200  # episodes per cell a group is split into; None keeps each group whole
+KMEANS_ITERATIONS = 100
+KMEANS_RESTARTS = 10  # k-means++ starts a group's split into cells is chosen from
+# Fraction of the range of each number of the states added on both sides of a group's support.
 SUPPORT_MARGIN = 0.05
 DEFAULT_TABLE_PATH = Path(__file__).resolve().parent / "data" / "lunar_effects.json"
 LUNAR_BEACON_TABLE = Path(__file__).resolve().parent / "data" / "lunar_beacon_effects.json"
 
 IN_FLIGHT = "in_flight"
+EPISODE_START = "episode_start"  # marks the group of the first state of an episode
 
-_DECIMALS = 6
+DECIMALS = 6  # every value in a table is stored rounded to this many decimals
 
 T = TypeVar("T")
 # (facts of a state, whether it is the start of an episode) -> the skill lists to measure from it
@@ -125,9 +166,21 @@ def improvement(
     return float(delta_r), tuple(float(value) for value in delta_n)
 
 
-def group_key(domain: Domain, facts: Mapping[str, bool]) -> str:
-    """The group of a state, for example ``"upright=1,over_pad=0,near_ground=0"``."""
-    return ",".join(f"{name}={int(facts[name])}" for name in domain.group_facts)
+def group_key(domain: Domain, facts: Mapping[str, bool], *, episode_start: bool) -> str:
+    """The group of a state, for example ``"upright=1,over_pad=0,near_ground=0"``.
+
+    The first state of an episode is grouped apart, as the module describes:
+    ``"upright=1,over_pad=0,near_ground=0|episode_start"``.
+    """
+    key = ",".join(f"{name}={int(facts[name])}" for name in domain.group_facts)
+    return f"{key}|{EPISODE_START}" if episode_start else key
+
+
+def state(observation: np.ndarray, elapsed: float) -> np.ndarray:
+    """A state as the table measures it: the observation followed by the frames of the episode already flown."""
+    if elapsed < 0:
+        raise ValueError(f"the frames already flown cannot be negative, got {elapsed}")
+    return np.append(np.asarray(observation, dtype=np.float64).reshape(-1), float(elapsed))
 
 
 def plan_key(skills: Sequence[str]) -> str:
@@ -146,11 +199,18 @@ class Sample:
     frames: int
     completed: bool
     start: Tuple[float, ...]  # the observation the measurement started from
+    seed: int  # the episode it was measured in
+    elapsed: int  # frames of the episode flown before ``start``
 
     @property
     def gains(self) -> np.ndarray:
         """Δr followed by Δn, as one array."""
         return np.array([self.delta_r, *self.delta_n])
+
+    @property
+    def state(self) -> np.ndarray:
+        """The state the measurement started from, as ``state`` builds it."""
+        return state(self.start, self.elapsed)
 
 
 @dataclass(frozen=True)
@@ -173,6 +233,8 @@ class PlanFlight:
 
 def _sample(
     domain: Domain,
+    seed: int,
+    elapsed: int,
     name: str,
     start: np.ndarray,
     delta_r: float,
@@ -180,9 +242,9 @@ def _sample(
     frames: int,
     completed: bool,
 ) -> Sample:
-    group = group_key(domain, domain.facts(start))
+    group = group_key(domain, domain.facts(start), episode_start=elapsed == 0)
     observation = tuple(float(value) for value in np.asarray(start, dtype=np.float64).reshape(-1))
-    return Sample(name, group, delta_r, delta_n, frames, completed, observation)
+    return Sample(name, group, delta_r, delta_n, frames, completed, observation, seed, elapsed)
 
 
 def fly_plan(
@@ -237,13 +299,16 @@ def fly_plan(
     plan_rewards = np.asarray(rewards, dtype=np.float64).reshape(-1, domain.num_objectives)
     replay(env, seed, prefix)
     delta_r, delta_n = improvement(plan_rewards, idle_rewards(domain, env, len(plan_rewards)), domain.gamma)
-    plan = _sample(domain, plan_key(skills), plan_start, delta_r, delta_n, len(plan_rewards), completed)
+    plan = _sample(
+        domain, seed, len(prefix), plan_key(skills), plan_start, delta_r, delta_n, len(plan_rewards), completed
+    )
 
     steps = []
     for frames_before, start, run in runs if not prefix else ():
         replay(env, seed, tuple(actions[:frames_before]))
         delta_r, delta_n = improvement(run.rewards, idle_rewards(domain, env, run.frames), domain.gamma)
-        steps.append(_sample(domain, run.skill, start, delta_r, delta_n, run.frames, run.completed))
+        sample = _sample(domain, seed, frames_before, run.skill, start, delta_r, delta_n, run.frames, run.completed)
+        steps.append(sample)
 
     return PlanFlight(
         seed=seed,
@@ -263,18 +328,24 @@ def measure_seed(
     plans_at: PlansAt,
     max_states: int = MAX_STATES_PER_SEED,
 ) -> List[PlanFlight]:
-    """Fly every plan proposed at the start of episode ``seed`` and at the states where the runtime decides along them."""
-    flights = [
-        fly_plan(domain, env, seed, skills) for skills in plans_at(domain.facts(replay(env, seed, ())), True)
-    ]
-    seen = {()}
-    for flight in tuple(flights):
-        for state in flight.next_states:
-            if state in seen or len(seen) >= max_states:
-                continue
-            seen.add(state)
-            for skills in plans_at(domain.facts(replay(env, seed, state)), False):
-                flights.append(fly_plan(domain, env, seed, skills, state))
+    """Fly every plan proposed at every state of episode ``seed`` where the runtime could decide.
+
+    The states are the start of the episode and then, breadth first, the state
+    after each skill of every plan flown, until ``max_states`` states, the start
+    included, have been measured.
+    """
+    flights: List[PlanFlight] = []
+    seen = set()
+    waiting = deque([()])  # states as the actions that reach them from the start
+    while waiting and len(seen) < max_states:
+        state = waiting.popleft()
+        if state in seen:
+            continue
+        seen.add(state)
+        for skills in plans_at(domain.facts(replay(env, seed, state)), not state):
+            flight = fly_plan(domain, env, seed, skills, state)
+            flights.append(flight)
+            waiting.extend(flight.next_states)
     return flights
 
 
@@ -283,13 +354,26 @@ def measure_seed(
 # ---------------------------------------------------------------------------
 
 
-def lower_bound(values: Sequence[float], seed: int) -> float:
-    """One-sided bootstrap lower confidence bound of the mean of ``values``."""
+def lower_bound(values: Sequence[float], seed: int, episodes: Optional[Sequence[int]] = None) -> float:
+    """One-sided bootstrap lower confidence bound of the mean of ``values``.
+
+    ``episodes`` names the episode each value was measured in. Values from one
+    episode are not independent, so whole episodes are resampled; resampling
+    the values one by one would claim more certainty than they give.
+    """
     data = np.asarray(values, dtype=np.float64)
     if data.size == 0:
         raise ValueError("cannot bound the mean of no values")
     rng = np.random.default_rng(seed)
-    means = data[rng.integers(0, data.size, size=(BOOTSTRAP_RESAMPLES, data.size))].mean(axis=1)
+    if episodes is None:
+        means = data[rng.integers(0, data.size, size=(BOOTSTRAP_RESAMPLES, data.size))].mean(axis=1)
+    else:
+        _, episode = np.unique(np.asarray(episodes), return_inverse=True)
+        if episode.size != data.size:
+            raise ValueError("every value needs the episode it was measured in")
+        sums, counts = np.bincount(episode, weights=data), np.bincount(episode).astype(np.float64)
+        picks = rng.integers(0, sums.size, size=(BOOTSTRAP_RESAMPLES, sums.size))
+        means = sums[picks].sum(axis=1) / counts[picks].sum(axis=1)
     return float(np.quantile(means, 1.0 - CONFIDENCE))
 
 
@@ -297,41 +381,209 @@ def _bootstrap_seed(*parts: str) -> int:
     return zlib.crc32("|".join(parts).encode("utf-8"))
 
 
-def summarise_gains(gains: np.ndarray, objectives: Sequence[str], seed: int) -> Dict[str, Dict[str, float]]:
-    """Mean, spread and lower bound of each column of a ``(samples, 1 + objectives)`` gains array."""
+def summarise_gains(
+    gains: np.ndarray, objectives: Sequence[str], seed: int, episodes: Optional[Sequence[int]] = None
+) -> Dict[str, Dict[str, float]]:
+    """Mean, spread and lower bound of each column of a ``(samples, 1 + objectives)`` gains array.
+
+    ``episodes`` names the episode of each row, so the bound resamples whole episodes.
+    """
     summary = {}
     for name, column in zip(gain_names(objectives), np.asarray(gains, dtype=np.float64).T):
         summary[name] = {
-            "mean": round(float(column.mean()), _DECIMALS),
-            "std": round(float(column.std()), _DECIMALS),
-            "lower": round(lower_bound(column, seed), _DECIMALS),
+            "mean": round(float(column.mean()), DECIMALS),
+            "std": round(float(column.std()), DECIMALS),
+            "lower": round(lower_bound(column, seed, episodes), DECIMALS),
         }
     return summary
 
 
-def summarise(samples: Sequence[Sample], objectives: Sequence[str]) -> Dict[str, object]:
-    """Summarise samples that share a name and a group."""
+def episode_count(samples: Iterable[Sample]) -> int:
+    """How many distinct episodes ``samples`` were measured in."""
+    return len({sample.seed for sample in samples})
+
+
+def summarise(samples: Sequence[Sample], objectives: Sequence[str], salt: Sequence[str] = ()) -> Dict[str, object]:
+    """Summarise samples that share a name and a group.
+
+    ``salt`` tells the bootstrap of a part of the group, such as one cell, from
+    that of the whole group.
+    """
     name, group = samples[0].name, samples[0].group
     if any(s.name != name or s.group != group for s in samples):
         raise ValueError("samples to summarise must share one name and one group")
+    episodes = [s.seed for s in samples]
+    gains = np.stack([s.gains for s in samples])
     return {
         "name": name,
         "group": group,
         "samples": len(samples),
-        "completion_rate": round(float(np.mean([s.completed for s in samples])), _DECIMALS),
-        "mean_frames": round(float(np.mean([s.frames for s in samples])), _DECIMALS),
-        "support": _support([s.start for s in samples]),
-        **summarise_gains(np.stack([s.gains for s in samples]), objectives, _bootstrap_seed(name, group)),
+        "episodes": episode_count(samples),
+        "completion_rate": round(float(np.mean([s.completed for s in samples])), DECIMALS),
+        "mean_frames": round(float(np.mean([s.frames for s in samples])), DECIMALS),
+        "support": _support([s.state for s in samples]),
+        **summarise_gains(gains, objectives, _bootstrap_seed(name, group, *salt), episodes),
     }
 
 
-def _support(starts: Sequence[Tuple[float, ...]]) -> Dict[str, List[float]]:
-    """The lowest and highest value of each observation number, rounded outwards."""
-    observations = np.asarray(starts, dtype=np.float64)
-    scale = 10.0**_DECIMALS
+def cell_scale(states: np.ndarray) -> np.ndarray:
+    """The spread of each number of the states, which distances between them are measured in; 1 where it is 0."""
+    spread = np.asarray(states, dtype=np.float64).std(axis=0)
+    return np.where(spread > 0.0, spread, 1.0)
+
+
+def partition(
+    states: np.ndarray, episodes: Sequence[int], cell_episodes: Optional[int], min_episodes: int, seed: int
+) -> np.ndarray:
+    """The cell of each state: clusters of similar states, each measured in at least ``min_episodes`` episodes.
+
+    k-means starts with about one cell per ``cell_episodes`` episodes. While a cell
+    holds fewer than ``min_episodes`` episodes, the smallest is dropped and k-means
+    goes on from the centres left, so a few outlying states join their nearest
+    cell rather than keep the whole group from being split. Of the splits from
+    ``KMEANS_RESTARTS`` k-means++ starts, the one whose states lie closest to their
+    cells' centres is kept, so the cells follow the states rather than one random
+    start. Every state ends in the cell whose centre is nearest, as a lookup finds
+    it, and the cells are numbered in the order their first states appear. There is
+    one cell when ``cell_episodes`` is None. The cells depend on the states, the
+    episodes they come from and ``seed`` only, never on what was measured from them.
+    """
+    states = np.asarray(states, dtype=np.float64)
+    episodes = np.asarray(episodes)
+    if states.ndim != 2 or len(states) != len(episodes):
+        raise ValueError("every state needs the episode it was measured in")
+    if cell_episodes is not None and cell_episodes < 1:
+        raise ValueError(f"cell_episodes must be at least 1, got {cell_episodes}")
+    best = np.zeros(len(states), dtype=np.int64)
+    scaled = states / cell_scale(states)
+    count = 1 if cell_episodes is None else len(np.unique(episodes)) // cell_episodes
+    count = min(count, len(np.unique(scaled, axis=0)))
+    if count < 2:
+        return best
+    rng = np.random.default_rng(seed)
+    least = np.inf
+    for _ in range(KMEANS_RESTARTS):
+        labels, centres = _split(scaled, episodes, count, min_episodes, rng)
+        spread = float(((scaled - centres[labels]) ** 2).sum())
+        if len(centres) > 1 and spread < least:
+            best, least = labels, spread
+    return _in_order_of_appearance(best)
+
+
+def _split(
+    points: np.ndarray, episodes: np.ndarray, count: int, min_episodes: int, rng: np.random.Generator
+) -> Tuple[np.ndarray, np.ndarray]:
+    """One k-means split from a k-means++ start, smallest cells merged away until each has ``min_episodes``."""
+    labels, centres = _lloyd(points, _first_centres(points, count, rng))
+    while len(centres) > 1:
+        sizes = [len(np.unique(episodes[labels == cell])) for cell in range(len(centres))]
+        smallest = int(np.argmin(sizes))
+        if sizes[smallest] >= min_episodes:
+            break
+        labels, centres = _lloyd(points, np.delete(centres, smallest, axis=0))
+    return labels, centres
+
+
+def _in_order_of_appearance(labels: np.ndarray) -> np.ndarray:
+    """``labels`` renumbered so that cell 0 holds the first state, cell 1 the first state not in cell 0, and so on."""
+    cells, first = np.unique(labels, return_index=True)
+    rank = np.empty(len(cells), dtype=np.int64)
+    rank[np.argsort(first)] = np.arange(len(cells))
+    return rank[np.searchsorted(cells, labels)]
+
+
+def _first_centres(points: np.ndarray, count: int, rng: np.random.Generator) -> np.ndarray:
+    """k-means++: each new centre is drawn with probability growing with its distance from the centres so far."""
+    centres = [points[rng.integers(len(points))]]
+    for _ in range(1, count):
+        nearest = np.min([np.sum((points - centre) ** 2, axis=1) for centre in centres], axis=0)
+        centres.append(points[rng.choice(len(points), p=nearest / nearest.sum())])
+    return np.array(centres)
+
+
+def _lloyd(points: np.ndarray, centres: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Lloyd's k-means from ``centres``: the cell of every point, numbered from 0, and the centres of the cells kept."""
+    centres = np.array(centres, dtype=np.float64)
+    labels = np.full(len(points), -1)
+    for _ in range(KMEANS_ITERATIONS):
+        new = ((points[:, None, :] - centres[None, :, :]) ** 2).sum(axis=2).argmin(axis=1)
+        if np.array_equal(new, labels):
+            break
+        labels = new
+        for cell in range(len(centres)):
+            if np.any(labels == cell):
+                centres[cell] = points[labels == cell].mean(axis=0)
+    kept = np.unique(labels)  # a centre no point is nearest to is dropped
+    return np.searchsorted(kept, labels), centres[kept]
+
+
+def episode_outcomes(flights: Sequence[PlanFlight]) -> List[List[object]]:
+    """How the flights of each episode ended, as ``[episodes, {outcome: flights}]`` for every combination seen.
+
+    The most common combination comes first; ties are listed in a fixed order.
+    """
+    by_episode: Dict[int, Counter] = {}
+    for flight in flights:
+        by_episode.setdefault(flight.seed, Counter())[flight.outcome] += 1
+    combinations = Counter(tuple(sorted(counts.items())) for counts in by_episode.values())
+    ordered = sorted(combinations.items(), key=lambda item: (-item[1], item[0]))
+    return [[episodes, dict(combination)] for combination, episodes in ordered]
+
+
+def _plan_summary(flights: Sequence[PlanFlight], domain: Domain, salt: Sequence[str] = ()) -> Dict[str, object]:
+    """Summary of flights of one plan from one group of states, or from one cell of the group."""
+    entry = summarise([flight.plan for flight in flights], domain.objectives, salt)
+    entry["outcomes"] = {
+        name: round(sum(flight.outcome == name for flight in flights) / len(flights), DECIMALS)
+        for name in (*domain.outcomes, IN_FLIGHT)
+    }
+    entry["episode_outcomes"] = episode_outcomes(flights)
+    stepped = [flight for flight in flights if flight.steps]
+    if stepped:
+        entry["interaction"] = summarise_gains(
+            np.stack([flight.interaction for flight in stepped]),
+            domain.objectives,
+            _bootstrap_seed(entry["name"], entry["group"], *salt, "interaction"),
+            [flight.seed for flight in stepped],
+        )
+    return entry
+
+
+_CELL_FIELDS = ("name", "group", "support")  # shared with the whole group, so not repeated in a cell
+
+
+def _plan_entry(
+    flights: Sequence[PlanFlight], domain: Domain, min_samples: int, cell_episodes: Optional[int]
+) -> Dict[str, object]:
+    """The table entry of one plan from one group of states, split into cells when there are enough episodes."""
+    entry = _plan_summary(flights, domain)
+    entry["skills"] = list(flights[0].skills)
+    states = np.array([flight.plan.state for flight in flights])
+    seed = _bootstrap_seed(str(entry["name"]), str(entry["group"]), "cells")
+    labels = partition(states, [flight.seed for flight in flights], cell_episodes, min_samples, seed)
+    if labels.max() > 0:
+        entry["cell_scale"] = [round(float(value), DECIMALS) for value in cell_scale(states)]
+        entry["cells"] = []
+        for cell in range(int(labels.max()) + 1):
+            members = [flight for flight, label in zip(flights, labels) if label == cell]
+            summary = _plan_summary(members, domain, (f"cell{cell}",))
+            centroid = states[labels == cell].mean(axis=0)
+            entry["cells"].append(
+                {
+                    "centroid": [round(float(value), DECIMALS) for value in centroid],
+                    **{key: value for key, value in summary.items() if key not in _CELL_FIELDS},
+                }
+            )
+    return entry
+
+
+def _support(states: Sequence[np.ndarray]) -> Dict[str, List[float]]:
+    """The lowest and highest value of each number of the states, rounded outwards."""
+    values = np.asarray(states, dtype=np.float64)
+    scale = 10.0**DECIMALS
     return {
-        "low": [float(v) for v in np.floor(observations.min(axis=0) * scale) / scale],
-        "high": [float(v) for v in np.ceil(observations.max(axis=0) * scale) / scale],
+        "low": [float(v) for v in np.floor(values.min(axis=0) * scale) / scale],
+        "high": [float(v) for v in np.ceil(values.max(axis=0) * scale) / scale],
     }
 
 
@@ -384,18 +636,25 @@ def build_table(
     plans_at: PlansAt,
     min_samples: int = MIN_SAMPLES,
     max_states: int = MAX_STATES_PER_SEED,
+    cell_episodes: Optional[int] = CELL_EPISODES,
 ) -> "EffectTable":
     """Fly the plans ``plans_at`` gives at every decision state of every seed and summarise the measured effects."""
-    return table_from_measurements(domain, seeds, measure_seeds(domain, seeds, plans_at, max_states), min_samples)
+    measured = measure_seeds(domain, seeds, plans_at, max_states)
+    return table_from_measurements(domain, seeds, measured, min_samples, cell_episodes)
 
 
 def table_from_measurements(
-    domain: Domain, seeds: range, measurements: Sequence[SeedMeasurement], min_samples: int = MIN_SAMPLES
+    domain: Domain,
+    seeds: range,
+    measurements: Sequence[SeedMeasurement],
+    min_samples: int = MIN_SAMPLES,
+    cell_episodes: Optional[int] = CELL_EPISODES,
 ) -> "EffectTable":
     """Summarise measurements of ``seeds``.
 
-    Entries with fewer than ``min_samples`` samples could never answer a lookup,
-    so they are left out.
+    Entries measured in fewer than ``min_samples`` episodes could never answer a
+    lookup, so they are left out. Each plan's group is split into cells of about
+    ``cell_episodes`` episodes, as the module describes.
     """
     flights = [flight for measurement in measurements for flight in measurement.flights]
     step_samples = [step for measurement in measurements for step in measurement.steps]
@@ -404,24 +663,13 @@ def table_from_measurements(
     steps = [
         summarise(group, objectives)
         for group in _by_name_and_group(step_samples, lambda s: s)
-        if len(group) >= min_samples
+        if episode_count(group) >= min_samples
     ]
-    plans_summary = []
-    for group in _by_name_and_group(flights, lambda f: f.plan):
-        if len(group) < min_samples:
-            continue
-        entry = summarise([flight.plan for flight in group], objectives)
-        entry["skills"] = list(group[0].skills)
-        entry["outcomes"] = {
-            name: round(sum(flight.outcome == name for flight in group) / len(group), _DECIMALS)
-            for name in (*domain.outcomes, IN_FLIGHT)
-        }
-        interactions = [flight.interaction for flight in group if flight.steps]
-        if interactions:
-            entry["interaction"] = summarise_gains(
-                np.stack(interactions), objectives, _bootstrap_seed(entry["name"], entry["group"], "interaction")
-            )
-        plans_summary.append(entry)
+    plans_summary = [
+        _plan_entry(group, domain, min_samples, cell_episodes)
+        for group in _by_name_and_group(flights, lambda f: f.plan)
+        if episode_count(flight.plan for flight in group) >= min_samples
+    ]
 
     return EffectTable(
         {
@@ -433,6 +681,7 @@ def table_from_measurements(
             "confidence": CONFIDENCE,
             "bootstrap_resamples": BOOTSTRAP_RESAMPLES,
             "min_samples": min_samples,
+            "cell_episodes": cell_episodes,
             "support_margin": SUPPORT_MARGIN,
             "group_facts": list(domain.group_facts),
             "seeds": {"start": seeds.start, "stop": seeds.stop},
@@ -461,12 +710,16 @@ class Estimate:
     """The measured effect of a sub-skill or a plan from one group of states."""
 
     samples: int
+    episodes: int  # the distinct episodes the samples come from, at most ``samples``
     completion_rate: float
     mean_frames: float
     mean: Gains
     lower: Gains  # one-sided lower confidence bounds
     interaction: Optional[Gains] = None  # mean interaction; plans flown from the start of an episode only
     outcomes: Optional[Dict[str, float]] = None  # how plan flights really ended; plans only
+    # (episodes, {outcome: flights}) for each way the flights of an episode ended; plans only
+    episode_outcomes: Optional[Tuple[Tuple[int, Dict[str, int]], ...]] = None
+    region: str = ""  # the states it was measured from: a group, or one cell of it such as "...|cell=2"
 
 
 def _gains(stats: Mapping[str, Mapping[str, float]], objectives: Sequence[str], field: str) -> Gains:
@@ -477,12 +730,16 @@ def _gains(stats: Mapping[str, Mapping[str, float]], objectives: Sequence[str], 
 
 
 class EffectTable:
-    """Measured effects of sub-skills and plans, looked up by the observation of a start state.
+    """Measured effects of sub-skills and plans, looked up by the state they would start from.
 
-    A lookup finds the group of the observation's facts and answers only if
-    the group has at least ``min_samples`` samples and the observation lies
-    inside the group's support, widened on each side by ``support_margin``
-    times its range. Every other state is treated as unmeasured.
+    A lookup takes the observation and how many frames of the episode were flown
+    before it. It finds the group of the observation's facts, the start of an
+    episode apart, and answers only if the group was measured in at least
+    ``min_samples`` episodes and the state lies inside the group's support,
+    widened on each side by ``support_margin`` times its range; a state later in
+    the episode than any measured is outside it. Every other state is treated as
+    unmeasured. A plan's group split into cells answers from the cell whose
+    centroid is nearest the state, in units of the group's spread.
     """
 
     def __init__(self, data: Mapping[str, object], domain: Domain) -> None:
@@ -512,13 +769,15 @@ class EffectTable:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.data, indent=2) + "\n", encoding="utf-8")
 
-    def step(self, skill: str, observation: np.ndarray) -> Optional[Estimate]:
-        """The effect of ``skill`` from ``observation``, or None if no measurement applies there."""
-        return self._estimate(self._steps.get((skill, self._group_of(observation))), observation)
+    def step(self, skill: str, observation: np.ndarray, elapsed: float) -> Optional[Estimate]:
+        """The effect of ``skill`` from ``observation`` after ``elapsed`` frames; None if nothing measured applies."""
+        values = state(observation, elapsed)
+        return self._estimate(self._steps.get((skill, self._group_of(observation, elapsed))), values)
 
-    def plan(self, skills: Sequence[str], observation: np.ndarray) -> Optional[Estimate]:
-        """The effect of the plan ``skills`` from ``observation``, or None if no measurement applies there."""
-        return self._estimate(self._plans.get((plan_key(skills), self._group_of(observation))), observation)
+    def plan(self, skills: Sequence[str], observation: np.ndarray, elapsed: float) -> Optional[Estimate]:
+        """The effect of ``skills`` from ``observation`` after ``elapsed`` frames; None if nothing measured applies."""
+        values = state(observation, elapsed)
+        return self._estimate(self._plans.get((plan_key(skills), self._group_of(observation, elapsed))), values)
 
     def rough_value(self, skills: Sequence[str], weights: Sequence[float]) -> float:
         """A rough worth of a plan under ``weights``: its mean gains over all states it was measured from.
@@ -554,27 +813,48 @@ class EffectTable:
         )
         return gains / samples
 
-    def supports(self, entry: Mapping[str, object], observation: np.ndarray) -> bool:
-        """Whether ``observation`` lies inside the entry's support, widened by the margin."""
+    def supports(self, entry: Mapping[str, Any], observation: np.ndarray, elapsed: float) -> bool:
+        """Whether the state ``observation`` after ``elapsed`` frames lies inside the entry's support, widened."""
+        return self._covers(entry, state(observation, elapsed))
+
+    def _covers(self, entry: Mapping[str, Any], values: np.ndarray) -> bool:
         low = np.asarray(entry["support"]["low"], dtype=np.float64)
         high = np.asarray(entry["support"]["high"], dtype=np.float64)
         widen = self.support_margin * (high - low)
-        values = np.asarray(observation, dtype=np.float64).reshape(-1)
         return bool(values.shape == low.shape and np.all((values >= low - widen) & (values <= high + widen)))
 
-    def _group_of(self, observation: np.ndarray) -> str:
-        return group_key(self.domain, self.domain.facts(observation))
+    def _group_of(self, observation: np.ndarray, elapsed: float) -> str:
+        return group_key(self.domain, self.domain.facts(observation), episode_start=elapsed == 0)
 
-    def _estimate(self, entry: Optional[Mapping[str, object]], observation: np.ndarray) -> Optional[Estimate]:
-        if entry is None or int(entry["samples"]) < self.min_samples or not self.supports(entry, observation):
+    def nearest_cell(self, entry: Mapping[str, Any], values: np.ndarray) -> Optional[int]:
+        """The index of the entry's cell nearest the state ``values``, or None for an entry that is not split."""
+        cells = entry.get("cells")
+        if not cells:
             return None
+        scale = np.asarray(entry["cell_scale"], dtype=np.float64)
+        centroids = np.asarray([cell["centroid"] for cell in cells], dtype=np.float64)
+        return int((((centroids - np.asarray(values, dtype=np.float64)) / scale) ** 2).sum(axis=1).argmin())
+
+    def _estimate(self, entry: Optional[Mapping[str, Any]], values: np.ndarray) -> Optional[Estimate]:
+        if entry is None or int(entry["episodes"]) < self.min_samples or not self._covers(entry, values):
+            return None
+        cell = self.nearest_cell(entry, values)
+        stats = entry if cell is None else entry["cells"][cell]
+        region = str(entry["group"]) if cell is None else f"{entry['group']}|cell={cell}"
         objectives = self.domain.objectives
         return Estimate(
-            samples=int(entry["samples"]),
-            completion_rate=float(entry["completion_rate"]),
-            mean_frames=float(entry["mean_frames"]),
-            mean=_gains(entry, objectives, "mean"),
-            lower=_gains(entry, objectives, "lower"),
-            interaction=_gains(entry["interaction"], objectives, "mean") if "interaction" in entry else None,
-            outcomes=dict(entry["outcomes"]) if "outcomes" in entry else None,
+            samples=int(stats["samples"]),
+            episodes=int(stats["episodes"]),
+            completion_rate=float(stats["completion_rate"]),
+            mean_frames=float(stats["mean_frames"]),
+            mean=_gains(stats, objectives, "mean"),
+            lower=_gains(stats, objectives, "lower"),
+            interaction=_gains(stats["interaction"], objectives, "mean") if "interaction" in stats else None,
+            outcomes=dict(stats["outcomes"]) if "outcomes" in stats else None,
+            episode_outcomes=(
+                tuple((int(episodes), dict(counts)) for episodes, counts in stats["episode_outcomes"])
+                if "episode_outcomes" in stats
+                else None
+            ),
+            region=region,
         )

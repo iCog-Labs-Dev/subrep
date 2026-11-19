@@ -28,8 +28,11 @@ from decomposition.verifier import (
     MdnRegion,
     Priorities,
     best_plan,
+    clustered_rate,
+    goal_rate,
     goal_rate_bound,
     verify,
+    wilson_lower,
 )
 from env.lunar_domain import LUNAR_LANDER
 from env.lunar_facts import FACT_NAMES, lander_facts
@@ -38,7 +41,7 @@ from env.lunar_subskills import NO_ENGINE
 
 # Level, over the pad and high up: x, y, vx, vy, angle, spin, left leg, right leg.
 OBSERVATION = np.array([0.0, 1.4, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0])
-GROUP = "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0"
+GROUP = "upright=1,over_pad=1,near_ground=0,slow=1,falling_fast=0|episode_start"
 TIMESTAMP = "2026-10-17T00:00:00+00:00"
 EVEN = Priorities(weights=(0.5, 0.5))
 
@@ -57,16 +60,17 @@ def gains(delta_r, delta_n):
 
 
 def table_of(plans, min_samples=30):
-    """A table measuring each (skills, Δr, Δn) from states around OBSERVATION; the gains are lower bounds."""
-    assert group_key(LUNAR_LANDER, lander_facts(OBSERVATION)) == GROUP
+    """A table measuring each (skills, Δr, Δn) from episode starts around OBSERVATION; the gains are lower bounds."""
+    assert group_key(LUNAR_LANDER, lander_facts(OBSERVATION), episode_start=True) == GROUP
     entries = [
         {
             "name": plan_key(skills),
             "group": GROUP,
             "samples": 100,
+            "episodes": 100,
             "completion_rate": 0.98,
             "mean_frames": 250.4,
-            "support": {"low": list(OBSERVATION - 0.05), "high": list(OBSERVATION + 0.05)},
+            "support": {"low": [*(OBSERVATION - 0.05), 0.0], "high": [*(OBSERVATION + 0.05), 0.0]},
             "skills": list(skills),
             "outcomes": {
                 "landed_on_pad": 0.9,
@@ -75,6 +79,7 @@ def table_of(plans, min_samples=30):
                 "timeout": 0.0,
                 "in_flight": 0.0,
             },
+            "episode_outcomes": [[90, {"landed_on_pad": 1}], [5, {"crashed": 1}], [5, {"landed_off_pad": 1}]],
             "interaction": gains(0.5, (0.5, 0.0)),
             **gains(delta_r, delta_n),
         }
@@ -111,7 +116,7 @@ def region(support_values, alpha=(1.0, 1.0)):
 
 def verify_one(delta_r, delta_n, priorities=EVEN):
     table = table_of([(("a", "b"), delta_r, delta_n)])
-    [verdict] = verify([candidate("plan", ["a", "b"])], OBSERVATION, table, priorities, TIMESTAMP)
+    [verdict] = verify([candidate("plan", ["a", "b"])], OBSERVATION, table, priorities, TIMESTAMP, elapsed=0)
     return verdict
 
 
@@ -158,29 +163,94 @@ def test_the_gates_use_the_lower_bounds_not_the_means():
 def test_a_plan_that_rarely_reaches_its_goal_is_rejected():
     table = table_of([(("a", "b"), 10.0, (5.0, 5.0))])  # 90 of 100 flights landed on the pad
     plan = candidate("plan", ["a", "b"], success_outcomes=("landed_on_pad",))
-    [strict] = verify([plan], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.95)
+    [strict] = verify([plan], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.95, elapsed=0)
     assert not strict.admitted and strict.reason == GOAL_TOO_RARE
     assert strict.goal_rate == pytest.approx(goal_rate_bound(strict.estimate, ("landed_on_pad",)))
-    [lenient] = verify([plan], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.8)
+    [lenient] = verify([plan], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.8, elapsed=0)
     assert lenient.admitted
 
 
 def test_a_goal_with_no_final_outcome_has_no_rate_to_check():
     table = table_of([(("a", "b"), 10.0, (5.0, 5.0))])
-    [verdict] = verify([candidate("plan", ["a", "b"])], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.99)
+    plan = candidate("plan", ["a", "b"])
+    [verdict] = verify([plan], OBSERVATION, table, EVEN, TIMESTAMP, min_goal_rate=0.99, elapsed=0)
     assert verdict.admitted and verdict.goal_rate is None
 
 
-@pytest.mark.parametrize("rate, samples, low, high", [(0.9, 100, 0.83, 0.9), (1.0, 100, 0.97, 1.0), (0.0, 100, 0.0, 0.01)])
-def test_the_goal_rate_bound_is_a_wilson_lower_bound(rate, samples, low, high):
-    estimate = Estimate(samples, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes={"won": rate, "lost": 1.0 - rate})
+def flown(*kinds):
+    """An estimate from ``(episodes, {outcome: flights})`` kinds of episode, with the outcome rates over all flights."""
+    flights = sum(count * sum(outcomes.values()) for count, outcomes in kinds)
+    names = {name for _, outcomes in kinds for name in outcomes}
+    rates = {name: sum(count * outcomes.get(name, 0) for count, outcomes in kinds) / flights for name in names}
+    episodes = sum(count for count, _ in kinds)
+    return Estimate(flights, episodes, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes=rates, episode_outcomes=kinds)
+
+
+@pytest.mark.parametrize("won, low, high", [(90, 0.83, 0.9), (100, 0.97, 1.0), (0, 0.0, 0.01)])
+def test_the_goal_rate_bound_is_a_wilson_lower_bound(won, low, high):
+    estimate = flown(*[(n, {name: 1}) for n, name in ((won, "won"), (100 - won, "lost")) if n])
     assert low <= goal_rate_bound(estimate, ("won",)) <= high
+
+
+def test_a_wilson_bound_is_below_the_rate_and_tightens_with_more_trials():
+    assert wilson_lower(0.9, 100) < wilson_lower(0.9, 1000) < 0.9
+    assert wilson_lower(1.0 + 1e-6, 50) == wilson_lower(1.0, 50) < 1.0  # rounded rates can add up past 1
+    with pytest.raises(ValueError, match="trial"):
+        wilson_lower(0.5, 0)
+
+
+def test_with_one_flight_per_episode_the_goal_rate_bound_is_the_wilson_bound_over_the_episodes():
+    once = flown((90, {"won": 1}), (10, {"lost": 1}))
+    assert goal_rate_bound(once, ("won",)) == pytest.approx(wilson_lower(0.9, 100), abs=1e-12)
+
+
+def test_flights_of_one_episode_that_agree_count_as_that_episode():
+    repeated = flown((90, {"won": 10}), (10, {"lost": 10}))
+    assert goal_rate_bound(repeated, ("won",)) == pytest.approx(wilson_lower(0.9, 100), abs=1e-12)
+
+
+def test_an_episode_giving_many_failing_flights_counts_for_less_than_separate_episodes():
+    """49 episodes give one won flight each and one episode gives 51 lost flights: 49% of the flights were won."""
+    lopsided = flown((49, {"won": 1}), (1, {"lost": 51}))
+    rate, trials = goal_rate(lopsided.episode_outcomes, ("won",))
+    assert rate == pytest.approx(0.49) and trials < 50
+    assert goal_rate_bound(lopsided, ("won",)) < wilson_lower(0.49, 50)  # counting each episode as one trial
+
+
+def test_episodes_of_different_sizes_give_the_clustered_number_of_independent_flights():
+    """70 won flights from one episode and 10 lost from each of three others: rate 0.7."""
+    rate, trials = clustered_rate([(1, 70, 70), (3, 0, 10)])
+    variance = ((70 - 0.7 * 70) ** 2 + 3 * (0 - 0.7 * 10) ** 2) / 100**2
+    assert rate == pytest.approx(0.7) and trials == pytest.approx(0.7 * 0.3 / variance)
+    assert trials == pytest.approx(3.5714, abs=1e-4) and trials < 4
+
+
+def test_related_flights_never_count_for_more_than_their_episodes():
+    """Every episode gives one won and one lost flight, so the rate does not vary between episodes at all."""
+    assert clustered_rate([(50, 1, 2)]) == (0.5, 50.0)
+    assert goal_rate_bound(flown((50, {"won": 1, "lost": 1})), ("won",)) == wilson_lower(0.5, 50)
+
+
+def test_a_goal_reached_by_several_outcomes_counts_them_all():
+    mixed = flown((60, {"won": 1}), (30, {"drew": 2}), (10, {"lost": 1}))
+    rate, _ = goal_rate(mixed.episode_outcomes, ("won", "drew"))
+    assert rate == pytest.approx(120 / 130)
+    assert goal_rate_bound(mixed, ("won", "drew")) > goal_rate_bound(mixed, ("won",))
+
+
+def test_a_goal_rate_needs_how_each_episode_ended():
+    rates_only = Estimate(100, 100, 1.0, 1.0, Gains(0.0, ()), Gains(0.0, ()), outcomes={"won": 0.9, "lost": 0.1})
+    with pytest.raises(ValueError, match="each episode"):
+        goal_rate_bound(rates_only, ("won",))
+    for bad in ([], [(0, 0, 1)], [(1, 0, 0)], [(1, 3, 2)]):
+        with pytest.raises(ValueError, match="successes"):
+            clustered_rate(bad)
 
 
 def test_plans_without_enough_measurements_are_not_certified():
     table = table_of([(("a", "b"), 10.0, (5.0, 5.0))], min_samples=1000)
     candidates = [candidate("thin", ["a", "b"]), candidate("unknown", ["c"])]
-    verdicts = verify(candidates, OBSERVATION, table, EVEN, TIMESTAMP)
+    verdicts = verify(candidates, OBSERVATION, table, EVEN, TIMESTAMP, elapsed=0)
     assert [v.reason for v in verdicts] == [NOT_MEASURED] * 2
     assert all(v.estimate is None and not v.admitted for v in verdicts)
 
@@ -237,7 +307,7 @@ def test_admitted_plans_are_ranked_by_score_then_steps_then_name():
         candidate("alpha", ["s4", "s5"]),
         candidate("top", ["best"]),
     ]
-    verdicts = verify(candidates, OBSERVATION, table, EVEN, TIMESTAMP)
+    verdicts = verify(candidates, OBSERVATION, table, EVEN, TIMESTAMP, elapsed=0)
     assert [v.candidate.option for v in verdicts] == ["top", "alpha", "beta", "longer", "rejected"]
     assert best_plan(verdicts).candidate.option == "top"
 
@@ -246,7 +316,7 @@ def test_admitted_plans_are_ranked_by_score_then_steps_then_name():
 def test_priorities_choose_between_trade_offs(weights, best):
     table = table_of([(("safe",), 20.0, (30.0, -10.0)), (("cheap",), 20.0, (10.0, 10.0))])
     candidates = [candidate("safe", ["safe"]), candidate("cheap", ["cheap"])]
-    verdicts = verify(candidates, OBSERVATION, table, Priorities(weights=weights), TIMESTAMP)
+    verdicts = verify(candidates, OBSERVATION, table, Priorities(weights=weights), TIMESTAMP, elapsed=0)
     assert all(v.admitted for v in verdicts)
     assert best_plan(verdicts).candidate.option == best
 
@@ -354,7 +424,8 @@ def test_a_safety_first_region_certifies_a_landing_plan_from_the_air(lunar_book,
     start = episode_start(seed=0)
     assert not lander_facts(start)["upright"]
     priorities = Priorities(weights=(0.7, 0.3), region=region((1.0, 0.3)))
-    verdicts = verify(propose(lunar_book, "land_on_pad", lander_facts(start)), start, lunar_table, priorities, TIMESTAMP)
+    candidates = propose(lunar_book, "land_on_pad", lander_facts(start))
+    verdicts = verify(candidates, start, lunar_table, priorities, TIMESTAMP, elapsed=0)
     best = best_plan(verdicts)
     assert best is not None
     certificate = best.entry.certificate
@@ -365,10 +436,11 @@ def test_a_safety_first_region_certifies_a_landing_plan_from_the_air(lunar_book,
 
 
 def test_plans_from_unmeasured_states_are_not_certified(lunar_book, lunar_table):
-    near_ground = np.array([0.0, 0.2, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0])
+    spinning = np.array([0.0, 0.2, 0.0, -0.1, 0.0, 3.0, 0.0, 0.0])  # near the ground and spinning fast
+    assert not any(lunar_table.supports(entry, spinning, 0) for entry in lunar_table.data["plans"])
     priorities = Priorities(weights=(0.7, 0.3), pds_epsilon=1000.0)
-    candidates = propose(lunar_book, "land_on_pad", lander_facts(near_ground))
-    verdicts = verify(candidates, near_ground, lunar_table, priorities, TIMESTAMP)
+    candidates = propose(lunar_book, "land_on_pad", lander_facts(spinning))
+    verdicts = verify(candidates, spinning, lunar_table, priorities, TIMESTAMP, elapsed=0)
     assert verdicts
     assert best_plan(verdicts) is None
 
@@ -376,7 +448,8 @@ def test_plans_from_unmeasured_states_are_not_certified(lunar_book, lunar_table)
 def test_episode_start_measurements_do_not_certify_a_mid_flight_state(lunar_book, lunar_table):
     falling = episode_start(seed=7, actions=[NO_ENGINE] * 40)  # low and falling fast, with start-like facts
     priorities = Priorities(weights=(0.7, 0.3), pds_epsilon=1000.0)
-    verdicts = verify(propose(lunar_book, "land_on_pad", lander_facts(falling)), falling, lunar_table, priorities)
+    candidates = propose(lunar_book, "land_on_pad", lander_facts(falling))
+    verdicts = verify(candidates, falling, lunar_table, priorities, elapsed=40)
     assert verdicts and {v.reason for v in verdicts} == {NOT_MEASURED}
 
 
