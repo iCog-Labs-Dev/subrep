@@ -45,7 +45,8 @@ def test_train_mdn_from_candidate_set_directory_runs_and_saves_checkpoints(tmp_p
     assert "loss" in result["policy"]
     assert result["auxiliary"]["best_val_loss"] >= 0.0
     assert result["auxiliary_target_normalization"]["enabled"] is True
-    assert result["auxiliary_target_normalization"]["count"] == 4
+    # Fit normalization on the training context only, excluding validation.
+    assert result["auxiliary_target_normalization"]["count"] == 2
     assert result["auxiliary_q_calibration"]["enabled"] is True
     assert result["auxiliary_q_calibration"]["count"] == 4
     assert len(result["auxiliary_q_calibration"]["slope"]) == 2

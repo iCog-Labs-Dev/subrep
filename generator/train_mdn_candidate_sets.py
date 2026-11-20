@@ -11,7 +11,6 @@ import numpy as np
 import torch
 
 from baseline.idle_policy import IdlePolicy
-from env.lunar_lander_wrapper import SubRepEnv
 from generator.mdn import MotiveDecompositionNetwork
 from generator.mdn_auxiliary_trainer import AuxiliaryTrainingRecord, MDNAuxiliaryTrainer, MDNAuxiliaryTrainerConfig
 from generator.mdn_trainer import MDNTrainer, MDNTrainerConfig
@@ -28,6 +27,9 @@ def compute_idle_baseline_stats(
     seed: int = 42,
     gamma: float = 0.99,
 ) -> dict[str, Any]:
+    # Import only when a LunarLander baseline is actually requested.
+    from env.lunar_lander_wrapper import SubRepEnv
+
     env = SubRepEnv(seed=seed)
     return IdlePolicy(env=env, gamma=gamma).run_baseline_episodes(
         num_episodes=episodes,
@@ -53,13 +55,19 @@ def train_mdn_from_candidate_set_directory(
     q_loss: str = "mse",
     huber_delta: float = 1.0,
     calibrate_auxiliary_q: bool = False,
+    baseline_candidate_id: str | None = None,
 ) -> dict[str, object]:
     """Load candidate-set files and train one shared MDN through policy + auxiliary phases."""
     outcomes = candidate_set_directory_to_prepared_candidate_outcomes(
         data_dir,
         pattern=pattern,
+        baseline_candidate_id=baseline_candidate_id,
     )
+    if baseline_candidate_id is not None:
+        baseline_stats = outcomes[0].metadata["same_context_baseline"]
     if baseline_stats is None:
+        if len(outcomes[0].motives) != 2:
+            raise ValueError("For non-LunarLander data supply --baseline-candidate-id; do not use the LunarLander baseline")
         baseline_stats = compute_idle_baseline_stats(
             episodes=baseline_episodes,
             seed=seed,
@@ -81,7 +89,10 @@ def train_mdn_from_candidate_set_directory(
     auxiliary_records = raw_auxiliary_records
     target_normalization: dict[str, object] | None = None
     if normalize_auxiliary_targets:
-        target_normalization = compute_auxiliary_target_normalization(auxiliary_records)
+        from generator.mdn_auxiliary_trainer import context_split_indices
+        training_indices, _ = context_split_indices(
+            auxiliary_records, MDNAuxiliaryTrainerConfig().validation_split, seed)
+        target_normalization = compute_auxiliary_target_normalization([auxiliary_records[i] for i in training_indices])
         auxiliary_records = normalize_auxiliary_targets_in_records(
             auxiliary_records,
             target_normalization,
@@ -317,6 +328,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train MDN from candidate-set data files.")
     parser.add_argument("--data-dir", type=str, default="data/mdn_candidate_sets")
     parser.add_argument("--pattern", type=str, default="*.npz")
+    parser.add_argument("--baseline-candidate-id", default=None, help="Use this candidate from each context as its measured baseline")
     parser.add_argument("--baseline-episodes", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -337,6 +349,7 @@ def main() -> None:
     result = train_mdn_from_candidate_set_directory(
         data_dir=args.data_dir,
         pattern=args.pattern,
+        baseline_candidate_id=args.baseline_candidate_id,
         baseline_episodes=args.baseline_episodes,
         seed=args.seed,
         gamma=args.gamma,

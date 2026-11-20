@@ -42,6 +42,7 @@ def build_safety_gymnasium_certification_ablation(
         "baseline_candidate": baseline_candidate_id,
         "pds_epsilon": float(pds_epsilon),
         "total_contexts": len(contexts),
+        "objective_metadata": contexts[0]["objective_metadata"],
         "queries": {
             "task_focused": _summarize_query(contexts, task_weight),
             "safety_focused": _summarize_query(contexts, safety_weight),
@@ -70,8 +71,13 @@ def _load_contexts(
     cds_gate = CDSGate()
     pds_gate = PDSGate(epsilon=pds_epsilon)
     contexts = []
+    expected_metadata = None
     for path in files:
         record = _load_record(path)
+        if expected_metadata is None:
+            expected_metadata = record["objective_metadata"]
+        elif record["objective_metadata"] != expected_metadata:
+            raise ValueError("Cannot compare rollouts with different objective metadata/scaling")
         ids = record["candidate_skill_ids"]
         if baseline_candidate_id not in ids:
             raise ValueError(f"{path} does not contain baseline {baseline_candidate_id!r}")
@@ -111,6 +117,7 @@ def _load_contexts(
         contexts.append(
             {
                 "context_seed": int(record["context_seed"]),
+                "objective_metadata": record["objective_metadata"],
                 "candidates": candidates,
             }
         )
@@ -144,6 +151,8 @@ def _summarize_query(contexts: list[dict], weight: Sequence[float]) -> dict:
     return {
         "weight": [float(v) for v in weight],
         "contexts_evaluated": len(contexts),
+        "with_certification_selections": certified_selected,
+        "without_certification_selections": uncertified_selected,
         "contexts_with_certified_candidates": contexts_with_certified,
         "with_certification_mean_score": certified_score,
         "without_certification_mean_score": uncertified_score,
@@ -178,22 +187,16 @@ def _select_best(candidates: list[dict], weight: np.ndarray) -> dict:
 
 
 def _score_candidate(candidate: dict, weight: np.ndarray) -> float:
+    if len(weight) != len(candidate['delta_n']):
+        raise ValueError("Weights must match rollout objective count; use explicit three-objective weights")
     return float(candidate["delta_r"]) + float(
         np.dot(weight, np.asarray(candidate["delta_n"], dtype=np.float64))
     )
 
 
 def _load_record(path: Path) -> dict:
-    data = np.load(path, allow_pickle=True)
-    motives = np.asarray(data["candidate_motives"], dtype=np.float32)
-    return {
-        "context_seed": int(np.asarray(data["context_seed"]).item()),
-        "candidate_skill_ids": [_scalar_to_string(item) for item in data["candidate_skill_ids"]],
-        "candidate_payoffs": np.asarray(data["candidate_payoffs"], dtype=np.float32),
-        "candidate_motives": motives,
-        "candidate_safety_costs": np.asarray(data["candidate_safety_costs"], dtype=np.float32),
-        "candidate_task_returns": np.asarray(data["candidate_task_returns"], dtype=np.float32),
-    }
+    from utils.safety_gymnasium_pipeline import _load_rollout_record
+    return _load_rollout_record(path)
 
 
 def _scalar_to_string(value) -> str:

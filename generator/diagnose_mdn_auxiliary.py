@@ -86,9 +86,11 @@ def initial_outputs(seed: int):
 def checkpoint_round_trip(seed: int):
     seed_everything(seed)
     model = MotiveDecompositionNetwork(input_dim=14, num_skills=8, num_objectives=2)
-    trainer = MDNAuxiliaryTrainer(model, config=MDNAuxiliaryTrainerConfig(), device="cpu")
-    trainer.train_records(make_scenario_records("safety", 8))
     with tempfile.TemporaryDirectory() as temp_dir:
+        trainer = MDNAuxiliaryTrainer(model, config=MDNAuxiliaryTrainerConfig(
+            checkpoint_path=str(Path(temp_dir) / "auxiliary.pth")), device="cpu")
+        # Two context groups keep train/validation independent in the round-trip smoke test.
+        trainer.train_records(make_scenario_records("safety", 8) + make_scenario_records("fuel", 8))
         checkpoint_path = Path(temp_dir) / "mdn_aux_diag.pt"
         trainer_state = trainer.model.state_dict()
         torch.save({"model_state_dict": trainer_state}, checkpoint_path)

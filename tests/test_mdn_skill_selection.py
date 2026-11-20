@@ -286,7 +286,7 @@ def test_safety_heavy_alpha_selects_safety_skill():
 
     # Mock forward_inference to return exact, controlled values.
     # α = [10, 1] → w = [10/11, 1/11] ≈ [0.909, 0.091]
-    # support = [0.8, 0.4] → admits the MDN_WX skill
+    # support = [0.8, 0.4] excludes this query; the global skill remains eligible.
     mock_alpha = torch.tensor([10.0, 1.0])
     mock_support = torch.tensor([0.8, 0.4])
 
@@ -307,9 +307,9 @@ def test_fuel_heavy_alpha_selects_fuel_skill():
 
     # Mock forward_inference to return exact, controlled values.
     # α = [1, 10] → w = [1/11, 10/11] ≈ [0.091, 0.909]
-    # support = [0.8, 0.4] → admits the MDN_WX skill
+    # support = [0.8, 0.95] contains the fuel-heavy query weight
     mock_alpha = torch.tensor([1.0, 10.0])
-    mock_support = torch.tensor([0.8, 0.4])
+    mock_support = torch.tensor([0.8, 0.95])
 
     with patch.object(mdn, "forward_inference", return_value=(mock_alpha, mock_support)):
         selector = SkillSelector(library=lib, mdn=mdn, seed=42)
@@ -769,7 +769,7 @@ def test_query_admissible_feasible_support_values_admits_both():
     lib = _build_library_with_both_types()
 
     result = lib.query_admissible(
-        current_weight=np.array([0.5, 0.5]),
+        current_weight=np.array([0.6, 0.4]),
         support_directions=np.eye(2),
         support_values=np.array([0.8, 0.4]),
     )
@@ -787,9 +787,10 @@ def test_select_by_mdn_uses_mdn_generated_feasible_support_values():
         mdn.distribution_head.weight.zero_()
         mdn.distribution_head.bias.copy_(torch.tensor([-4.0, 4.0]))
         mdn.support_head.weight.zero_()
-        mdn.support_head.bias.zero_()
+        mdn.support_head.bias.fill_(8.0)  # Broad enough to contain the fuel-heavy query.
 
-    _, support_values = mdn.forward_inference(torch.zeros(8))
+    alpha, support_values = mdn.forward_inference(torch.zeros(8))
+    assert torch.all(alpha / alpha.sum() <= support_values)
     assert torch.all(support_values >= 0)
     assert torch.all(support_values <= 1)
     assert torch.sum(support_values) >= 1.0
@@ -818,3 +819,10 @@ def test_select_by_mdn_falls_back_when_mdn_predicts_infeasible_support():
     # MDN_WX skill is excluded by the fallback; only the FULL_SIMPLEX one
     # remains, so it must be selected (never None, never the wx skill).
     assert chosen == "fs-cds"
+
+
+def test_feasible_region_excludes_query_outside_its_caps():
+    lib = _build_library_with_both_types()
+    result = lib.query_admissible(current_weight=np.array([.1, .9]),
+        support_directions=np.eye(2), support_values=np.array([.8, .4]))
+    assert {entry.skill_id for entry in result} == {"fs-cds"}

@@ -22,7 +22,7 @@ class PreparedCandidateOutcome:
     context: tuple[float, ...]
     skill_id: str
     payoff: float
-    motives: tuple[float, float]
+    motives: tuple[float, ...]
     metadata: dict[str, Any] = field(default_factory=dict)
     gate_type: str = "CDS"
     epsilon: float | None = None
@@ -129,7 +129,7 @@ def build_candidate_skill_records(
                 skill_id=prepared.skill_id,
                 skill_payoff=prepared.payoff,
                 skill_motives=prepared.motives,
-                baseline_stats=baseline_stats,
+                baseline_stats=prepared.metadata.get("same_context_baseline", baseline_stats),
                 gate_type=prepared.gate_type,
                 metadata=prepared.metadata,
                 baseline_id=baseline_id,

@@ -400,6 +400,10 @@ class MDNOnlineRunner:
         if len(entries) < 2:
             return None
 
+        # Repeated outcomes from one context cannot form independent train/validation groups.
+        if len({tuple(entry.context) for entry in entries}) < 2:
+            return None
+
         records: list[AuxiliaryTrainingRecord] = []
         for entry in entries:
             records.extend(replay_entry_to_auxiliary_records(entry, num_skills=self.model.num_skills))

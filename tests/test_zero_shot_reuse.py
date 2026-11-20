@@ -138,7 +138,7 @@ class TestMDNContextualReuse:
             mdn_alpha=(1.0, 1.0),
         )
         result = evaluator.is_safe_mathematically(
-            cert, [0.5, 0.5],
+            cert, [0.7, 0.3],
             support_directions=self.SPEC_DIRECTIONS,
             support_values=self.SPEC_VALUES,
         )
@@ -155,7 +155,7 @@ class TestMDNContextualReuse:
             mdn_alpha=(1.0, 1.0),
         )
         result = evaluator.is_safe_mathematically(
-            cert, [0.5, 0.5],
+            cert, [0.7, 0.3],
             support_directions=self.SPEC_DIRECTIONS,
             support_values=self.SPEC_VALUES,
         )
@@ -176,7 +176,7 @@ class TestMDNContextualReuse:
             mdn_alpha=(1.0, 1.0),
         )
         result = evaluator.is_safe_mathematically(
-            cert, [0.5, 0.5],
+            cert, [0.7, 0.3],
             support_directions=self.SPEC_DIRECTIONS,
             support_values=self.SPEC_VALUES,
         )
@@ -193,7 +193,7 @@ class TestMDNContextualReuse:
             mdn_alpha=(1.0, 1.0),
         )
         result = evaluator.is_safe_mathematically(
-            cert, [0.5, 0.5],
+            cert, [0.7, 0.3],
             support_directions=self.SPEC_DIRECTIONS,
             support_values=self.SPEC_VALUES,
         )
@@ -237,31 +237,31 @@ class TestMotiveShiftCoverage:
         )
 
     def test_small_perturbation(self, evaluator):
-        """From [0.5, 0.5] → [0.55, 0.45]: safe skill stays safe."""
+        """Within-region shift [0.7, 0.3] → [0.65, 0.35] remains eligible."""
         cert = self._make_safe_cert()
         assert evaluator.is_safe_mathematically(
-            cert, [0.55, 0.45],
+            cert, [0.65, 0.35],
             support_directions=self.DIRECTIONS,
             support_values=self.VALUES,
         ) is True
 
     def test_extreme_swap(self, evaluator):
-        """From [0.5, 0.5] → [0.9, 0.1]: safe skill stays safe."""
+        """From [0.5, 0.5] → [0.9, 0.1]: outside checked caps, so reuse is excluded."""
         cert = self._make_safe_cert()
         assert evaluator.is_safe_mathematically(
             cert, [0.9, 0.1],
             support_directions=self.DIRECTIONS,
             support_values=self.VALUES,
-        ) is True
+        ) is False
 
     def test_reverse_swap(self, evaluator):
-        """From [0.5, 0.5] → [0.1, 0.9]: safe skill stays safe."""
+        """From [0.5, 0.5] → [0.1, 0.9]: outside checked caps, so reuse is excluded."""
         cert = self._make_safe_cert()
         assert evaluator.is_safe_mathematically(
             cert, [0.1, 0.9],
             support_directions=self.DIRECTIONS,
             support_values=self.VALUES,
-        ) is True
+        ) is False
 
 
 # ── Empirical Validation ─────────────────────────────────────────────────────
@@ -350,7 +350,7 @@ class TestLibraryQueryAdmissible:
         assert evaluator.is_reusable_via_library(
             populated_library,
             "mdn-spec-example",
-            current_weight=[0.5, 0.5],
+            current_weight=[0.7, 0.3],
             support_directions=self.DIRECTIONS,
             support_values=self.VALUES,
         ) is True
@@ -362,7 +362,7 @@ class TestLibraryQueryAdmissible:
         result = evaluator.is_reusable_via_library(
             populated_library,
             "mdn-spec-example",
-            current_weight=[0.5, 0.5],
+            current_weight=[0.7, 0.3],
             support_directions=self.DIRECTIONS,
             support_values=[1.0, 0.8],
         )

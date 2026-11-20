@@ -28,6 +28,8 @@ class SafetyPPOConfig:
     max_grad_norm: float = 0.5
     total_updates: int = 25
     max_episode_steps: int = 200
+    effort_penalty: float = 0.0
+    smoothness_penalty: float = 0.0
     cost_penalty: float = 1.0
     use_lagrangian: bool = False
     cost_limit: float = 1.0
@@ -48,8 +50,13 @@ class SafetyPPOPilot(nn.Module):
         action_low: Iterable[float],
         action_high: Iterable[float],
         hidden_sizes: Iterable[int] = (128, 128),
+        separate_critic: bool = False,
+        actor_mean_type: str = "tanh",
     ) -> None:
         super().__init__()
+        if actor_mean_type not in ("tanh", "linear"):
+            raise ValueError("actor_mean_type must be tanh or linear")
+        self.actor_mean_type = actor_mean_type
         self.observation_dim = int(observation_dim)
         self.action_dim = int(action_dim)
         self.hidden_sizes = tuple(int(size) for size in hidden_sizes)
@@ -77,6 +84,10 @@ class SafetyPPOPilot(nn.Module):
             layers.append(nn.Tanh())
             input_dim = hidden_dim
         self.backbone = nn.Sequential(*layers)
+        self.separate_critic = bool(separate_critic)
+        if self.separate_critic:
+            import copy
+            self.critic_backbone = copy.deepcopy(self.backbone)
         self.actor_mean = nn.Linear(input_dim, self.action_dim)
         self.log_std = nn.Parameter(torch.full((self.action_dim,), -0.5))
         self.critic = nn.Linear(input_dim, 1)
@@ -110,12 +121,14 @@ class SafetyPPOPilot(nn.Module):
     def forward(self, obs: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         obs, is_single = self._prepare_observation(obs)
         features = self.backbone(obs)
-        unit_mean = torch.tanh(self.actor_mean(features))
+        logits = self.actor_mean(features)
+        unit_mean = torch.tanh(logits) if self.actor_mean_type == "tanh" else logits
         center = (self.action_high + self.action_low) / 2.0
         scale = (self.action_high - self.action_low) / 2.0
         mean = center + unit_mean * scale
         std = torch.exp(self.log_std).expand_as(mean)
-        value = self.critic(features).squeeze(-1)
+        value_features = self.critic_backbone(obs) if self.separate_critic else features
+        value = self.critic(value_features).squeeze(-1)
         if is_single:
             mean = mean.squeeze(0)
             std = std.squeeze(0)
@@ -174,6 +187,8 @@ class SafetyPPOPilot(nn.Module):
             "action_low": self.action_low.detach().cpu().tolist(),
             "action_high": self.action_high.detach().cpu().tolist(),
             "hidden_sizes": self.hidden_sizes,
+            "separate_critic": self.separate_critic,
+            "actor_mean_type": self.actor_mean_type,
             "metadata": _metadata_to_python(metadata or {}),
         }
         torch.save(payload, path)
@@ -194,6 +209,8 @@ class SafetyPPOPilot(nn.Module):
             action_low=payload["action_low"],
             action_high=payload["action_high"],
             hidden_sizes=tuple(payload.get("hidden_sizes", (128, 128))),
+            separate_critic=bool(payload.get("separate_critic", False)),
+            actor_mean_type=payload.get("actor_mean_type", "tanh"),
         )
         model.load_state_dict(payload["state_dict"])
         model.to(map_location if isinstance(map_location, torch.device) else torch.device(map_location))

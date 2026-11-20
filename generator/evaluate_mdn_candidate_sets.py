@@ -10,7 +10,6 @@ import numpy as np
 import torch
 
 from baseline.idle_policy import IdlePolicy
-from env.lunar_lander_wrapper import SubRepEnv
 from generator.mdn import MotiveDecompositionNetwork
 from utils.mdn_checkpoint_loader import load_mdn_checkpoint as _load_mdn_checkpoint
 from utils.mdn_data_adapter import candidate_set_directory_to_prepared_candidate_outcomes
@@ -25,6 +24,10 @@ def compute_idle_baseline_stats(
     seed: int = 42,
     gamma: float = 0.99,
 ) -> dict[str, Any]:
+    # Optional simulator dependency: support-only experiments use supplied
+    # evidence and must not require LunarLander's MO-Gymnasium installation.
+    from env.lunar_lander_wrapper import SubRepEnv
+
     env = SubRepEnv(seed=seed)
     return IdlePolicy(env=env, gamma=gamma).run_baseline_episodes(
         num_episodes=episodes,
@@ -81,6 +84,7 @@ def evaluate_mdn_candidate_sets(
     data_dir: str | Path = "data/mdn_candidate_sets_eval",
     pattern: str = "*.npz",
     baseline_stats: dict[str, Any] | None = None,
+    baseline_candidate_id: str | None = None,
     baseline_episodes: int = 20,
     seed: int = 100,
     gamma: float = 0.99,
@@ -92,7 +96,12 @@ def evaluate_mdn_candidate_sets(
     model = load_mdn_checkpoint(checkpoint_path, map_location=device)
     target_normalization = load_auxiliary_target_normalization(checkpoint_path, map_location=device)
     q_calibration = load_auxiliary_q_calibration(checkpoint_path, map_location=device)
-    outcomes = candidate_set_directory_to_prepared_candidate_outcomes(data_dir, pattern=pattern)
+    outcomes = candidate_set_directory_to_prepared_candidate_outcomes(
+        data_dir, pattern=pattern, baseline_candidate_id=baseline_candidate_id)
+    if baseline_candidate_id is not None:
+        baseline_stats = outcomes[0].metadata["same_context_baseline"]
+    elif len(outcomes[0].motives) != 2 and baseline_stats is None:
+        raise ValueError("Supply --baseline-candidate-id for Safety data")
     grouped = group_candidate_outcomes_by_context(outcomes)
     if baseline_stats is None:
         baseline_stats = compute_idle_baseline_stats(
@@ -105,7 +114,11 @@ def evaluate_mdn_candidate_sets(
     random_expected_scores: list[float] = []
     ppo_scores: list[float] = []
     lift_vs_ppo_scores: list[float] = []
-    predicted_weight_regrets: list[float] = []
+    idle_count = 0
+    nonidle_counts = []
+    choice_counts = []
+    paired_selected = []
+    fixed_lifts = []
     balanced_selected_scores: list[float] = []
     balanced_oracle_scores: list[float] = []
     balanced_top1_matches_per_context: list[float] = []
@@ -166,9 +179,11 @@ def evaluate_mdn_candidate_sets(
         alpha_weights.append(weights.reshape(-1))
 
         selected_id, selected_score = select_best_candidate(candidates, weights)
-        _, predicted_oracle_score = select_best_candidate(candidates, weights)
+        idle_count += int(selected_id == baseline_candidate_id) if baseline_candidate_id else 0
+        nonidle_counts.append(sum(c.skill_id != baseline_candidate_id for c in certified))
+        choice_counts.append(len(certified) > 1)
         selected_scores.append(float(selected_score))
-        predicted_weight_regrets.append(float(predicted_oracle_score - selected_score))
+
         random_expected_scores.append(float(np.mean([score_candidate(candidate, weights) for candidate in certified])))
         certified_counts.append(len(certified))
 
@@ -176,12 +191,15 @@ def evaluate_mdn_candidate_sets(
         if ppo_candidate is not None:
             ppo_score = score_candidate(ppo_candidate, weights)
             ppo_scores.append(ppo_score)
+            paired_selected.append(float(selected_score))
             lift_vs_ppo_scores.append(float(selected_score - ppo_score))
 
         balanced_weights = np.full_like(weights.reshape(-1), 1.0 / len(weights.reshape(-1)), dtype=np.float32)
         selected_candidate = next(candidate for candidate in certified if candidate.skill_id == selected_id)
         balanced_selected_scores.append(score_candidate(selected_candidate, balanced_weights))
         balanced_oracle_id, balanced_oracle_score = select_best_candidate(candidates, balanced_weights)
+        fixed_candidate = next(c for c in certified if c.skill_id == balanced_oracle_id)
+        fixed_lifts.append(float(selected_score - score_candidate(fixed_candidate, weights)))
         balanced_match = 1.0 if selected_id == balanced_oracle_id else 0.0
         balanced_top1_matches_per_context.append(balanced_match)
         if balanced_match:
@@ -198,7 +216,7 @@ def evaluate_mdn_candidate_sets(
     balanced_oracle = np.asarray(balanced_oracle_scores, dtype=np.float64)
     selected_minus_random = selected - random_expected
     lift_vs_ppo = np.asarray(lift_vs_ppo_scores, dtype=np.float64)
-    predicted_weight_regret = np.asarray(predicted_weight_regrets, dtype=np.float64)
+    fixed_lifts = np.asarray(fixed_lifts, dtype=np.float64)
     balanced_regret = balanced_oracle - balanced_selected
     balanced_top1 = np.asarray(balanced_top1_matches_per_context, dtype=np.float64)
     gate_true_array = np.asarray(gate_true, dtype=np.int32)
@@ -229,7 +247,13 @@ def evaluate_mdn_candidate_sets(
         "mean_balanced_selected_score": float(np.mean(balanced_selected)),
         "mean_balanced_oracle_score": float(np.mean(balanced_oracle)),
         "mean_balanced_regret": float(np.mean(balanced_regret)),
-        "mean_predicted_weight_regret": float(np.mean(predicted_weight_regret)),
+        "idle_selected_contexts": float(idle_count) if baseline_candidate_id else float("nan"),
+        "idle_selection_rate": float(idle_count / len(selected_scores)) if baseline_candidate_id else float("nan"),
+        "nonidle_certified_records": float(sum(nonidle_counts)) if baseline_candidate_id else float("nan"),
+        "contexts_with_nonidle_certified": float(sum(n > 0 for n in nonidle_counts)) if baseline_candidate_id else float("nan"),
+        "contexts_with_multiple_certified": float(sum(choice_counts)),
+        "mean_selected_score_on_ppo_certified_contexts": float(np.mean(paired_selected)) if paired_selected else float("nan"),
+        "mean_score_lift_vs_fixed_balanced_under_mdn_weights": float(np.mean(fixed_lifts)),
         "balanced_top1_accuracy": float(balanced_top1_matches / len(selected_scores)),
         "gate_accuracy": float(np.mean(gate_true_array == gate_pred_array)),
         "gate_precision": float(precision),
@@ -252,6 +276,8 @@ def evaluate_mdn_candidate_sets(
         "std_alpha_weight_1": float(np.std(alpha_array[:, 1])) if alpha_array.shape[1] > 1 else float("nan"),
     }
     for objective_index in range(q_error_array.shape[1]):
+        metrics[f"mean_alpha_weight_{objective_index}"] = float(np.mean(alpha_array[:, objective_index]))
+        metrics[f"std_alpha_weight_{objective_index}"] = float(np.std(alpha_array[:, objective_index]))
         metrics[f"q_motive_mse_{objective_index}"] = float(np.mean(q_squared_error[:, objective_index]))
         metrics[f"q_motive_mae_{objective_index}"] = float(np.mean(q_absolute_error[:, objective_index]))
 
@@ -262,7 +288,7 @@ def evaluate_mdn_candidate_sets(
                     "score_lift_vs_random": selected_minus_random,
                     "score_lift_vs_ppo": lift_vs_ppo,
                     "balanced_regret": balanced_regret,
-                    "predicted_weight_regret": predicted_weight_regret,
+                    "lift_vs_fixed_balanced_under_mdn_weights": fixed_lifts,
                     "balanced_top1_accuracy": balanced_top1,
                 },
                 samples=bootstrap_samples,
@@ -302,6 +328,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", type=str, default="models/mdn_policy_best.pth")
     parser.add_argument("--data-dir", type=str, default="data/mdn_candidate_sets_eval")
     parser.add_argument("--pattern", type=str, default="*.npz")
+    parser.add_argument("--baseline-candidate-id")
     parser.add_argument("--baseline-episodes", type=int, default=20)
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -318,6 +345,7 @@ def main() -> None:
         checkpoint_path=args.checkpoint,
         data_dir=args.data_dir,
         pattern=args.pattern,
+        baseline_candidate_id=args.baseline_candidate_id,
         baseline_episodes=args.baseline_episodes,
         seed=args.seed,
         gamma=args.gamma,
@@ -327,9 +355,11 @@ def main() -> None:
         bootstrap_seed=args.bootstrap_seed,
     )
     print("MDN Held-Out Candidate-Set Evaluation")
+    print("Recorded-outcome selection: measured deltas, full-simplex gate labels; no fresh executions or support-head evaluation.")
+    print("PPO comparison uses only PPO-certified contexts. Fixed-weight lift is scored under MDN weights, not an independent preference target.")
     print("====================================")
     for key, value in metrics.items():
-        if key.endswith("contexts") or key.startswith("contexts") or key == "candidate_outcomes":
+        if (key.endswith("contexts") or key.startswith("contexts") or key == "candidate_outcomes") and not key.startswith("mean_"):
             print(f"{key}: {int(value)}")
         else:
             print(f"{key}: {value:.4f}")

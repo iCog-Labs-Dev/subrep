@@ -63,7 +63,11 @@ def build_records_from_prepared_candidate_outcomes(
         raise ValueError("prepared_outcomes must contain at least one candidate outcome")
 
     first_context = next(iter(grouped))
-    model = MotiveDecompositionNetwork(input_dim=len(first_context), num_objectives=2)
+    num_objectives = len(grouped[first_context][0].motives)
+    if any(len(o.motives) != num_objectives or len(ctx) != len(first_context)
+           for ctx, group in grouped.items() for o in group):
+        raise ValueError("All candidate outcomes must share context and motive dimensions")
+    model = MotiveDecompositionNetwork(input_dim=len(first_context), num_objectives=num_objectives)
     trainer = create_trainer_for_model(model, seed=seed, device=device)
     trainer.config.checkpoint_path = checkpoint_path
 

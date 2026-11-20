@@ -613,13 +613,20 @@ def test_replay_training_triggers_auxiliary_batch_update(tmp_path):
     assert len(replay) == 1
     assert first_result.auxiliary_metrics is None
 
-    result = runner.step(
+    repeated = runner.step(
         observation=np.array([0.1] * 8, dtype=np.float32),
         candidate_skill_payloads=[_candidate_payload("skill_a", 1.7, (0.8, 0.4))],
         execute_skill=_execute_skill,
     )
+    assert repeated.auxiliary_metrics is None
 
-    assert len(replay) == 2
+    result = runner.step(
+        observation=np.array([0.2] * 8, dtype=np.float32),
+        candidate_skill_payloads=[_candidate_payload("skill_a", 1.7, (0.8, 0.4))],
+        execute_skill=_execute_skill,
+    )
+
+    assert len(replay) == 3
     assert result.auxiliary_metrics is not None
     assert "best_val_loss" in result.auxiliary_metrics
 
@@ -667,7 +674,7 @@ def test_replay_training_works_with_selected_and_gate_only_expansion(tmp_path):
     )
 
     result = runner.step(
-        observation=np.array([0.1] * 8, dtype=np.float32),
+        observation=np.array([0.2] * 8, dtype=np.float32),
         candidate_skill_payloads=[
             _candidate_payload("skill_a", 1.7, (0.8, 0.4)),
             _candidate_payload("skill_b", 0.1, (-0.5, -0.4)),
@@ -718,7 +725,7 @@ def test_replay_training_supports_dr_estimator(tmp_path):
         execute_skill=_execute_skill,
     )
     result = runner.step(
-        observation=np.array([0.1] * 8, dtype=np.float32),
+        observation=np.array([0.2] * 8, dtype=np.float32),
         candidate_skill_payloads=[_candidate_payload("skill_a", 1.7, (0.8, 0.4))],
         execute_skill=_execute_skill,
     )

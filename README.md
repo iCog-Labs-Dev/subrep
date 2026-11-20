@@ -109,6 +109,11 @@ python -m pytest tests/test_pilot_performance.py -v
 
 ## Optional SafeRL Benchmark Pilot
 
+See the [benchmark guide](docs/BENCHMARKING.md) for the supported runners,
+[four-objective workflow](docs/SAFETY_FOUR_OBJECTIVES.md), diagnostics, and
+reproducibility requirements. Generated datasets, policy checkpoints, and reports
+stay local; this repository contains the code needed to reproduce experiments.
+
 Safety-Gymnasium uses older pinned Gymnasium/Pygame versions, so keep it in a
 separate Python 3.10 environment instead of the main SubRep `.venv`:
 
@@ -314,8 +319,8 @@ construction, but not fitted.
 
 ```bash
 python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 42 --prefix seed42
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 43 --prefix seed43
-python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 44 --prefix seed44
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 10042 --prefix seed10042
+python -m data_collector.collect_candidate_sets --contexts 1000 --save-dir data/mdn_candidate_sets --seed 20042 --prefix seed20042
 ```
 
 This produces 3,000 contexts and 21,000 candidate outcomes with the default

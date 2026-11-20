@@ -31,6 +31,7 @@ def build_safety_gymnasium_reuse_curve(
     pds_epsilon: float = 1.0,
     shift_points: Sequence[float] | None = None,
     baseline_retraining_steps: int = 51_200,
+    control_weight: float = 0.0,
 ) -> dict:
     """Build a zero-shot reuse curve from rollout files.
 
@@ -54,9 +55,15 @@ def build_safety_gymnasium_reuse_curve(
 
     points = []
     for safety_weight in shift_points:
+        dimensions = contexts[0]['num_objectives']
+        if not 0 <= control_weight <= 1 or (dimensions == 2 and control_weight != 0):
+            raise ValueError("Control weight requires three objectives and must be in [0,1]")
         weight = np.asarray([safety_weight, 1.0 - safety_weight], dtype=np.float64)
+        if dimensions == 3:
+            weight = np.append(weight * (1-control_weight), control_weight)
         successes = 0
         selected_scores: list[float] = []
+        selections = []
         certified_counts: list[int] = []
         for context in contexts:
             certified = context["certified_candidates"]
@@ -72,13 +79,16 @@ def build_safety_gymnasium_reuse_curve(
             )
             score = _score_candidate(selected, weight)
             selected_scores.append(score)
+            selections.append({**selected, "context_seed": context["context_seed"], "score": score})
             if score >= 0.0:
                 successes += 1
 
         points.append(
             {
-                "safety_weight": float(safety_weight),
-                "task_weight": float(1.0 - safety_weight),
+                "safety_weight": float(weight[0]),
+                "task_weight": float(weight[1]),
+                "objective_weights": weight.tolist(),
+                "selections": selections,
                 "success_rate": float(successes / len(contexts)),
                 "successful_contexts": int(successes),
                 "total_contexts": int(len(contexts)),
@@ -98,6 +108,7 @@ def build_safety_gymnasium_reuse_curve(
         ),
         "baseline_retraining_steps": int(baseline_retraining_steps),
         "total_contexts": len(contexts),
+        "objective_metadata": contexts[0]["objective_metadata"],
         "curve": points,
         "mean_success_rate": _mean(point["success_rate"] for point in points),
         "min_success_rate": min(point["success_rate"] for point in points),
@@ -162,8 +173,13 @@ def _load_certified_contexts(
     contexts = []
     cds_gate = CDSGate()
     pds_gate = PDSGate(epsilon=pds_epsilon)
+    expected_metadata = None
     for path in files:
         record = _load_record(path)
+        if expected_metadata is None:
+            expected_metadata = record["objective_metadata"]
+        elif record["objective_metadata"] != expected_metadata:
+            raise ValueError("Cannot compare rollouts with different objective metadata/scaling")
         ids = record["candidate_skill_ids"]
         if baseline_candidate_id not in ids:
             raise ValueError(f"{path} does not contain baseline {baseline_candidate_id!r}")
@@ -193,7 +209,9 @@ def _load_certified_contexts(
                 )
         contexts.append(
             {
+                "num_objectives": record['candidate_motives'].shape[1],
                 "context_seed": int(record["context_seed"]),
+                "objective_metadata": record["objective_metadata"],
                 "certified_candidates": certified,
             }
         )
@@ -201,16 +219,13 @@ def _load_certified_contexts(
 
 
 def _load_record(path: Path) -> dict:
-    data = np.load(path, allow_pickle=True)
-    return {
-        "context_seed": int(np.asarray(data["context_seed"]).item()),
-        "candidate_skill_ids": [_scalar_to_string(item) for item in data["candidate_skill_ids"]],
-        "candidate_payoffs": np.asarray(data["candidate_payoffs"], dtype=np.float32),
-        "candidate_motives": np.asarray(data["candidate_motives"], dtype=np.float32),
-    }
+    from utils.safety_gymnasium_pipeline import _load_rollout_record
+    return _load_rollout_record(path)
 
 
 def _score_candidate(candidate: dict, weight: np.ndarray) -> float:
+    if len(weight) != len(candidate['delta_n']):
+        raise ValueError("Weights must match rollout objective count; use explicit three-objective weights")
     return float(candidate["delta_r"]) + float(
         np.dot(weight, np.asarray(candidate["delta_n"], dtype=np.float64))
     )

@@ -15,6 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Certify Safety-Gymnasium rollout artifacts with SubRep CDS/PDS gates."
     )
+    parser.add_argument("--objectives", type=int, choices=[2,3], default=None)
     parser.add_argument("--rollout-dir", type=str, default="data/safety_gymnasium_rollouts")
     parser.add_argument("--pattern", type=str, default="*.npz")
     parser.add_argument("--baseline-candidate", type=str, default="zero_action")
@@ -38,6 +39,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     result = run_safety_gymnasium_certification_pipeline(
+        expected_objectives=args.objectives,
         rollout_dir=args.rollout_dir,
         pattern=args.pattern,
         baseline_candidate_id=args.baseline_candidate,
