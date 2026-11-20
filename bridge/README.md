@@ -146,7 +146,9 @@ clean landing still reads as moderately risky to MetaMo. In the demo
 (`--candidates tradeoff --epsilon-scale on`, seeds 1–16), ε ranges over
 0–0.109, so the tolerance stays under 33, and the scale changes one admission
 and no selection. The scale makes ε able to decide; how much it decides in the
-live loop depends on the feedback MetaMo receives.
+live loop depends on the feedback MetaMo receives. With the measured task risk
+(below, `--risk task`), the same run's ε ranges over 0.100–0.372, and the
+live ε changes an admission on 3 of 16 steps.
 
 **Recalibrating U.** Re-run `experiments/epsilon_scale/collect.py` and
 `analyse.py` when the candidates, the baseline or the reward mapping change,
@@ -157,6 +159,71 @@ Regression guards: `tests/test_bridge_epsilon_scale.py` (synthetic, no MetaMo),
 and in `tests/test_lunar_lander_integration.py`,
 `test_a_tighter_epsilon_rejects_a_real_trade_off_landing` and
 `test_real_crashes_are_rejected_at_the_loosest_epsilon`.
+
+## Measured risk
+
+**The problem.** By default the stimulus derives risk from the worst objective
+change, tanh(max(0, −min Δn) / motive_scale) (`stimulus.py`). That measures
+change against the baseline, not danger. On MO-LunarLander the noop baseline
+crashes, so a clean landing still spends more fuel than doing nothing and reads
+as moderately risky: about 0.39 for a median landing. Fed 30 landings, MetaMo's
+Securing stays at 0.905 and ε at 0.028, so caution never relaxes after good
+outcomes and ε never gets room to act. Across 840 episodes on seeds 1–40, the
+default risk also fails to separate crashes from landings: a random crash reads
+as riskier than a random landing only 45% of the time across all candidate sets
+(`experiments/caution_recovery/results.md`).
+
+**The decision: an optional measured risk on the outcome.**
+`SkillOutcome.risk: Optional[float] = None` (`protocol.py`), the last field,
+validated to [0, 1]. When set, the stimulus uses it instead of the Δn-derived
+value. The rejection penalty (+0.25 for a non-admitted outcome) applies either
+way. This mirrors the existing `novelty` override. The bridge stays generic:
+what counts as danger is the environment's call, and without `risk` nothing
+changes. MetaMo is not touched.
+
+**LunarLander's task danger** lives in `env/lunar_lander_rollout.py`, off by
+default: `episode_outcome(..., task_risk=True)` reads the flown episode's own
+result. A crash is 1.0, a landing 0.1, and anything else (the time limit, or a
+step cap) 0.5. The demo turns it on with `--risk task`.
+
+**Why the landing level is 0.1.** The real governor was fed real flown outcomes
+(seeds 1–40, the ppo demo's appraisal scales):
+
+| Landing risk | 30 landings: Securing / ε | 30 crashes, then 16 landings: ε | Landings to bring Securing down 0.3 |
+|---|---|---|---|
+| from Δn (default) | 0.905 / 0.028 | 0.016 | never |
+| 0.0 | 0.045 / 0.382 | 0.376 | 1 |
+| **0.1** | **0.082 / 0.366** | **0.350** | **2** |
+| 0.2 | 0.172 / 0.330 | 0.322 | 4 |
+| 0.25 | 0.325 / 0.268 | 0.165 | 8 |
+| 0.3 | 0.812 / 0.069 | 0.054 | never |
+
+- **MetaMo settles in one of two states:** relaxed (ε about 0.33–0.38) or
+  cautious (ε about 0.05). The switch lies between landing risks 0.22 and 0.28
+  as the appraisal scales move by ±20%, so a level near it is fragile, and
+  there is no stable level in between.
+- **0.1 stays relaxed across that range,** recovers in 2 landings after a
+  30-crash streak, and rests below ε_max 0.5.
+- **Relaxed is not careless:** from rest, one crash cuts ε from 0.37 to 0.13,
+  and a second takes it to 0.
+- **0.0 behaves almost the same and recovers slightly faster,** but treats a
+  landing as entirely safe.
+
+**Abstentions.** In `noop` mode the baseline flies, so the outcome carries the
+baseline's task risk (a crash, so 1.0). In `stop` mode nothing flies, so there
+is no measured risk: the stimulus risk is the 0.25 penalty alone.
+
+`MetaMoGovernor.last_stimulus` exposes the appraisal inputs built from the last
+outcome, read-only, so the demo can record the feedback it sent.
+
+Regression guards: the measured-risk stimulus tests in
+`tests/test_bridge_controller.py`; the recovery, re-tightening and
+reproducibility tests in `tests/test_lunar_lander_metamo.py`; the mapping tests
+in `tests/test_lunar_lander_rollout.py`;
+`test_real_crashes_then_real_landings_raise_then_relax_caution` in
+`tests/test_lunar_lander_integration.py`; and
+`test_abstention_feedback_is_recorded_in_both_modes` in
+`tests/test_run_lunar_lander_metamo.py`.
 
 ## Layout
 

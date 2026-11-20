@@ -29,7 +29,7 @@ from . import budget as budget_mod
 from . import weights as weights_mod
 from ._loader import ensure_metamo_on_path, is_available
 from .protocol import GovernorSignal, SkillOutcome
-from .stimulus import build_stimulus_values
+from .stimulus import StimulusValues, build_stimulus_values
 
 __all__ = ["MetaMoGovernor", "FakeGovernor", "is_available"]
 
@@ -171,6 +171,7 @@ class MetaMoGovernor:
             else self._default_candidates(num_goals)
         )
         self._last_action: Optional[Any] = None
+        self._last_stimulus: Optional[StimulusValues] = None
 
     # -- introspection -----------------------------------------------------
 
@@ -186,6 +187,11 @@ class MetaMoGovernor:
     @property
     def last_action_id(self) -> Optional[str]:
         return None if self._last_action is None else str(self._last_action.id)
+
+    @property
+    def last_stimulus(self) -> Optional[StimulusValues]:
+        """The appraisal inputs built from the last outcome, or None before any step."""
+        return self._last_stimulus
 
     def modulator_summary(self) -> dict:
         """The three modulators that drive the risk budgets, for logging."""
@@ -232,6 +238,7 @@ class MetaMoGovernor:
             payoff_scale=self._payoff_scale,
             motive_scale=self._motive_scale,
         )
+        self._last_stimulus = values
         stimulus = mm["Stimulus"](
             novelty=values.novelty,
             conduciveness=values.conduciveness,

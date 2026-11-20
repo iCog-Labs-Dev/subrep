@@ -244,9 +244,10 @@ should be revisited against real episode outcomes.
 - **Without the ε scale, ε cannot decide an admission.** ε is at most 0.5,
   while Δn values are in the hundreds, so crash-only candidates are rejected
   and landings admitted whatever ε is. With `--epsilon-scale on`, ε can decide
-  the trade-off candidates (see "ε in LunarLander units" below), but the live
-  ε stays small after landings: 0–0.109 in the measured run, so the
-  tolerance stays under 33.
+  the trade-off candidates (see "ε in LunarLander units" below). With the
+  default motive risk, the live ε stays small after landings (0–0.109 in the
+  measured run, so the tolerance stays under 33). With `--risk task`, it
+  reaches 0.37 (see "Feeding MetaMo the task danger").
 - **Evidence and execution share a seed.** Each decision step certifies the
   candidates and flies the chosen one from the same start. This shows the loop
   is wired correctly, not that a certificate holds on unseen starts.
@@ -339,6 +340,7 @@ python demo/run_lunar_lander_metamo.py --steps 10 --candidates ci      # no PPO 
 |---|---|
 | `--steps`, `--seed` | number of decision steps, and the first seed |
 | `--candidates ci\|ppo\|extended\|tradeoff` | the candidate set; defaults to `ppo` when `models/pilot_ppo.pt` exists, otherwise `ci`. `tradeoff` is `extended` plus six PPO candidates that burn extra fuel (`env/lunar_lander_candidates.py`) |
+| `--risk motive\|task` | the risk fed back to MetaMo. `task`: the flown episode's own danger (crash 1.0, landing 0.1, otherwise 0.5), and a `risk` column. `motive`: the worst objective change against the baseline. Default `motive` |
 | `--epsilon-scale off\|on` | `on`: PDS tolerates ε·U with U = 300.9, and candidates that crash are rejected first; adds the `tol` and `fail` columns. Default `off` |
 | `--no-selection noop\|stop` | when nothing is admitted: fly the noop baseline, or fly nothing. Both feed MetaMo a zero-Δ outcome with `admitted=False` |
 | `--cvar`, `--cvar-samples` | also apply the CVaR gate (OR semantics); a `pds` column then shows the PDS-only count |
@@ -446,6 +448,97 @@ off the demo's output and JSON carry no scale fields.
 python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --verbose
 ```
 
+### Feeding MetaMo the task danger
+
+By default, the risk MetaMo receives is the worst objective change against the
+baseline (`bridge/stimulus.py`). The noop baseline crashes, so a clean landing
+still spends more fuel than doing nothing, and reads as moderately risky (about
+0.39 for a median landing). Caution then stays high after landings, and ε stays
+near 0.
+
+**What MetaMo receives under the default risk** (seeds 1–40, 840 episodes, the
+landing counted in both payoff and Safety; `experiments/caution_recovery/`).
+The fixed points feed a fresh governor 30 copies of the task set's median
+outcome of each type:
+
+| Outcome | Episodes | Risk: median (range) | 30 identical outcomes: Securing / ε |
+|---|---|---|---|
+| landing, task set | 75 | 0.407 (0.308–0.935) | 0.907 / 0.028 |
+| landing, all sets | 279 | 0.494 (0.308–0.972) | — |
+| landing, fuel-wasting trade-off set | 132 | 0.604 (0.393–0.972) | — |
+| crash, task set | 241 | 0.862 (0.152–1.000) | 0.998 / 0 |
+| crash, all sets | 417 | 0.407 (0.004–1.000) | — |
+| timeout, task set | 4 | 0.971 (0.776–0.998) | 0.998 / 0 |
+| timeout, all sets | 104 | 0.852 (0.703–0.998) | — |
+| abstention, `noop` and `stop` | 40 / 1 | 0.250 (the rejection penalty) | 0.924 and 0.917 / 0 |
+
+- **The default risk does not tell a crash from a landing.** A crash drawn at
+  random reads as riskier than a landing drawn at random 71% of the time in
+  the task set, and 45% of the time across all candidate sets, which is worse
+  than chance.
+- **Some crashes read as safer than a clean landing.** When the pilot's engines
+  cut out early, the episode crashes much like noop does, so its worst
+  objective change against noop is small (median ΔSafety −0.6 and ΔFuel −17 for
+  `ppo_cut_50`), and so is its risk: a median of 0.115 for `ppo_cut_50` and 0.260
+  for `ppo_cut_100`.
+- **Fuel-wasting landings read as dangerous** (median 0.604). Repeated, 100 of
+  the 132 drive ε to 0, although every one of them lands.
+- **Landings alone hold Securing near 0.91 and ε near 0.03,** so caution never
+  relaxes after a run of good outcomes.
+
+The full tables, with the spread across episodes, the per-policy breakdown and
+the alternative Safety convention, are in
+`experiments/caution_recovery/results.md`. Regenerate them with
+`python experiments/caution_recovery/measure.py`, on Linux: flight results
+differ slightly by platform.
+
+With `--risk task`, each outcome carries the flown episode's own danger
+(`episode_outcome(..., task_risk=True)`, `env/lunar_lander_rollout.py`):
+
+| Flown result | Risk |
+|---|---|
+| crashed | 1.0 |
+| landed | 0.1 |
+| neither (time limit, or a step cap) | 0.5 |
+
+The rejection penalty is still added for a non-admitted outcome. In `stop`
+mode nothing flies, so an abstention's risk is that penalty alone (0.25). The
+landing level and why it is 0.1 are in "Measured risk" in `bridge/README.md`.
+
+The same runs with each risk (seeds 1–16, MetaMo `4171b1d`):
+
+| Run | Risk | ε range | Steps with ε = 0 | Securing range | Final Safety weight | Live ε changed an admission | Flown results |
+|---|---|---|---|---|---|---|---|
+| `--candidates ppo` | motive | 0–0.132 | 1/16 | 0.50–0.955 | 0.642 | — | 16/16 landed |
+| `--candidates ppo` | **task** | **0.100–0.371** | **0/16** | 0.069–0.50 | 0.255 | — | 16/16 landed |
+| `--candidates tradeoff --epsilon-scale on` | motive | 0–0.109 | 3/16 | 0.50–0.980 | 0.659 | 1/16 | 16/16 landed |
+| `--candidates tradeoff --epsilon-scale on` | **task** | **0.100–0.372** | **0/16** | 0.067–0.50 | 0.261 | **3/16** | 16/16 landed |
+| `--candidates ci --steps 10` | task | 0–0.100 | 9/10 | 0.50–0.998 | 0.907 | — | 10/10 crashed |
+
+- **Caution now relaxes after landings and returns with crashes.** On `ppo`,
+  Securing falls from 0.50 to about 0.07 and ε rises to 0.37, below ε_max 0.5.
+  On `ci`, where every episode crashes, Securing climbs to 0.998 and ε goes to
+  0, as before.
+- **With the ε scale, the tolerance reaches 30–112,** and the live ε changes
+  an admission on 3 of 16 steps (1 with the motive risk). Crashes are still
+  rejected first, 99 of 224.
+- **Selections change on a few steps** (2 of 16 on `ppo`, 3 of 16 on
+  `tradeoff`), with every flight still landing. The weights move with the
+  modulators: as caution relaxes, the Safety weight falls from 0.632 to about
+  0.26.
+- **Approach rises to about 0.99 while landings continue.** It is part of the
+  relaxed state, and falls again with crashes (0.018 on `ci`).
+- **α rises to 0.43 as caution relaxes.** With CVaR on, that would loosen the
+  CVaR gate along with PDS. The demo certifies with PDS only.
+
+`--risk motive`, the default, gives output and JSON byte-identical to the
+earlier behaviour.
+
+```bash
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo --risk task
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --risk task --verbose
+```
+
 ---
 
 ## 6. One step, end to end
@@ -458,7 +551,9 @@ python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilo
  5. controller.select(...)     → best admitted skill under w
  6. skill executes             → environment returns an outcome
  7. stimulus.py                → outcome becomes (novelty, conduciveness,
-                                  risk, effort)
+                                  risk, effort); risk is the outcome's
+                                  measured task danger when it carries one,
+                                  else the worst objective change
  8. governor.step(outcome)     → MetaMo's Ψ appraises, D decides,
                                   F = D∘Ψ produces the next state
  → back to 1
@@ -822,8 +917,11 @@ gains is not addressed here.
    1.0 (its safe-region projection leaves already-safe states unchanged), but
    under threat Securing still settles above 0.75. There, with neutral
    Approach, `a1_securing = 0.4` takes ε to 0, and the b-coefficients hold α
-   at its floor (§11, Observed behavior). Retuning the budget gains is not
-   addressed here.
+   at its floor (§11, Observed behavior). Under sustained threat this is the
+   intended direction. What kept ε near 0 after *good* outcomes on
+   LunarLander was the risk signal, not the gains: with `--risk task`, ε
+   recovers to 0.37 after landings (see "Feeding MetaMo the task danger").
+   Retuning the budget gains is not addressed here.
 
 ---
 

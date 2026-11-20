@@ -26,11 +26,15 @@ from env.lunar_lander_rollout import (
     APPRAISAL_SCALE_FLOOR,
     EPISODE_STEP_LIMIT,
     NOOP_BASELINE,
+    TASK_RISK_CRASH,
+    TASK_RISK_LANDING,
+    TASK_RISK_TIMEOUT,
     appraisal_scales,
     episode_outcome,
     evaluate_candidates,
     execute_candidate,
     run_episode,
+    task_risk_of,
 )
 from env.lunar_lander_wrapper import SubRepEnv
 
@@ -403,6 +407,42 @@ def test_episode_outcome_is_a_valid_skill_outcome(env, max_steps):
     assert 0.0 <= outcome.effort <= 1.0
     limit = EPISODE_STEP_LIMIT if max_steps is None else max_steps
     assert outcome.effort == pytest.approx(info["steps"] / limit)
+
+
+def test_task_risk_is_off_by_default(env):
+    delta_r, delta_n, info = execute_candidate(
+        env, CandidatePolicy("left_engine", _fixed_action_policy(1)), seed=SEED
+    )
+    assert episode_outcome(delta_r, delta_n, info, admitted=True).risk is None
+
+
+def test_task_risk_follows_the_flown_result():
+    crash = {"steps": 70, "crashed": True, "landing_success": False}
+    landing = {"steps": 210, "crashed": False, "landing_success": True}
+    timeout = {"steps": EPISODE_STEP_LIMIT, "crashed": False, "landing_success": False}
+    levels = [
+        episode_outcome(0.0, [0.0, 0.0], info, admitted=True, task_risk=True).risk
+        for info in (crash, landing, timeout)
+    ]
+    assert levels == [TASK_RISK_CRASH, TASK_RISK_LANDING, TASK_RISK_TIMEOUT]
+    assert TASK_RISK_CRASH > TASK_RISK_TIMEOUT > TASK_RISK_LANDING
+    assert [task_risk_of(info) for info in (crash, landing, timeout)] == levels
+
+
+def test_task_risk_accepts_a_minimal_info():
+    outcome = episode_outcome(0.0, [0.0, 0.0], {"steps": 80}, admitted=True, task_risk=True)
+    assert outcome.risk == TASK_RISK_TIMEOUT
+
+
+def test_task_risk_reads_a_real_crash_and_a_real_cut_off(env):
+    policy = CandidatePolicy("left_engine", _fixed_action_policy(1))
+    delta_r, delta_n, info = execute_candidate(env, policy, seed=SEED)
+    assert info["crashed"]
+    assert episode_outcome(delta_r, delta_n, info, admitted=True, task_risk=True).risk == TASK_RISK_CRASH
+
+    delta_r, delta_n, info = execute_candidate(env, policy, seed=SEED, max_steps=10)
+    assert not info["crashed"] and not info["landing_success"]
+    assert episode_outcome(delta_r, delta_n, info, admitted=True, task_risk=True).risk == TASK_RISK_TIMEOUT
 
 
 def test_effort_is_clipped_to_one():

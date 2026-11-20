@@ -357,3 +357,52 @@ def test_stimulus_values_stay_in_unit_range():
         values = build_stimulus_values(outcome, weights=weights)
         for field in ("novelty", "conduciveness", "risk", "effort"):
             assert 0.0 <= getattr(values, field) <= 1.0
+
+
+# --------------------------------------------------------------------------
+# A measured risk on the outcome.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("delta_n", [np.full(M, -5.0), np.full(M, 0.0), np.full(M, 3.0)])
+def test_measured_risk_replaces_the_motive_risk(delta_n):
+    from bridge.stimulus import build_stimulus_values
+
+    outcome = SkillOutcome(delta_r=0.0, delta_n=delta_n, admitted=True, risk=0.1)
+    assert build_stimulus_values(outcome, motive_scale=2.0).risk == pytest.approx(0.1)
+
+
+def test_rejection_penalty_still_applies_to_a_measured_risk():
+    from bridge.stimulus import build_stimulus_values
+
+    high = SkillOutcome(delta_r=0.0, delta_n=np.zeros(M), admitted=False, risk=0.9)
+    low = SkillOutcome(delta_r=0.0, delta_n=np.zeros(M), admitted=False, risk=0.1)
+    assert build_stimulus_values(high).risk == pytest.approx(1.0)
+    assert build_stimulus_values(low).risk == pytest.approx(0.35)
+
+
+@pytest.mark.parametrize("m", [2, 6])
+def test_without_a_measured_risk_the_stimulus_is_unchanged(m):
+    """risk=None keeps the motive-derived risk: tanh(max(0, -min delta_n) / scale)."""
+    from bridge.stimulus import build_stimulus_values
+
+    delta_n = np.linspace(-3.0, 2.0, m)
+    weights = np.full(m, 1.0 / m)
+    for admitted in (True, False):
+        outcome = SkillOutcome(delta_r=0.5, delta_n=delta_n, admitted=admitted, effort=0.2)
+        values = build_stimulus_values(outcome, weights=weights, motive_scale=4.0)
+        expected = float(np.tanh(3.0 / 4.0)) + (0.0 if admitted else 0.25)
+        assert values.risk == pytest.approx(min(1.0, expected))
+
+
+@pytest.mark.parametrize("risk", [-0.1, 1.1, float("nan"), float("inf")])
+def test_measured_risk_is_validated(risk):
+    with pytest.raises(ValueError):
+        SkillOutcome(delta_r=0.0, delta_n=np.zeros(M), admitted=True, risk=risk)
+
+
+def test_a_measured_risk_is_the_last_field():
+    """Adding it last keeps every positional construction unchanged."""
+    outcome = SkillOutcome(0.0, np.zeros(M), True, None, 0.4)
+    assert outcome.effort == pytest.approx(0.4)
+    assert outcome.risk is None

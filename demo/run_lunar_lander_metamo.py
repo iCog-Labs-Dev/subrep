@@ -20,12 +20,18 @@ What to watch:
     one flew, and whether it landed.
   * With `--epsilon-scale on`, `tol` is the PDS tolerance eps * U and `fail`
     the candidates rejected for failing the task before the PDS gate.
+  * With `--risk task`, `risk` is the stimulus risk MetaMo received: the flown
+    episode's own danger (env/lunar_lander_rollout.py, `task_risk_of`), plus
+    the rejection penalty for an abstention.
 
 Current behaviour the summary measures rather than assumes:
   * MetaMo's caution modulators follow the outcomes rather than pinning at 1.0,
     so eps keeps moving on the ppo candidates. When every episode crashes
     (the ci candidates), Securing settles above 0.75, where the bridge's
     budget gain takes eps to 0.
+  * With the default motive risk, a clean landing still reads as moderately
+    risky, so caution stays high and eps small. With `--risk task`, caution
+    relaxes after landings and eps reaches about 0.37.
   * Without the epsilon scale, eps cannot change a LunarLander admission: eps
     is at most 0.5, while the objective changes are in the hundreds.
   * With it (bridge/epsilon_scale.py), the gate tolerates eps * U, U = 300.9,
@@ -292,6 +298,14 @@ def parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         "(bridge/epsilon_scale.py); off: raw eps, as before",
     )
     parser.add_argument(
+        "--risk",
+        choices=("motive", "task"),
+        default="motive",
+        help="the risk fed back to MetaMo: task = the flown episode's own danger "
+        "(crash, landing or neither); motive = the worst objective change against "
+        "the baseline, as before",
+    )
+    parser.add_argument(
         "--no-selection",
         choices=("noop", "stop"),
         default="noop",
@@ -356,6 +370,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         # Only with the scale on, so a scale-off run's JSON is as before.
         if scale is not None:
             config["epsilon_scale"] = {"unit": scale.unit, "payoff_floor": scale.payoff_floor}
+        # Likewise only with the task risk, so a motive-risk run's JSON is as before.
+        task_risk = args.risk == "task"
+        if task_risk:
+            config["risk"] = "task"
 
         print("=" * 100)
         print("MetaMo -> SubRep, MO-LunarLander (2 objectives: Safety, Fuel)")
@@ -365,6 +383,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"gates: {config['gates']}   nothing admitted: {args.no_selection}   "
               f"MetaMo commit: {config['metamo_commit']}")
         print(f"appraisal scales: payoff={payoff_scale:.3f}  motive={motive_scale:.3f}")
+        if task_risk:
+            print("risk fed back: the flown episode's task danger (crash, landing or neither); "
+                  "the `risk` column is the stimulus risk MetaMo received")
         if scale is not None:
             print(f"epsilon scale: PDS tolerates eps * {scale.unit:g}; candidates with "
                   f"own payoff < {scale.payoff_floor:g} fail the task and are rejected first")
@@ -379,6 +400,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             + (f" {'fail':>4}" if scale is not None else "")
             + (f" {'pds':>4}" if args.cvar else "")
             + f"  {'selected':<22} {'result':<8} {'d_r':>8} {'min d_n':>9}"
+            + (f" {'risk':>5}" if task_risk else "")
         )
         print()
         print(header)
@@ -410,7 +432,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                     delta_n=[float(v) for v in delta_n],
                     steps=int(info["steps"]),
                 )
-                return episode_outcome(delta_r, delta_n, info, admitted=selected is not None)
+                return episode_outcome(
+                    delta_r, delta_n, info,
+                    admitted=selected is not None,
+                    task_risk=args.risk == "task",
+                )
 
             record = controller.step(
                 context=np.asarray(baseline_stats["info"]["start_obs"]),
@@ -465,6 +491,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             if scale is not None:
                 step["pds_tolerance"] = float(record.pds_tolerance)
                 step["task_failures"] = int(record.task_failures)
+            if task_risk:
+                stimulus = governor.last_stimulus
+                step["feedback"] = {
+                    "admitted": selected is not None,
+                    "risk": float(stimulus.risk),
+                    "novelty": float(stimulus.novelty),
+                    "conduciveness": float(stimulus.conduciveness),
+                    "effort": float(stimulus.effort),
+                }
             steps.append(step)
 
             if selected is not None:
@@ -487,6 +522,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 + (f" {step['pds_only_admitted']:>4}" if args.cvar else "")
                 + f"  {shown:<22} {flown['result']:<8} "
                 f"{flown['delta_r']:>+8.1f} {min(flown['delta_n']):>+9.1f}"
+                + (f" {step['feedback']['risk']:>5.2f}" if task_risk else "")
             )
             if args.verbose:
                 for c in step_candidates:

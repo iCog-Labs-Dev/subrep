@@ -197,6 +197,41 @@ def test_the_summary_diagnostics_are_measured(noop_run):
         assert f"on {sensitive}/{STEPS} steps" in output
 
 
+@pytest.mark.parametrize("mode", ["noop", "stop"])
+def test_abstention_feedback_is_recorded_in_both_modes(tmp_path, mode):
+    """With the task risk, every abstention reaches MetaMo as not admitted.
+
+    The ci candidates are all rejected. In noop mode the baseline flies and
+    crashes, so the risk is the crash level (the rejection penalty then clips
+    at 1.0). In stop mode nothing flies, so the risk is the penalty alone.
+    """
+    path = tmp_path / f"{mode}.json"
+    code, output, _ = run_demo(
+        ["--steps", "2", "--seed", str(SEED), "--candidates", "ci",
+         "--no-selection", mode, "--risk", "task", "--json-out", str(path)]
+    )
+    assert code == 0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["config"]["risk"] == "task"
+    steps = data["steps"]
+    for step in steps:
+        assert step["admitted_count"] == 0
+        assert step["feedback"]["admitted"] is False
+        assert step["feedback"]["risk"] >= 0.25
+        if mode == "stop":
+            assert step["feedback"]["risk"] == pytest.approx(0.25)
+        elif step["result"] == "crashed":
+            assert step["feedback"]["risk"] == pytest.approx(1.0)
+    assert steps[1]["modulators"] != steps[0]["modulators"]
+    assert " risk" in output
+
+
+def test_without_the_task_risk_the_json_has_no_feedback_fields(noop_run):
+    _, data, _ = noop_run
+    assert "risk" not in data["config"]
+    assert all("feedback" not in step for step in data["steps"])
+
+
 def test_an_all_fail_step_after_an_approved_step_reports_no_old_approval(tmp_path, monkeypatch):
     """Each step reports its own verdicts, even when the pipeline is skipped.
 
