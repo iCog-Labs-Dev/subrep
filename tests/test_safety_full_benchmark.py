@@ -69,13 +69,19 @@ def test_complete_runner_separates_seeds_and_writes_reports(tmp_path):
         run_benchmark(output,contexts=2,batches=1,collector_class=collector)
 
 
-def test_ppo_preset_and_explicit_overrides():
+def test_ppo_preset_and_explicit_overrides(tmp_path):
     from demo.run_safety_full_benchmark import parse_args
-    args=parse_args(['--output','unused','--preset','ppo-pds'])
-    assert args['epsilon']==.2
-    assert args['ppo_checkpoint'].endswith('safety_ppo_point_goal_seed42_updates50.pt')
-    assert args['seed']==10000
-    assert parse_args(['--output','unused','--preset','ppo-pds','--epsilon','.3'])['epsilon']==.3
-    assert parse_args(['--output','unused'])['epsilon']==0.
+    # Argument validation requires a file, not a locally trained model.
+    checkpoint = tmp_path / 'policy.pt'
+    checkpoint.touch()
+    options = ['--output', 'unused', '--preset', 'ppo-pds', '--ppo-checkpoint', str(checkpoint)]
+    args = parse_args(options)
+    assert args['epsilon'] == .2
+    assert args['ppo_checkpoint'] == str(checkpoint)
+    assert args['seed'] == 10000
+    assert parse_args(options + ['--epsilon', '.3'])['epsilon'] == .3
+    assert parse_args(['--output', 'unused'])['epsilon'] == 0.
     with pytest.raises(SystemExit):
-        parse_args(['--output','unused','--ppo-checkpoint','missing-checkpoint.pt'])
+        parse_args(['--output', 'unused', '--preset', 'ppo-pds'])
+    with pytest.raises(SystemExit):
+        parse_args(['--output', 'unused', '--ppo-checkpoint', str(tmp_path / 'missing.pt')])

@@ -6,7 +6,7 @@ It saves all method selections before collecting disjoint evaluation episodes.
 No held-out outcomes are used for ranking or admission. Every policy runs on the
 same held-out context seeds, enabling paired method comparisons. This evaluates
 fixed policies selected from batch-level evidence, not context-conditioned skill
-retrieval or a live MetaMo/Omega controller.
+retrieval or a live adaptive controller.
 
 ```bash
 .venv/bin/python -m pytest tests/test_safety_full_benchmark.py tests/test_safety_three_pipeline.py tests/test_safety_objectives.py tests/test_safety_gymnasium_adapter.py tests/test_safety_gymnasium_pipeline.py tests/test_safety_gymnasium_certification_ablation.py tests/test_safety_gymnasium_pareto.py tests/test_safety_gymnasium_reuse_curve.py tests/test_executor.py -q
@@ -60,14 +60,13 @@ successfully completed.
 
 ## PPO with PDS epsilon 0.2
 
-The `ppo-pds` CLI preset adds the existing
-`models/safety_ppo_point_goal_seed42_updates50.pt` policy to the seven built-in
-policies in every split and defaults epsilon to 0.2. Explicit `--epsilon` and
-`--ppo-checkpoint` values override the preset. The simple preset retains epsilon
-zero. The CLI now defaults to seed 10000 to avoid the initial seed-2000 run.
+The `ppo-pds` CLI preset requires an explicit `--ppo-checkpoint`, adds that
+policy to the seven built-in policies in every split, and defaults epsilon to
+0.2. An explicit `--epsilon` overrides the preset. The simple preset retains
+epsilon zero. Choose independent evaluation seeds for each finalized protocol.
 
 ```bash
-conda run --no-capture-output -n subrep-safety python -m demo.run_safety_full_benchmark --preset ppo-pds --output data/safety_ppo_pds_e02 --contexts 20 --batches 5 --max-steps 200 --seed 10000
+conda run --no-capture-output -n subrep-safety python -m demo.run_safety_full_benchmark --preset ppo-pds --ppo-checkpoint models/my_ppo.pt --output data/safety_ppo_pds_e02 --contexts 20 --batches 5 --max-steps 200 --seed 10000
 ```
 
 Scales are refitted using fresh development data including PPO, then frozen.

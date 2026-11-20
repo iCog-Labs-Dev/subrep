@@ -45,3 +45,14 @@ data/certificates.metta
 demo/artifacts/*
 data/raw_mixed/
 data/mdn_support_run_ntdjnH
+
+# Local environments, integration checkouts and generated benchmark artifacts
+.venv*/
+.pytest_cache/
+.coverage
+htmlcov/
+/data/*
+!/data/README.md
+/outputs/
+/runs/
+/external/metamo/

@@ -21,7 +21,7 @@ def parse_args(argv=None):
     if args['epsilon'] is None:
         args['epsilon']=.2 if preset=='ppo-pds' else 0.
     if preset=='ppo-pds' and args['ppo_checkpoint'] is None:
-        args['ppo_checkpoint']=str(Path(__file__).resolve().parents[1]/'models/safety_ppo_point_goal_seed42_updates50.pt')
+        p.error('--preset ppo-pds requires an explicit --ppo-checkpoint')
     for key in ('ppo_checkpoint','ppo_lagrangian_checkpoint'):
         if args[key] and not Path(args[key]).is_file():
             p.error(f'Checkpoint does not exist: {args[key]}')
