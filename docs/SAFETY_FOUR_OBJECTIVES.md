@@ -144,3 +144,92 @@ Tests cover implementation contracts. Claims of safe and successful reuse need
 fresh execution evidence, budget checks, and uncertainty reporting. Keep outputs
 local and report the policy library's limitations, including rejected candidates
 and fallbacks, rather than tuning thresholds to force acceptance.
+
+## Development readiness before MDN training
+
+`python -m demo.evaluate_safety_readiness` compares an explicit list of checkpoints
+on identical reset contexts, with zero action as the reference. Repeat
+`--checkpoint /path/to/policy.pt` for each trained policy. Supply `--output` with
+an unused directory; `--seed 610000 --development-contexts 30 --contexts 100
+--max-steps 200 --epsilon 0.2 --cost-limit 1` is one example configuration.
+Verify that these seeds are unused in your previous runs before treating them as
+fresh. The first 30 seeds fit scales; the following 100 compare policies.
+
+The report records undiscounted goal success, cost, return, effort and action
+change, and the existing full-simplex CDS/PDS decision for every policy/context.
+Certification uses discounted scaled improvements against zero action. Acceptance
+is empirical and specific to the measured start, not a confidence guarantee or
+transfer result. MDN-region certification is unavailable until a compatible MDN
+exists. Raw records and frozen scales are saved for inspection.
+
+The admission denominator includes only requested policies, excluding idle and
+heuristics. Context coverage separately measures whether any requested policy
+passes. The joint outcome column additionally requires reaching a goal and meeting
+the episode cost threshold; this is different from an average-cost constraint.
+Do not tune epsilon, scales or context selection simply to achieve 60% admission.
+
+## Collect and train the four-objective MDN
+
+`demo.run_four_objective_mdn` accepts repeated `--checkpoint` arguments, retains
+all supplied policies plus zero action, and runs collection, MDN training and
+margin support training. It does not retrain PPO or change certification gates.
+Use `--stage collect` or `--stage train` to separate collection and training;
+`all` is the default. Training refuses to overwrite an existing `mdn/` or
+`support/` directory. This is not an optimizer-resume command.
+
+```bash
+python -m demo.run_four_objective_mdn \
+  --checkpoint /path/to/ppo.pt \
+  --checkpoint /path/to/lagrangian.pt \
+  --output "data/four_objective_mdn_$(date +%Y%m%d_%H%M%S)" \
+  --context-seed 620000 --scale-contexts 30 --contexts 300 \
+  --max-steps 200 --epsilon 0.2 --regularization 0.1 \
+  --support-epochs 500 --seed 42
+```
+
+Use unused context seeds. Scales are fitted only on the first collection; the
+following disjoint contexts supply candidate data. NPZ values remain raw while
+scale metadata makes the MDN adapter apply the same divisors used by the support
+trainer, including the task payoff divisor. All four objectives are inferred by
+the MDN trainer. The support stage freezes the representation and trains only
+the support head with the existing optional margin loss.
+
+Outputs include `manifest.json`, raw evidence, `scales.json`, `candidate_sets/`,
+`mdn/auxiliary.pth`, `support/support.pth`, and `benchmark_contract.json`. These
+are ignored local artifacts. Trainers use internal context-group splits; these
+are development diagnostics, not independent end-to-end test evidence, because
+the representation is already fitted on this collection. Final regional
+certification must use unused contexts and the saved scales/contract. Full-simplex
+passes take precedence; additional MDN-region passes are possible, not guaranteed.
+
+## Compare the trained support head on unused contexts
+
+```bash
+python -m demo.compare_four_objective_support \
+  --run-dir data/YOUR_FOUR_OBJECTIVE_MDN_RUN \
+  --output "data/four_objective_support_comparison_$(date +%Y%m%d_%H%M%S)" \
+  --contexts 300 --seed 630000 --fixed-caps 0.8 0.8 0.8 0.8 --cost-limit 1
+```
+
+The runner loads all checkpoint policies from the training manifest, verifies
+policy and scale hashes, reads epsilon from the support checkpoint, and rejects
+context seeds overlapping the scale/training collection. Choose seeds unused in
+other experiments too; only the named training run can be checked automatically.
+No checkpoints are retrained and no scales are refitted.
+
+The three methods are full simplex, full simplex plus a predeclared fixed region,
+and full simplex plus the learned region. Global admissions take precedence in
+all methods. Extra regional admissions are counted separately. Fixed-region
+results are audit records, not labelled MDN predictions. Each context stores
+`full_simplex_library.json` and `full_plus_mdn_library.json`; learned regional
+passes have `MDN_WX` certificates with context, alpha, support geometry and margin.
+No learned regional passes is a valid possible result.
+
+Selection is performed from evidence before same-start re-execution. Five fixed
+priority profiles use each method's eligible skills, with zero action as fallback.
+Regional skills are excluded outside their region. The report counts admissions,
+CDS/PDS gates, context coverage, uniform-simplex region volume, fallback, goal
+success, cost, effort, smoothness and joint admitted/goal/episode-budget outcomes.
+These exact-start empirical certificates are not statistical safety guarantees.
+Deterministic re-execution is not an independent replicate. This is a support
+comparison, not the complete baseline/uncertainty study for publication.
