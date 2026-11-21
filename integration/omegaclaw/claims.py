@@ -163,7 +163,9 @@ _SELECTING_VERB = (
     r"\b(?:selected|selects|chose|chooses|chosen|recommends|recommended|picked|picks)\s+"
     r"(?:the\s+)?(?:skill\s+)?"
 )
-_SNAKE_CASE_NAME = r"(?<![\w-])(?P<name>[a-z][a-z0-9-]*_[a-z0-9_-]*[a-z0-9])(?![\w-])"
+# A decision field pasted into the prose, as in '"runner_up_skill_id": "skill_safety"'.
+_FIELD_VALUE = r"\b{field}[\"'\s]*[:=][\"'\s]*"
+_SNAKE_CASE_NAME =r"(?<![\w-])(?P<name>[a-z][a-z0-9-]*_[a-z0-9_-]*[a-z0-9])(?![\w-])"
 _UNKNOWN_SELECTION = (
     re.compile(_SNAKE_CASE_NAME + _SELECTED_AFTER_ID),
     re.compile(_SELECTING_VERB + _SNAKE_CASE_NAME),
@@ -292,6 +294,7 @@ def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
             selected = (
                 re.compile(skill + _SELECTED_AFTER_ID),
                 re.compile(_SELECTING_VERB + skill),
+                re.compile(_FIELD_VALUE.format(field="selected_skill_id") + skill),
             )
             if any(_asserted_in_a_sentence(pattern, text) for pattern in selected):
                 findings.append(
@@ -305,6 +308,7 @@ def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
         runner_forms = [
             rf"{skill}\s+(?:was|is|remains|ranked\s+as|served\s+as)\s+(?:the\s+)?{_RUNNER_UP}",
             rf"{_RUNNER_UP}\s+(?:was|is)\s+{skill}",
+            _FIELD_VALUE.format(field="runner_up_skill_id") + skill,
         ]
         if skill_id in excluded:
             # "excluded_skill, the runner-up" is only unambiguous for a skill that cannot

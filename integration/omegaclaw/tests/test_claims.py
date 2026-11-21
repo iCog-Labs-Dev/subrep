@@ -167,6 +167,18 @@ WRONG_EXPLANATIONS = [
         id="skill-from-another-request-described-as-selected",
     ),
     pytest.param(
+        # From a live qwen3.5 answer: the prose is right, the pasted field is not.
+        f"{SELECTED}, runner-up score 0.28 for efficiency. Response: "
+        '{""reason_code"": null, ""runner_up_skill_id"": ""skill_safety""}',
+        {"WRONG_SKILL_ROLE"},
+        id="live-wrong-runner-up-in-a-pasted-decision-field",
+    ),
+    pytest.param(
+        f"{RANKING} selected_skill_id: skill_efficiency.",
+        {"WRONG_SKILL_ROLE"},
+        id="wrong-selection-in-a-pasted-decision-field",
+    ),
+    pytest.param(
         f"{SELECTED}. risky_pds was the runner-up.",
         {"WRONG_SKILL_ROLE"},
         id="excluded-skill-described-as-runner-up",
@@ -233,6 +245,10 @@ CORRECT_EXPLANATIONS = [
     pytest.param(
         f"{RANKING} If efficiency dominated, SubRep would have selected skill_efficiency.",
         id="hypothetical-selection",
+    ),
+    pytest.param(
+        f'{RANKING} "selected_skill_id": "skill_safety", "runner_up_skill_id": "skill_efficiency".',
+        id="correct-pasted-decision-fields",
     ),
     pytest.param(
         f"{RANKING} subrep_decision.selected_skill_id is the recommendation field.",
