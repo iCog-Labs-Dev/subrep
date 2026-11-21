@@ -8,7 +8,7 @@ import re
 import select
 import time
 
-from env.minecraft.reset_manager import BLOCK_PROBE_POSITIONS
+from env.minecraft.reset_manager import BLOCK_PROBE_POSITIONS as RESET_BLOCK_PROBE_POSITIONS
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -105,7 +105,7 @@ BLOCK_PATTERN = re.compile(r"has the following block data:\s*(\{.*\})")
 BLOCK_ID_PATTERN = re.compile(r'id:\s*"(minecraft:[^"]+)"')
 PROBED_BLOCK_ID_PATTERN = re.compile(r"block_id=(minecraft:[a-z0-9_]+)")
 ITEM_PATTERN = re.compile(
-    r'\{\s*id:\s*"(minecraft:[^"]+)"\s*,\s*count:\s*(\d+)'
+    r'\{[^}]*?id:\s*"(minecraft:[^"]+)"\s*,\s*count:\s*(\d+)'
 )
 ANSI_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 ENTITY_ID_PATTERN = re.compile(r'id:\s*"(minecraft:[a-z0-9_]+)"')
@@ -124,6 +124,13 @@ LIGHT_SAMPLE_POSITIONS = tuple(
 )
 CHEST_POSITION = tuple(_AREA_DATA["settlement"]["delivery_chest"])
 VILLAGE_BOUNDS = _AREA_DATA["village_bounds"]
+BLOCK_PROBE_POSITIONS = tuple(
+    (
+        position,
+        "air" if position in TORCH_POSITIONS else block_id,
+    )
+    for position, block_id in RESET_BLOCK_PROBE_POSITIONS
+)
 
 
 def _read_until(manager, predicate, timeout):
@@ -163,12 +170,21 @@ def _entity_from_line(line):
     if marker not in line:
         raise ValueError("unparseable entity observation: {}".format(line.rstrip()))
     prefix = line.split(marker, 1)[0]
-    entity_id = ENTITY_ID_PATTERN.search(line)
-    entity_type = (
-        entity_id.group(1).split(":", 1)[1]
-        if entity_id
-        else re.sub(r"^.*?\]:\s*", "", prefix).strip().lower().replace(" ", "_")
+    recognized_types = (
+        {"player", "villager", "zombie_villager", "iron_golem"}
+        | HOSTILE_TYPES
+        | RAIDER_TYPES
     )
+    entity_type = None
+    for entity_id in ENTITY_ID_PATTERN.finditer(line):
+        candidate = entity_id.group(1).split(":", 1)[1].lower()
+        if candidate in recognized_types:
+            entity_type = candidate
+            break
+    if entity_type is None:
+        entity_type = re.sub(
+            r"^.*?\]:\s*", "", prefix
+        ).strip().lower().replace(" ", "_")
     if not entity_type:
         raise ValueError("entity display name is missing: {}".format(line.rstrip()))
     uuid_match = UUID_PATTERN.search(line)

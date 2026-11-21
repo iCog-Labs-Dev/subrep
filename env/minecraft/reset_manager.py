@@ -14,6 +14,12 @@ import time
 
 ALLOWED_CONSOLE_COMMANDS = frozenset(
     {
+        '/give subrep_bot minecraft:splash_potion[minecraft:potion_contents={potion:"minecraft:weakness"}] 1',
+        "/give subrep_bot minecraft:bow 1",
+        "/give subrep_bot minecraft:arrow 8",
+        "/give subrep_bot minecraft:stick 16",
+        "/give subrep_bot minecraft:oak_fence_gate 4",
+        "/give subrep_bot minecraft:carved_pumpkin 1",
         "stop",
         "tick freeze",
         "time set 12000",
@@ -107,7 +113,6 @@ BLOCK_PROBE_POSITIONS = tuple(
     (
         position,
         "chest" if position == _chest_position else
-        "torch" if position in _torch_positions else
         "oak_fence_gate" if position in _closed_gate_positions else "air",
     )
     for position in _dynamic_probe_positions
@@ -121,6 +126,12 @@ BLOCK_PROBE_COMMANDS = frozenset(
 )
 ALLOWED_CONSOLE_COMMANDS = frozenset(
     {
+        '/give subrep_bot minecraft:splash_potion[minecraft:potion_contents={potion:"minecraft:weakness"}] 1',
+        "/give subrep_bot minecraft:bow 1",
+        "/give subrep_bot minecraft:arrow 8",
+        "/give subrep_bot minecraft:stick 16",
+        "/give subrep_bot minecraft:oak_fence_gate 4",
+        "/give subrep_bot minecraft:carved_pumpkin 1",
         "stop",
         "tick freeze",
         "time set 12000",
