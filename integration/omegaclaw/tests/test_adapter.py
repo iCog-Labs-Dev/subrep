@@ -529,6 +529,8 @@ def test_prompt_contains_all_required_decision_inputs(tmp_path):
             assert "LOW_CERTIFICATE_MARGIN" in prompt
             assert "never return bare code strings" in prompt
             assert "mention selected_skill_id verbatim" in prompt
+            assert "starts with the word send, then a space" in prompt
+            assert "each double quote in this message as _quote_" in prompt
             assert "If that field is null, there is no admitted runner-up" in prompt
             assert "must be described only as excluded, never as runners-up" in prompt
             return _response(request_id=request_id)
