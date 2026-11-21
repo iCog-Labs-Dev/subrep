@@ -23,8 +23,8 @@ class SyntheticOmegaBackend:
             raise ValueError("prompt request_id does not match backend request_id")
 
         decision = request["subrep_decision"]
+        exclusions = _describe_exclusions(request["exclusions"])
         if decision["abstain"]:
-            excluded_count = len(request["exclusions"])
             return json.dumps(
                 {
                     "schema_version": RESPONSE_SCHEMA_VERSION,
@@ -34,8 +34,8 @@ class SyntheticOmegaBackend:
                     "mode": INTEGRATION_MODE,
                     "selection_basis": SELECTION_BASIS,
                     "explanation": (
-                        "No recommendation was made because SubRep found no admitted skills. "
-                        f"The request listed {excluded_count} excluded option(s)."
+                        "No recommendation was made because SubRep found no admitted skills "
+                        f"in this synthetic scenario.{exclusions}"
                     ),
                     "evidence_refs": ["subrep_decision.reason_code"],
                     "advisory_concerns": [],
@@ -51,14 +51,15 @@ class SyntheticOmegaBackend:
         if runner_id is not None:
             refs.append("subrep_decision.runner_up_score")
             explanation = (
-                f"{selected_id} was selected by SubRep with score {selected_score:.3f}, "
-                f"ahead of {runner_id} at {float(runner_score):.3f}."
+                f"Using synthetic evidence, {selected_id} was selected by SubRep with score "
+                f"{selected_score:.3f}, ahead of {runner_id} at {float(runner_score):.3f}."
             )
         else:
             explanation = (
-                f"{selected_id} was selected by SubRep as the only admitted skill "
-                f"with score {selected_score:.3f}."
+                f"Using synthetic evidence, {selected_id} was selected by SubRep as the "
+                f"only admitted skill with score {selected_score:.3f}."
             )
+        explanation += exclusions
         return json.dumps(
             {
                 "schema_version": RESPONSE_SCHEMA_VERSION,
@@ -73,6 +74,15 @@ class SyntheticOmegaBackend:
             },
             sort_keys=True,
         )
+
+
+def _describe_exclusions(exclusions: list[dict]) -> str:
+    """Restate each exclusion with the first sentence of its SubRep stage description."""
+
+    return "".join(
+        f" {item['skill_id']} was excluded: {item['stage_description'].split('. ')[0].rstrip('.')}."
+        for item in exclusions
+    )
 
 
 def _request_from_prompt(prompt: str) -> dict:

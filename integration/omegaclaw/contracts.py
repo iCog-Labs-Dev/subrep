@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from math import isclose, isfinite
@@ -677,138 +676,31 @@ class OmegaRecommendationResponse:
         return asdict(self)
 
 
-def validate_response_for_request(
-    request: RecommendationRequest,
-    response: OmegaRecommendationResponse,
-) -> None:
-    """Validate identity, eligibility, abstention, and evidence references."""
-
-    if response.request_id != request.request_id:
-        raise ValueError("response request_id does not match the request")
-
-    decision = request.subrep_decision
-    if response.selected_skill_id != decision.selected_skill_id:
-        raise ValueError("selected_skill_id does not echo the authoritative SubRep decision")
-    if response.abstain != decision.abstain:
-        raise ValueError("response abstain does not echo the authoritative SubRep decision")
-
-    valid_refs = request.valid_evidence_refs()
-    unknown_refs = set(response.evidence_refs).difference(valid_refs)
-    if unknown_refs:
-        raise ValueError(f"response contains unknown evidence_refs: {sorted(unknown_refs)}")
-
-    required_ref = (
-        "subrep_decision.reason_code"
-        if decision.abstain
-        else "subrep_decision.selected_score"
-    )
-    if required_ref not in response.evidence_refs:
-        raise ValueError(f"response must cite {required_ref!r}")
-    if decision.runner_up_skill_id is not None and not decision.abstain:
-        if "subrep_decision.runner_up_score" not in response.evidence_refs:
-            raise ValueError("response must cite 'subrep_decision.runner_up_score'")
-
-    explanation_lower = response.explanation.lower()
-    if decision.abstain:
-        if not any(term in explanation_lower for term in ("abstain", "no admissible", "no recommendation")):
-            raise ValueError("abstention explanation must describe the lack of a recommendation")
-    elif decision.selected_skill_id.lower() not in explanation_lower:
-        raise ValueError("explanation must mention the selected skill ID")
-
-    for exclusion in request.exclusions:
-        excluded_id = re.escape(exclusion.skill_id.lower())
-        runner_term = r"(?:runner[- ]up|second[- ]best)"
-        labels_excluded_as_runner = re.search(
-            rf"(?:\b{excluded_id}\b\s+(?:was|is|remains|ranked as|served as)\s+"
-            rf"(?:the\s+)?{runner_term}|{runner_term}\s+(?:was|is)\s+"
-            rf"\b{excluded_id}\b|\b{excluded_id}\b\s*,\s*(?:the\s+)?{runner_term})",
-            explanation_lower,
-        )
-        if labels_excluded_as_runner:
-            raise ValueError(
-                f"explanation must not describe excluded skill {exclusion.skill_id!r} "
-                "as an admitted runner-up"
-            )
-
-    for concern in response.advisory_concerns:
-        unknown_concern_refs = set(concern.evidence_refs).difference(valid_refs)
-        if unknown_concern_refs:
-            raise ValueError(
-                f"advisory concern contains unknown evidence_refs: {sorted(unknown_concern_refs)}"
-            )
-        _validate_advisory_concern(request, concern)
+FORMAT_FINDING = "format"
+FACTUAL_FINDING = "factual"
+VALID_FINDING_CATEGORIES = {FORMAT_FINDING, FACTUAL_FINDING}
 
 
-def _validate_advisory_concern(
-    request: RecommendationRequest,
-    concern: AdvisoryConcern,
-) -> None:
-    """Require each advisory code to cite evidence that is relevant to its claim."""
+@dataclass(frozen=True)
+class Finding:
+    """One reason an Omega response fails the contract or misstates the evidence.
 
-    decision = request.subrep_decision
-    if decision.abstain:
-        raise ValueError("advisory concerns are not allowed for an abstaining decision")
+    ``format`` findings concern the response shape and citations; ``factual``
+    findings concern whether what the response says matches the request.
+    """
 
-    selected = next(
-        skill for skill in request.admitted_skills if skill.skill_id == decision.selected_skill_id
-    )
-    refs = set(concern.evidence_refs)
-    decision_prefix = "subrep_decision"
-    explanation_prefix = f"explanation_evidence.skills.{selected.skill_id}"
-    certificate_prefix = f"audit_only_certificate_evidence.skills.{selected.skill_id}"
+    code: str
+    category: str
+    message: str
 
-    if concern.code == "SMALL_SCORE_GAP":
-        if decision.runner_up_skill_id is None or f"{decision_prefix}.score_gap" not in refs:
-            raise ValueError("SMALL_SCORE_GAP must cite subrep_decision.score_gap")
-        return
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "code", _non_empty(self.code, "finding code").upper())
+        if self.category not in VALID_FINDING_CATEGORIES:
+            raise ValueError(f"finding category must be one of {VALID_FINDING_CATEGORIES}")
+        object.__setattr__(self, "message", _non_empty(self.message, "finding message"))
 
-    if concern.code == "NEGATIVE_OBJECTIVE_TRADEOFF":
-        negative_refs = {
-            f"{explanation_prefix}.objective_deltas.{objective_id}"
-            for objective_id, delta in selected.objective_deltas.items()
-            if delta < 0.0
-        }
-        if not refs.intersection(negative_refs):
-            raise ValueError(
-                "NEGATIVE_OBJECTIVE_TRADEOFF must cite a negative selected-skill objective delta"
-            )
-        return
-
-    if concern.code == "PDS_EPSILON_USED":
-        required = {
-            f"{certificate_prefix}.gate_type",
-            f"{certificate_prefix}.epsilon",
-        }
-        if selected.gate_type != "PDS" or selected.epsilon <= 0.0 or not required.issubset(refs):
-            raise ValueError(
-                "PDS_EPSILON_USED requires a positive PDS epsilon and its gate_type and epsilon refs"
-            )
-        return
-
-    if concern.code == "LOW_CERTIFICATE_MARGIN":
-        required_ref = f"{certificate_prefix}.certificate_admission_margin"
-        if required_ref not in refs:
-            raise ValueError(
-                "LOW_CERTIFICATE_MARGIN must cite the selected skill's certificate margin"
-            )
-        return
-
-    if concern.code == "HIGH_PRIORITY_OBJECTIVE_DECLINE":
-        weights = {item.objective_id: item.weight for item in request.objective_weights}
-        maximum_weight = max(weights.values())
-        supported = any(
-            delta < 0.0
-            and weights[objective_id] == maximum_weight
-            and {
-                f"explanation_evidence.objective_weights.{objective_id}",
-                f"{explanation_prefix}.objective_deltas.{objective_id}",
-            }.issubset(refs)
-            for objective_id, delta in selected.objective_deltas.items()
-        )
-        if not supported:
-            raise ValueError(
-                "HIGH_PRIORITY_OBJECTIVE_DECLINE must cite the weight and negative delta of a highest-weight objective"
-            )
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
