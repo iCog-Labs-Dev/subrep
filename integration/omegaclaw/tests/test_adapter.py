@@ -10,6 +10,7 @@ from integration.omegaclaw.adapter import (
 )
 from integration.omegaclaw.audit import JsonlAuditStore
 from integration.omegaclaw.contracts import (
+    AUDIT_SCHEMA_VERSION,
     INTEGRATION_MODE,
     RESPONSE_SCHEMA_VERSION,
     SELECTION_BASIS,
@@ -152,7 +153,7 @@ def test_accepts_admitted_skill_and_saves_audit(tmp_path):
     assert outcome.status == "accepted"
     assert outcome.selected_skill_id == "safe_skill"
     saved = json.loads(audit_path.read_text(encoding="utf-8"))
-    assert saved["schema_version"] == "subrep.omegaclaw.explanation.audit.v2"
+    assert saved["schema_version"] == AUDIT_SCHEMA_VERSION
     assert saved["request"]["subrep_decision"]["selected_skill_id"] == "safe_skill"
     assert saved["request"]["admitted_skills"]["safe_skill"]["final_selection_score"] == 1.5
     assert saved["outcome"]["status"] == "accepted"

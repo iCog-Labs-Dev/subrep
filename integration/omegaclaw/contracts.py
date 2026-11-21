@@ -11,9 +11,9 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 
-REQUEST_SCHEMA_VERSION = "subrep.omegaclaw.explanation.request.v2"
+REQUEST_SCHEMA_VERSION = "subrep.omegaclaw.explanation.request.v3"
 RESPONSE_SCHEMA_VERSION = "subrep.omegaclaw.explanation.response.v1"
-AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.explanation.audit.v2"
+AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.explanation.audit.v3"
 SELECTION_RULE = "MAX_FINAL_SELECTION_SCORE"
 TIE_BREAKER = "LEXICOGRAPHIC_SKILL_ID"
 INTEGRATION_MODE = "EXPLANATION_ONLY"
@@ -35,6 +35,65 @@ VALID_OUTCOME_STATUSES = {
     "invalid_response",
     "backend_error",
 }
+
+CERTIFICATION_STAGE = "CERTIFICATION"
+RUNTIME_ADMISSIBILITY_STAGE = "RUNTIME_ADMISSIBILITY"
+RISK_BUDGET_STAGE = "RISK_BUDGET"
+OPERATOR_STAGE = "OPERATOR"
+OBJECTIVE_COMPATIBILITY_STAGE = "OBJECTIVE_COMPATIBILITY"
+
+
+@dataclass(frozen=True)
+class ExclusionReason:
+    """The SubRep stage that removes a skill for one reason code, and what it means."""
+
+    stage: str
+    description: str
+
+
+# Descriptions avoid apostrophes because Omega rewrites them before its model sees the text.
+EXCLUSION_REASONS: Mapping[str, ExclusionReason] = MappingProxyType(
+    {
+        "GATE_FAILED": ExclusionReason(
+            CERTIFICATION_STAGE,
+            "Failed the SubRep CDS/PDS certification gates, so it holds no certificate.",
+        ),
+        "LIBRARY_REVERIFICATION_FAILED": ExclusionReason(
+            CERTIFICATION_STAGE,
+            "Failed SubRep re-verification of its certificate at the skill library, "
+            "so it holds no valid certificate.",
+        ),
+        "NOT_RUNTIME_ADMISSIBLE": ExclusionReason(
+            RUNTIME_ADMISSIBILITY_STAGE,
+            "Holds a SubRep certificate, but the runtime admissibility check did not "
+            "admit it for the current objective weights. This is not a certification failure.",
+        ),
+        "RISK_BUDGET_EXCEEDED": ExclusionReason(
+            RISK_BUDGET_STAGE,
+            "Holds a SubRep certificate and is runtime admissible, but its certificate "
+            "epsilon exceeds the local risk budget of this request. This is not a "
+            "certification failure.",
+        ),
+        "INSUFFICIENT_ADMISSION_MARGIN": ExclusionReason(
+            RISK_BUDGET_STAGE,
+            "Holds a SubRep certificate and is runtime admissible, but its admission "
+            "margin is below the local minimum of this request. This is not a "
+            "certification failure.",
+        ),
+        "OPERATOR_EXCLUSION": ExclusionReason(
+            OPERATOR_STAGE,
+            "Removed by an explicit operator instruction for this request. This is not a "
+            "certification, runtime admissibility, or risk budget result.",
+        ),
+        "OBJECTIVE_DIMENSION_MISMATCH": ExclusionReason(
+            OBJECTIVE_COMPATIBILITY_STAGE,
+            "Holds a SubRep certificate for a different number of objectives than this "
+            "request, so its evidence cannot be scored here. This is not a certification "
+            "failure.",
+        ),
+    }
+)
+EXCLUSION_STAGES = frozenset(reason.stage for reason in EXCLUSION_REASONS.values())
 
 
 def _non_empty(value: str, field_name: str) -> str:
@@ -180,12 +239,32 @@ class SkillExclusion:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "skill_id", _non_empty(self.skill_id, "skill_id"))
-        object.__setattr__(self, "reason_code", _non_empty(self.reason_code, "reason_code").upper())
+        reason_code = _non_empty(self.reason_code, "reason_code").upper()
+        if reason_code not in EXCLUSION_REASONS:
+            raise ValueError(
+                f"reason_code must be one of {sorted(EXCLUSION_REASONS)}, got {reason_code!r}"
+            )
+        object.__setattr__(self, "reason_code", reason_code)
         object.__setattr__(self, "reason", _non_empty(self.reason, "reason"))
         label = _non_empty(self.evidence_label, "evidence_label").upper()
         if label not in VALID_EVIDENCE_LABELS:
             raise ValueError(f"evidence_label must be one of {VALID_EVIDENCE_LABELS}")
         object.__setattr__(self, "evidence_label", label)
+
+    @property
+    def stage(self) -> str:
+        return EXCLUSION_REASONS[self.reason_code].stage
+
+    @property
+    def stage_description(self) -> str:
+        return EXCLUSION_REASONS[self.reason_code].description
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **asdict(self),
+            "stage": self.stage,
+            "stage_description": self.stage_description,
+        }
 
 
 @dataclass(frozen=True)
@@ -419,7 +498,7 @@ class RecommendationRequest:
                 for skill in self.admitted_skills
             },
             "risk_budget": asdict(self.risk_budget),
-            "exclusions": [asdict(item) for item in self.exclusions],
+            "exclusions": [item.to_dict() for item in self.exclusions],
             "explanation_evidence": {
                 "objective_weights": {
                     item.objective_id: item.weight for item in self.objective_weights

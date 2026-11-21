@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 from uuid import uuid4
 
 import numpy as np
@@ -13,6 +13,8 @@ from library.skill_metadata import SkillEntry
 
 from .adapter import OmegaRecommendationAdapter
 from .contracts import (
+    CERTIFICATION_STAGE,
+    OPERATOR_STAGE,
     ObjectiveWeight,
     RecommendationOutcome,
     RecommendationRequest,
@@ -20,6 +22,8 @@ from .contracts import (
     SkillEvidence,
     SkillExclusion,
 )
+
+CALLER_EXCLUSION_STAGES = frozenset({OPERATOR_STAGE, CERTIFICATION_STAGE})
 
 
 class SubRepOmegaRecommendationService:
@@ -87,31 +91,26 @@ class SubRepOmegaRecommendationService:
             for name in ordered_ids
         )
         weights_array = np.asarray([item.weight for item in objectives], dtype=np.float64)
-        runtime_admissible = skill_library.query_admissible(
-            current_weight=weights_array,
-            support_directions=support_directions,
-            support_values=support_values,
-        )
-
         explicit_exclusions = {item.skill_id: item for item in exclusions}
-        final_exclusions = dict(explicit_exclusions)
-        runtime_ids = {entry.skill_id for entry in runtime_admissible}
-        for entry in skill_library.get_admitted_skills():
-            if entry.skill_id not in runtime_ids and entry.skill_id not in final_exclusions:
-                final_exclusions[entry.skill_id] = SkillExclusion(
-                    skill_id=entry.skill_id,
-                    reason_code="NOT_RUNTIME_ADMISSIBLE",
-                    reason="SubRep's runtime admissibility query excluded this skill.",
-                    evidence_label=evidence_label,
-                )
+        _check_explicit_exclusions(explicit_exclusions.values(), skill_library)
+        runtime_ids = {
+            entry.skill_id
+            for entry in skill_library.query_admissible(
+                current_weight=weights_array,
+                support_directions=support_directions,
+                support_values=support_values,
+            )
+        }
 
+        final_exclusions = dict(explicit_exclusions)
         candidates: list[SkillEvidence] = []
         objective_ids = tuple(item.objective_id for item in objectives)
-        for entry in runtime_admissible:
+        for entry in skill_library.get_admitted_skills():
             if entry.skill_id in explicit_exclusions:
                 continue
-            exclusion = _risk_or_shape_exclusion(
+            exclusion = _library_exclusion(
                 entry=entry,
+                runtime_admissible=entry.skill_id in runtime_ids,
                 risk_budget=risk_budget,
                 objective_count=len(objectives),
                 evidence_label=evidence_label,
@@ -140,13 +139,39 @@ class SubRepOmegaRecommendationService:
         )
 
 
-def _risk_or_shape_exclusion(
+def _check_explicit_exclusions(
+    exclusions: Iterable[SkillExclusion],
+    skill_library: SkillLibrary,
+) -> None:
+    """Allow callers only the stages SubRep cannot compute from the library itself."""
+
+    for exclusion in exclusions:
+        if exclusion.stage not in CALLER_EXCLUSION_STAGES:
+            raise ValueError(
+                f"exclusion {exclusion.skill_id!r} uses {exclusion.reason_code!r}, which "
+                "SubRep computes itself; callers may only supply operator exclusions "
+                "and certification failures"
+            )
+        if (
+            exclusion.stage == CERTIFICATION_STAGE
+            and skill_library.get_skill(exclusion.skill_id) is not None
+        ):
+            raise ValueError(
+                f"exclusion {exclusion.skill_id!r} reports a certification failure, but "
+                "the skill library holds a certificate for it"
+            )
+
+
+def _library_exclusion(
     *,
     entry: SkillEntry,
+    runtime_admissible: bool,
     risk_budget: RiskBudget,
     objective_count: int,
     evidence_label: str,
 ) -> SkillExclusion | None:
+    # The dimension check comes first: the runtime query also drops a skill whose
+    # deltas do not fit the weights, and that must not read as an admissibility result.
     if len(entry.delta_n) != objective_count:
         return SkillExclusion(
             skill_id=entry.skill_id,
@@ -154,6 +179,16 @@ def _risk_or_shape_exclusion(
             reason=(
                 f"Skill has {len(entry.delta_n)} objective deltas but the request has "
                 f"{objective_count} objectives."
+            ),
+            evidence_label=evidence_label,
+        )
+    if not runtime_admissible:
+        return SkillExclusion(
+            skill_id=entry.skill_id,
+            reason_code="NOT_RUNTIME_ADMISSIBLE",
+            reason=(
+                "The SubRep runtime admissibility query did not admit this skill for the "
+                "current objective weights."
             ),
             evidence_label=evidence_label,
         )
