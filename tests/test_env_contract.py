@@ -5,16 +5,125 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from gymnasium.spaces import Box
+from unittest.mock import patch
 
 from env.base_env import SubRepBaseEnv, validate_env_metadata
+from env.minecraft.adapter import MinecraftVillageEnv
+from env.minecraft import areas
 from env.lunar_lander_wrapper import SubRepEnv
 from env.skill_executor import SkillExecutor
 from village_sim.env import VillageEnv
 
 
-@pytest.fixture(params=["village", "lunar"])
+class _MinecraftFakeSidecar:
+    def __init__(self, observation):
+        self.observation = observation
+
+    def status(self):
+        return {"spawned": True, "token_expires_at": "2099-01-01T00:00:00Z"}
+
+    def observe(self, **kwargs):
+        return dict(self.observation)
+
+    def act(self, action, **kwargs):
+        return dict(self.observation)
+
+    def emergency_stop(self):
+        return {"status": "ok"}
+
+
+class _MinecraftFakeResetManager:
+    def reset(self):
+        return 0
+
+    def stop(self):
+        pass
+
+
+def _minecraft_observation():
+    return {
+        "status": "ok",
+        "position": [40, 64, 0],
+        "health": 20,
+        "food": 14,
+        "inventory": [
+            {"id": "minecraft:emerald", "count": 20},
+            {"id": "minecraft:torch", "count": 4},
+            {"id": "minecraft:charcoal", "count": 2},
+            {"id": "minecraft:coal", "count": 4},
+            {"id": "minecraft:iron_block", "count": 4},
+            {"id": "minecraft:pumpkin", "count": 1},
+            {"id": "minecraft:cooked_beef", "count": 3},
+            {"id": "minecraft:golden_apple", "count": 1},
+        ],
+    }
+
+
+def _minecraft_digest():
+    villagers = []
+    for uuid, position in zip(
+        areas.protected_villager_uuids(),
+        areas.villager_positions(),
+    ):
+        villagers.append({
+            "type": "villager",
+            "uuid": uuid,
+            "health": 20.0,
+            "food": None,
+            "pos": list(position),
+            "profession": "minecraft:librarian",
+            "has_villager_data": True,
+            "has_offers": True,
+            "has_gossips": False,
+        })
+    entities = [
+        {
+            "type": "player",
+            "uuid": "0,0,0,0",
+            "health": 20.0,
+            "food": 14,
+            "pos": [40.0, 64.0, 0.0],
+            "profession": None,
+            "has_villager_data": False,
+            "has_offers": False,
+            "has_gossips": False,
+        },
+        *villagers,
+        {
+            "type": "zombie_villager",
+            "uuid": "1001,0,0,5",
+            "health": 20.0,
+            "food": None,
+            "pos": [67.0, 64.0, 8.0],
+            "profession": "minecraft:farmer",
+            "has_villager_data": False,
+            "has_offers": False,
+            "has_gossips": False,
+        },
+    ]
+    gaps = list(areas.gap_positions())
+    blocks = {}
+    for index, position in enumerate(gaps):
+        blocks[position] = {
+            "id": "minecraft:oak_fence_gate" if index < 6 else "minecraft:air",
+            "items": [],
+        }
+    for position in areas.torch_positions():
+        blocks[position] = {"id": "minecraft:torch", "items": []}
+    for position in areas.light_sample_positions():
+        blocks.setdefault(position, {"id": "minecraft:air", "items": []})
+    chest_position = areas.delivery_chest()
+    blocks[chest_position] = {"id": "minecraft:chest", "items": []}
+    return {
+        "tick": 12000,
+        "entities": entities,
+        "blocks": blocks,
+    }
+
+
+@pytest.fixture(params=["village", "lunar", "minecraft_village"])
 def env_instance(request):
-    """Parametrized fixture providing both standard environments."""
+    """Parametrized fixture providing standard environments."""
     if request.param == "village":
         env = VillageEnv(seed=42)
         yield env
@@ -23,11 +132,24 @@ def env_instance(request):
         env = SubRepEnv(seed=42)
         yield env
         env.close()
+    elif request.param == "minecraft_village":
+        sidecar = _MinecraftFakeSidecar(_minecraft_observation())
+        reset_manager = _MinecraftFakeResetManager()
+        digest_patch = patch("env.minecraft.adapter.digest.observe", return_value=_minecraft_digest())
+        digest_patch.start()
+        env = MinecraftVillageEnv(
+            seed=42,
+            sidecar=sidecar,
+            reset_manager=reset_manager,
+        )
+        yield env
+        env.close()
+        digest_patch.stop()
 
 
 def _get_sample_action(env):
     """Return a valid action for the given environment."""
-    if isinstance(env, VillageEnv):
+    if isinstance(env, (VillageEnv, MinecraftVillageEnv)):
         return "wait"
     return 0
 

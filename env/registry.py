@@ -125,6 +125,12 @@ def _make_safety_gymnasium(**kwargs):
     return SafeRLGymnasiumEnv(**kwargs)
 
 
+def _make_minecraft_village(**kwargs):
+    from env.minecraft.adapter import MinecraftVillageEnv
+    return MinecraftVillageEnv(**kwargs)
+
+
 _REGISTRY.register("lunarlander", _make_lunarlander)
 _REGISTRY.register("village", _make_village)
 _REGISTRY.register("safety_gymnasium", _make_safety_gymnasium)
+_REGISTRY.register("minecraft_village", _make_minecraft_village)

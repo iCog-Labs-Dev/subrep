@@ -19,11 +19,29 @@ class SidecarClient:
         self.timeout = timeout
         self._last_request_at = 0.0
 
-    def observe(self) -> Dict[str, Any]:
-        return self._post("/observe", {}, 5)
+    def observe(
+        self, message_id=None, snapshot_id=None, world_tick=None
+    ) -> Dict[str, Any]:
+        payload = {}
+        if message_id is not None:
+            payload["message_id"] = message_id
+        if snapshot_id is not None:
+            payload["snapshot_id"] = snapshot_id
+        if world_tick is not None:
+            payload["world_tick"] = world_tick
+        return self._post("/observe", payload, 5)
 
-    def act(self, action: str) -> Dict[str, Any]:
-        return self._post("/act", {"action": action}, self.timeout)
+    def act(
+        self, action: str, message_id=None, snapshot_id=None, world_tick=None
+    ) -> Dict[str, Any]:
+        payload = {"action": action}
+        if message_id is not None:
+            payload["message_id"] = message_id
+        if snapshot_id is not None:
+            payload["snapshot_id"] = snapshot_id
+        if world_tick is not None:
+            payload["world_tick"] = world_tick
+        return self._post("/act", payload, self.timeout)
 
     def emergency_stop(self) -> Dict[str, Any]:
         return self._post("/stop", {}, 5)
