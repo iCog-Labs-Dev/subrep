@@ -163,6 +163,11 @@ _SELECTING_VERB = (
     r"\b(?:selected|selects|chose|chooses|chosen|recommends|recommended|picked|picks)\s+"
     r"(?:the\s+)?(?:skill\s+)?"
 )
+_SNAKE_CASE_NAME = r"(?<![\w-])(?P<name>[a-z][a-z0-9-]*_[a-z0-9_-]*[a-z0-9])(?![\w-])"
+_UNKNOWN_SELECTION = (
+    re.compile(_SNAKE_CASE_NAME + _SELECTED_AFTER_ID),
+    re.compile(_SELECTING_VERB + _SNAKE_CASE_NAME),
+)
 # A whole number counts only when no word follows it, so "(2 objectives)" is not a score.
 _NUMBER = r"(?P<number>-?(?:\d+\.\d+|\.\d+|\d+(?![\d.]*\s*[a-z%])))"
 _SCORE_AFTER_ID = (
@@ -272,7 +277,15 @@ def _decision_named(request: RecommendationRequest, text: str) -> list[Finding]:
 def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
     decision = request.subrep_decision
     excluded = {exclusion.skill_id for exclusion in request.exclusions}
-    findings: list[Finding] = []
+    actual = "abstained" if decision.abstain else f"selected {decision.selected_skill_id!r}"
+    findings = [
+        _finding(
+            "WRONG_SKILL_ROLE",
+            f"explanation describes {name!r} as selected, but it is not a skill in the "
+            f"request and SubRep {actual}",
+        )
+        for name in _unknown_selections(request, text)
+    ]
     for skill_id in _skill_ids(request):
         skill = _skill_pattern(skill_id)
         if skill_id != decision.selected_skill_id:
@@ -284,12 +297,7 @@ def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
                 findings.append(
                     _finding(
                         "WRONG_SKILL_ROLE",
-                        f"explanation describes {skill_id!r} as selected, but SubRep "
-                        + (
-                            "abstained"
-                            if decision.abstain
-                            else f"selected {decision.selected_skill_id!r}"
-                        ),
+                        f"explanation describes {skill_id!r} as selected, but SubRep {actual}",
                     )
                 )
         if skill_id == decision.runner_up_skill_id:
@@ -321,6 +329,28 @@ def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
                 )
             findings.append(_finding("WRONG_SKILL_ROLE", message))
     return findings
+
+
+def _unknown_selections(request: RecommendationRequest, text: str) -> set[str]:
+    """Skill-like names (snake_case) claimed as selected that the request does not contain.
+
+    Omega replays earlier requests from its history, so a model can name a skill
+    from another request; request field names such as selected_skill_id are not skills.
+    """
+
+    known = {skill_id.lower() for skill_id in _skill_ids(request)}
+    known.update(
+        segment.lower()
+        for reference in request.valid_evidence_refs()
+        for segment in reference.split(".")
+    )
+    names: set[str] = set()
+    for sentence in _SENTENCE_BREAK.split(text):
+        for pattern in _UNKNOWN_SELECTION:
+            for match in _asserted(pattern, sentence):
+                if match["name"] not in known:
+                    names.add(match["name"])
+    return names
 
 
 def _asserted_in_a_sentence(pattern: re.Pattern[str], text: str) -> bool:
