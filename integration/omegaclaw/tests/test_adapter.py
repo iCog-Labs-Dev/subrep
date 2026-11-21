@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 
 from integration.omegaclaw.adapter import (
+    EXCLUSION_STAGE_RULES,
     OmegaRecommendationAdapter,
     build_correction_prompt,
     build_recommendation_prompt,
@@ -11,6 +12,7 @@ from integration.omegaclaw.adapter import (
 from integration.omegaclaw.audit import JsonlAuditStore
 from integration.omegaclaw.contracts import (
     AUDIT_SCHEMA_VERSION,
+    EXCLUSION_STAGES,
     INTEGRATION_MODE,
     RESPONSE_SCHEMA_VERSION,
     SELECTION_BASIS,
@@ -122,6 +124,32 @@ def _request_with_excluded_skill() -> RecommendationRequest:
                 reason="Excluded before ranking.",
             ),
         ),
+    )
+
+
+def _synthetic_request() -> RecommendationRequest:
+    request = _request()
+    skill = request.admitted_skills[0]
+    return RecommendationRequest(
+        request_id=request.request_id,
+        created_at=request.created_at,
+        task_context=request.task_context,
+        objective_weights=request.objective_weights,
+        risk_budget=request.risk_budget,
+        admitted_skills=(
+            SkillEvidence(
+                skill_id=skill.skill_id,
+                score=skill.score,
+                delta_r=skill.delta_r,
+                objective_deltas=skill.objective_deltas,
+                gate_type=skill.gate_type,
+                admission_margin=skill.admission_margin,
+                epsilon=skill.epsilon,
+                weight_region_type=skill.weight_region_type,
+                evidence_label="SYNTHETIC",
+            ),
+        ),
+        evidence_label="SYNTHETIC",
     )
 
 
@@ -511,6 +539,42 @@ def test_prompt_contains_all_required_decision_inputs(tmp_path):
     )
 
     assert adapter.recommend(_request()).status == "accepted"
+
+
+def _instructions(prompt: str) -> str:
+    return prompt.split("Required response shape: ", 1)[0]
+
+
+def test_every_exclusion_stage_has_a_prompt_rule():
+    assert set(EXCLUSION_STAGE_RULES) == EXCLUSION_STAGES
+
+
+def test_prompt_explains_only_the_exclusion_stages_in_the_request():
+    instructions = _instructions(build_recommendation_prompt(_request_with_excluded_skill()))
+
+    assert "OPERATOR: an operator instruction removed the skill" in instructions
+    assert "Do not say it failed certification" in instructions
+    assert "RISK_BUDGET:" not in instructions
+    assert "CERTIFICATION: the skill failed" not in instructions
+
+
+def test_prompt_says_when_a_request_has_no_exclusions():
+    assert "This request has no exclusions" in build_recommendation_prompt(_request())
+
+
+def test_prompt_requires_disclosure_only_for_synthetic_evidence():
+    observed = _instructions(build_recommendation_prompt(_request()))
+    synthetic = _instructions(build_recommendation_prompt(_synthetic_request()))
+
+    assert "evidence_label is OBSERVED" in observed
+    assert "say in the explanation that the evidence is synthetic" not in observed
+    assert "say in the explanation that the evidence is synthetic" in synthetic
+
+
+def test_prompt_instructions_avoid_text_that_omega_rewrites():
+    # Omega replaces apostrophes before its model reads the prompt.
+    for request in (_request(), _request_with_excluded_skill(), _synthetic_request()):
+        assert "'" not in _instructions(build_recommendation_prompt(request))
 
 
 def test_correction_prompt_includes_bounded_validation_hint():
