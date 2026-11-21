@@ -29,10 +29,15 @@ class ResponseValidationError(ValueError):
 
 @dataclass(frozen=True)
 class ResponseAssessment:
-    """Every finding for one raw response, plus the parsed response when it parses."""
+    """Every finding for one raw response, plus the parsed response when it parses.
+
+    ``explanation_checked`` is false when the response had no explanation to check,
+    so its factual accuracy is unknown rather than perfect.
+    """
 
     response: OmegaRecommendationResponse | None
     findings: tuple[Finding, ...]
+    explanation_checked: bool = True
 
     @property
     def valid(self) -> bool:
@@ -56,15 +61,20 @@ def assess_raw_response(
     try:
         payload = parse_structured_response(raw_response)
     except (ValueError, TypeError) as exc:
-        return ResponseAssessment(None, (Finding("MALFORMED_RESPONSE", FORMAT_FINDING, str(exc)),))
+        return ResponseAssessment(
+            None,
+            (Finding("MALFORMED_RESPONSE", FORMAT_FINDING, str(exc)),),
+            explanation_checked=False,
+        )
     try:
         response = OmegaRecommendationResponse.from_dict(payload)
     except (ValueError, TypeError) as exc:
         findings = [Finding("SCHEMA_VIOLATION", FORMAT_FINDING, str(exc))]
         explanation = payload.get("explanation")
-        if isinstance(explanation, str) and explanation.strip():
+        checked = isinstance(explanation, str) and bool(explanation.strip())
+        if checked:
             findings.extend(explanation_findings(request, explanation))
-        return ResponseAssessment(None, tuple(findings))
+        return ResponseAssessment(None, tuple(findings), explanation_checked=checked)
     return ResponseAssessment(response, tuple(response_findings(request, response)))
 
 

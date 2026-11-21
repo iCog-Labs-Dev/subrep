@@ -95,6 +95,7 @@ class OmegaRecommendationAdapter:
                         "status": "invalid_response",
                         "error": validation_error,
                         "findings": findings,
+                        "explanation_checked": assessment.explanation_checked,
                         "raw_response": raw_response,
                     }
                 )
@@ -107,6 +108,7 @@ class OmegaRecommendationAdapter:
                     "status": "valid",
                     "error": None,
                     "findings": findings,
+                    "explanation_checked": assessment.explanation_checked,
                     "raw_response": raw_response,
                 }
             )

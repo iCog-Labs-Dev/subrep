@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
+from collections import Counter
 from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
@@ -13,10 +15,13 @@ from time import perf_counter
 
 from .adapter import OmegaRecommendationAdapter
 from .audit import JsonlAuditStore
+from .contracts import FACTUAL_FINDING, FORMAT_FINDING
 from .scenarios import predefined_scenarios
 from .service import SubRepOmegaRecommendationService
 from .synthetic_backend import SyntheticOmegaBackend
 from .websocket_gateway import OmegaWebSocketGateway
+
+VALID_STATUSES = frozenset({"accepted", "abstained"})
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -39,35 +44,52 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider", default=None, help="Live provider name for reporting.")
     parser.add_argument("--model", default=None, help="Live model ID for reporting.")
     parser.add_argument(
+        "--omega-image",
+        default=None,
+        help="Omega image name or digest, recorded in the report for reproduction.",
+    )
+    parser.add_argument(
         "--scenario",
         action="append",
-        choices=(
-            "clear_preferred_skill",
-            "changed_task_priorities",
-            "excluded_skill",
-            "no_admissible_options",
-        ),
+        choices=tuple(scenario.name for scenario in predefined_scenarios()),
         help="Run only this scenario. Repeat to select multiple scenarios.",
     )
+    parser.add_argument(
+        "--repeat",
+        type=_positive_int,
+        default=1,
+        help="Run every selected scenario this many times, one full pass at a time.",
+    )
     return parser
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     audit_store = JsonlAuditStore(args.audit_path)
+    settings = {
+        "timeout": args.timeout,
+        "report_path": args.report_path,
+        "provider": args.provider,
+        "model": args.model,
+        "omega_image": args.omega_image,
+        "scenario_names": args.scenario,
+        "repeat": args.repeat,
+    }
 
     if args.backend == "synthetic":
-        backend = SyntheticOmegaBackend()
         return _run_scenarios(
-            backend,
+            SyntheticOmegaBackend(),
             audit_store,
-            args.timeout,
-            args.report_path,
             backend_name="synthetic",
             run_label=args.run_label or "subrep_deterministic_baseline",
-            provider=args.provider,
-            model=args.model,
-            scenario_names=args.scenario,
+            **settings,
         )
 
     if not args.token:
@@ -85,27 +107,25 @@ def main(argv: list[str] | None = None) -> int:
         return _run_scenarios(
             gateway,
             audit_store,
-            args.timeout,
-            args.report_path,
             backend_name="live",
             run_label=args.run_label or "omega_live",
-            provider=args.provider,
-            model=args.model,
-            scenario_names=args.scenario,
+            **settings,
         )
 
 
 def _run_scenarios(
     backend,
     audit_store,
+    *,
     timeout: float,
     report_path: str | None,
-    *,
     backend_name: str,
     run_label: str,
     provider: str | None,
     model: str | None,
+    omega_image: str | None,
     scenario_names: list[str] | None,
+    repeat: int,
 ) -> int:
     adapter = OmegaRecommendationAdapter(
         backend=backend,
@@ -120,27 +140,24 @@ def _run_scenarios(
         for scenario in predefined_scenarios()
         if not selected_names or scenario.name in selected_names
     )
-    for scenario in scenarios:
-        started_at = perf_counter()
-        outcome = service.recommend_from_library(
-            task_context=scenario.task_context,
-            objective_weights=scenario.objective_weights,
-            objective_order=scenario.objective_order,
-            risk_budget=scenario.risk_budget,
-            skill_library=scenario.skill_library,
-            exclusions=scenario.exclusions,
-            evidence_label="SYNTHETIC",
-        )
-        latency_seconds = perf_counter() - started_at
-        result = {
-            "scenario": scenario.name,
-            "description": scenario.description,
-            "evidence_label": "SYNTHETIC",
-            "latency_seconds": latency_seconds,
-            "outcome": outcome.to_dict(),
-        }
-        results.append(result)
-        print(json.dumps(result, indent=2, sort_keys=True))
+    for trial in range(1, repeat + 1):
+        for scenario in scenarios:
+            started_at = perf_counter()
+            outcome = service.recommend_from_library(
+                **scenario.service_arguments(),
+                evidence_label="SYNTHETIC",
+            )
+            latency_seconds = perf_counter() - started_at
+            result = {
+                "scenario": scenario.name,
+                "trial": trial,
+                "description": scenario.description,
+                "evidence_label": "SYNTHETIC",
+                "latency_seconds": latency_seconds,
+                "outcome": outcome.to_dict(),
+            }
+            results.append(result)
+            print(json.dumps(result, indent=2, sort_keys=True))
 
     report = {
         "report_type": "omegaclaw_explanation_run",
@@ -149,41 +166,115 @@ def _run_scenarios(
         "backend": backend_name,
         "provider": provider,
         "model": model,
+        "omega_image": omega_image,
+        "subrep_commit": _subrep_commit(),
         "evidence_label": "SYNTHETIC",
         "results": results,
-        "summary": _summarize(results),
+        "summary": summarize(results),
     }
     if report_path:
         path = Path(report_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    valid_statuses = {"accepted", "abstained"}
-    return 0 if all(item["outcome"]["status"] in valid_statuses for item in results) else 1
+    return 0 if all(item["outcome"]["status"] in VALID_STATUSES for item in results) else 1
 
 
-def _summarize(results: list[dict]) -> dict:
-    valid_statuses = {"accepted", "abstained"}
+def summarize(results: list[dict]) -> dict:
+    """Summarise outcomes, response format, and factual accuracy as separate measures."""
+
     latencies = sorted(float(item["latency_seconds"]) for item in results)
-    valid_count = sum(item["outcome"]["status"] in valid_statuses for item in results)
+    outcomes = [item["outcome"] for item in results]
+    valid_count = sum(outcome["status"] in VALID_STATUSES for outcome in outcomes)
     first_pass_valid = sum(
-        bool(item["outcome"]["attempts"])
-        and item["outcome"]["attempts"][0]["status"] == "valid"
-        for item in results
+        bool(outcome["attempts"]) and outcome["attempts"][0]["status"] == "valid"
+        for outcome in outcomes
     )
-    retry_count = sum(len(item["outcome"]["attempts"]) > 1 for item in results)
+    retry_count = sum(len(outcome["attempts"]) > 1 for outcome in outcomes)
     p95_index = max(0, ceil(0.95 * len(latencies)) - 1)
+    attempts = [attempt for outcome in outcomes for attempt in outcome["attempts"]]
+    first_attempts = [outcome["attempts"][0] for outcome in outcomes if outcome["attempts"]]
     return {
-        "scenario_count": len(results),
+        "scenario_count": len({item["scenario"] for item in results}),
+        "request_count": len(results),
         "valid_outcome_count": valid_count,
-        "valid_outcome_rate": valid_count / len(results),
+        "valid_outcome_rate": _rate(valid_count, len(results)),
         "first_pass_valid_count": first_pass_valid,
-        "first_pass_valid_rate": first_pass_valid / len(results),
+        "first_pass_valid_rate": _rate(first_pass_valid, len(results)),
         "retry_count": retry_count,
-        "retry_rate": retry_count / len(results),
-        "median_latency_seconds": median(latencies),
-        "p95_latency_seconds": latencies[p95_index],
+        "retry_rate": _rate(retry_count, len(results)),
+        "median_latency_seconds": median(latencies) if latencies else None,
+        "p95_latency_seconds": latencies[p95_index] if latencies else None,
+        "format": _format_summary(attempts, first_attempts),
+        "factual": _factual_summary(attempts, first_attempts),
     }
+
+
+def _format_summary(attempts: list[dict], first_attempts: list[dict]) -> dict:
+    """Did Omega answer with a response that follows the contract?"""
+
+    answered = [attempt for attempt in attempts if attempt["status"] != "backend_error"]
+    first_answered = [attempt for attempt in first_attempts if attempt["status"] != "backend_error"]
+    valid = [attempt for attempt in answered if not _codes(attempt, FORMAT_FINDING)]
+    first_valid = [attempt for attempt in first_answered if not _codes(attempt, FORMAT_FINDING)]
+    return {
+        "backend_error_count": len(attempts) - len(answered),
+        "answered_attempt_count": len(answered),
+        "format_valid_attempt_count": len(valid),
+        "format_valid_attempt_rate": _rate(len(valid), len(answered)),
+        "first_attempt_format_valid_rate": _rate(len(first_valid), len(first_answered)),
+        "finding_counts": _finding_counts(answered, FORMAT_FINDING),
+    }
+
+
+def _factual_summary(attempts: list[dict], first_attempts: list[dict]) -> dict:
+    """Did what Omega said match the SubRep evidence, by the automated checks?"""
+
+    checked = [attempt for attempt in attempts if attempt.get("explanation_checked")]
+    first_checked = [attempt for attempt in first_attempts if attempt.get("explanation_checked")]
+    accurate = [attempt for attempt in checked if not _codes(attempt, FACTUAL_FINDING)]
+    first_accurate = [
+        attempt for attempt in first_checked if not _codes(attempt, FACTUAL_FINDING)
+    ]
+    return {
+        "checked_attempt_count": len(checked),
+        "accurate_attempt_count": len(accurate),
+        "accuracy_rate": _rate(len(accurate), len(checked)),
+        "first_attempt_accuracy_rate": _rate(len(first_accurate), len(first_checked)),
+        "finding_counts": _finding_counts(checked, FACTUAL_FINDING),
+    }
+
+
+def _codes(attempt: dict, category: str) -> list[str]:
+    return [
+        finding["code"]
+        for finding in attempt.get("findings") or ()
+        if finding["category"] == category
+    ]
+
+
+def _finding_counts(attempts: list[dict], category: str) -> dict[str, int]:
+    counts = Counter(code for attempt in attempts for code in _codes(attempt, category))
+    return dict(sorted(counts.items()))
+
+
+def _rate(count: int, total: int) -> float | None:
+    return count / total if total else None
+
+
+def _subrep_commit() -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            check=True,
+            cwd=Path(__file__).resolve().parent,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return completed.stdout.strip() or None
 
 
 if __name__ == "__main__":

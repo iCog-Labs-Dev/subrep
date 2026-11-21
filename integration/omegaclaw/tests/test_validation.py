@@ -42,6 +42,7 @@ def test_malformed_response_is_a_format_finding_only():
 
     assert assessment.response is None
     assert _codes(assessment) == {"MALFORMED_RESPONSE": FORMAT_FINDING}
+    assert not assessment.explanation_checked
 
 
 def test_schema_violation_still_has_its_explanation_fact_checked():
@@ -53,10 +54,21 @@ def test_schema_violation_still_has_its_explanation_fact_checked():
     assessment = assess_raw_response(_request_with_excluded_skill(), json.dumps(raw))
 
     assert assessment.response is None
+    assert assessment.explanation_checked
     assert _codes(assessment) == {
         "SCHEMA_VIOLATION": FORMAT_FINDING,
         "WRONG_EXCLUSION_STAGE": FACTUAL_FINDING,
     }
+
+
+def test_schema_violation_without_an_explanation_is_not_fact_checked():
+    raw = json.loads(_response())
+    del raw["explanation"]
+
+    assessment = assess_raw_response(_request(), json.dumps(raw))
+
+    assert not assessment.explanation_checked
+    assert _codes(assessment) == {"SCHEMA_VIOLATION": FORMAT_FINDING}
 
 
 def test_every_problem_is_reported_not_only_the_first():
