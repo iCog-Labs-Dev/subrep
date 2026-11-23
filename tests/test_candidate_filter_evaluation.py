@@ -2,6 +2,7 @@
 """Tests for offline candidate-filter metrics and split-safe evaluation."""
 
 import numpy as np
+from numpy.random import gamma
 import pytest
 
 from generator import evaluate_candidate_filter as evaluator, ranking_config
@@ -194,6 +195,11 @@ def test_evaluation_uses_only_saved_test_split(tmp_path, monkeypatch):
     manifest = {
         "dataset_signature": "dataset-A",
         "split_signature": "split-A",
+        "rollout_provenance": {
+            "checkpoint_sha256": "a" * 64,
+            "gamma": 0.8,
+            "max_steps": 2,
+        },
     }
 
     rows = [
@@ -231,10 +237,16 @@ def test_evaluation_uses_only_saved_test_split(tmp_path, monkeypatch):
         return object(), True
 
     monkeypatch.setattr(evaluator, "load_model", fake_load_model)
-
+    def fake_baseline(episodes, seed, gamma, max_steps):
+        assert gamma == 0.8
+        assert max_steps == 2
+        return {
+        "baseline_payoff": 0.0,
+        "baseline_motives": [0.0, -10.0],
+       }
     monkeypatch.setattr(
         "generator.evaluate_generator_report.compute_idle_baseline_stats",
-        lambda episodes, seed: {"baseline_payoff": 0},
+        fake_baseline,
     )
 
     captured = {}

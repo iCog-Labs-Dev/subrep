@@ -142,7 +142,6 @@ def main(argv=None):
     # Evaluation must reuse the exact split created during training.
     # This function raises FileNotFoundError if the manifest is missing.
     manifest = load_manifest(rows, args.split_manifest)
-
     test = partition(rows, manifest)["test"]
     groups = group_contexts(test, complete=True)
 
@@ -153,6 +152,8 @@ def main(argv=None):
     )
     if not conditioned:
         raise ValueError("Filter requires policy-conditioned model")
+    rollout_settings = manifest["rollout_provenance"]
+    max_steps = rollout_settings["max_steps"]
     motive_weights = load_motive_weights(
     args.ranking_config,
     expected_split_signature=manifest["split_signature"],)
@@ -161,7 +162,10 @@ def main(argv=None):
     baseline_stats = compute_idle_baseline_stats(
         episodes=args.baseline_episodes,
         seed=args.seed,
+        gamma=rollout_settings["gamma"],
+        max_steps=None if max_steps == -1 else max_steps,
     )
+   
     result = evaluate_filter(
         groups,
         model,

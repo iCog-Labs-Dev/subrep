@@ -24,12 +24,12 @@ from generator.multi_policy_data import build_rollout_provenance
 from generator.policy_registry import POLICY_NAMES
 
 
-def measure_idle_baseline(episodes: int, seed: int, gamma: float) -> ImprovementCalculator:
+def measure_idle_baseline(episodes: int, seed: int, gamma: float, max_steps: int | None,) -> ImprovementCalculator:
     """Measure idle-policy outcomes and initialize baseline comparisons."""
     print(f"Running idle baseline ({episodes} episodes) ...", flush=True)
     env = SubRepEnv(seed=seed)
     stats = IdlePolicy(env=env, gamma=gamma).run_baseline_episodes(
-        num_episodes=episodes, seed=seed)
+        num_episodes=episodes, seed=seed,max_steps=max_steps,)
     calculator = ImprovementCalculator(stats)
     print(f"  Baseline payoff  : {calculator.baseline_payoff:.3f}", flush=True)
     print(f"  Baseline motives : {calculator.baseline_motives.tolist()}", flush=True)
@@ -203,7 +203,7 @@ def main(argv=None):
     f"Fuel={args.motive_weights[1]:.3f}",
     flush=True,
     )
-    calculator = measure_idle_baseline(args.baseline_episodes, args.seed, args.gamma)
+    calculator = measure_idle_baseline(args.baseline_episodes, args.seed, args.gamma, args.max_steps)
     print(f"Loading candidate policies from {args.pilot_checkpoint} ...", flush=True)
     env = SubRepEnv(seed=args.seed)
     candidates = build_extended_candidate_policies(env, pilot_checkpoint=args.pilot_checkpoint)

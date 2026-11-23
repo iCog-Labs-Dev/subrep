@@ -120,8 +120,8 @@ def test_cli_report_reuses_manifest_and_only_test_contexts(tmp_path, monkeypatch
             motives=row["motives"],
             context_seed=row["seed"],
             checkpoint_sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            gamma=0.99,
-            max_steps=-1,
+            gamma=0.8,
+            max_steps=2,
             skill_id=row["policy"],
         )
 
@@ -154,6 +154,8 @@ def test_cli_report_reuses_manifest_and_only_test_contexts(tmp_path, monkeypatch
             {
                 "baseline_payoff": 0.0,
                 "baseline_motives": [0.0, -10.0],
+                "gamma": 0.8,
+                "max_steps": 2,
             }
         )
     )
@@ -172,14 +174,19 @@ def test_cli_report_reuses_manifest_and_only_test_contexts(tmp_path, monkeypatch
         baseline_seed=42,
         output=str(out),
     )
-
+    def fake_baseline(episodes, seed, gamma, max_steps):
+        assert gamma == 0.8
+        assert max_steps == 2
+        return {
+        "baseline_payoff": 0.0,
+        "baseline_motives": [0.0, -10.0],
+        "gamma": gamma,
+        "max_steps": max_steps,
+        }
     # Avoid starting the real LunarLander environment in this unit test.
     monkeypatch.setattr(
         "generator.evaluate_generator_report.compute_idle_baseline_stats",
-        lambda episodes, seed: {
-            "baseline_payoff": 0.0,
-            "baseline_motives": [0.0, -10.0],
-        },
+       fake_baseline,
     )
 
     result = run_multi_policy_report(args)

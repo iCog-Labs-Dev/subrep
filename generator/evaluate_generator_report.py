@@ -22,11 +22,11 @@ from certification.pds_test import PDSGate
 from generator.skill_generator import SkillGenerator
 
 
-def compute_idle_baseline_stats(episodes: int = 20, seed: int = 42, gamma: float = 0.99) -> dict[str, Any]:
+def compute_idle_baseline_stats(episodes: int = 20, seed: int = 42, gamma: float = 0.99, max_steps: int | None = None) -> dict[str, Any]:
     """Reuse the existing IdlePolicy baseline """
     from env.lunar_lander_wrapper import SubRepEnv
     env = SubRepEnv(seed=seed)
-    return IdlePolicy(env=env, gamma=gamma).run_baseline_episodes(num_episodes=episodes, seed=seed)
+    return IdlePolicy(env=env, gamma=gamma).run_baseline_episodes(num_episodes=episodes, seed=seed,max_steps=max_steps,)
 
 
 def load_candidate_set_files(eval_dir: str, pattern: str = "*.npz") -> list[dict]:
@@ -316,7 +316,8 @@ def run_multi_policy_report(args):
     # It must not create a replacement split.
     manifest = load_manifest(rows, args.split_manifest)
     parts = partition(rows, manifest)
-
+    rollout_settings = manifest["rollout_provenance"]
+    max_steps = rollout_settings["max_steps"]
     # Both checkpoints must match the same training dataset and split.
     model, conditioned = load_model(
         args.model_path,
@@ -325,6 +326,12 @@ def run_multi_policy_report(args):
     baseline, baseline_conditioned = load_model(
         args.observation_baseline_path,
         expected_manifest=manifest,
+   )
+    baseline_stats = compute_idle_baseline_stats(
+       episodes=args.baseline_episodes,
+       seed=args.baseline_seed,
+       gamma=rollout_settings["gamma"],
+       max_steps=None if max_steps == -1 else max_steps,
     )
 
     if not conditioned or baseline_conditioned:
@@ -335,6 +342,8 @@ def run_multi_policy_report(args):
     baseline_stats = compute_idle_baseline_stats(
         episodes=args.baseline_episodes,
         seed=args.baseline_seed,
+        gamma=rollout_settings["gamma"],
+        max_steps=None if max_steps == -1 else max_steps,
     )
 
     report = build_multi_policy_report(

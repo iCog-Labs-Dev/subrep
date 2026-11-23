@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-
+import pytest
 from baseline.idle_policy import IdlePolicy
 from baseline.improvement_calculator import ImprovementCalculator
 from certification.cds_test import CDSGate
@@ -138,3 +138,26 @@ def test_improvements_can_be_passed_to_cds_and_pds():
 
     assert cds_gate.admit(delta_r, delta_n) is True
     assert pds_gate.admit(delta_r, delta_n) is True
+
+def test_baseline_respects_non_default_gamma_and_max_steps():
+    env = _DeterministicBaselineEnv()
+    policy = IdlePolicy(env, gamma=0.8)
+
+    stats = policy.run_baseline_episodes(
+        num_episodes=1,
+        seed=42,
+        max_steps=2,
+    )
+
+    assert stats["gamma"] == 0.8
+    assert stats["max_steps"] == 2
+    assert stats["episode_payoffs"][0] == pytest.approx(2.7)
+
+def test_baseline_rejects_nonpositive_max_steps():
+    policy = IdlePolicy(_DeterministicBaselineEnv())
+
+    with pytest.raises(ValueError, match="max_steps must be positive"):
+        policy.run_baseline_episodes(
+            num_episodes=1,
+            max_steps=0,
+        )
