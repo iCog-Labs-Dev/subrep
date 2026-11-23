@@ -452,9 +452,9 @@ python -m data_collector.collect_mixed_generator_data --episodes 1000 --save-dir
 python -m generator.multi_policy_pipeline train --data-dir data/raw_mixed --epochs 50
 python -m generator.multi_policy_pipeline evaluate --data-dir data/raw_mixed
 python -m generator.multi_policy_pipeline sizes --data-dir data/raw_mixed --sizes 100 300 500 --epochs 50
-python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 50
+python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 20
 python -m generator.evaluate_generator_report --multi-policy --data-dir data/raw_mixed
-python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 50
+python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 20
 ```
 
 The collection command writes nine `.npz` policy outcomes per context to `data/raw_mixed/`. Training writes both model checkpoints and `data/mixed_split_manifest.json`; evaluation writes `reports/multi_policy/prediction_metrics.json`; size comparisons write `reports/multi_policy/dataset_size_metrics.json`; offline filtering writes `reports/multi_policy/filter_metrics.json` and `reports/multi_policy/results_summary.md`; live filtering writes `reports/multi_policy/live_filter.json`. See [multi-policy commands and outputs](docs/MULTI_POLICY_GENERATOR.md) for argument details, direct-entry-point alternatives, and interpretation.

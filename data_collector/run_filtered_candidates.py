@@ -17,7 +17,8 @@ from certification.pds_test import PDSGate
 from data_collector.collect_candidate_sets import build_extended_candidate_policies
 from env.lunar_lander_wrapper import SubRepEnv
 from env.skill_executor import SkillExecutor
-from generator.candidate_filter import execute_selected, select_top_k
+from generator.candidate_filter import execute_selected, select_top_k, make_predicted_score_fn
+from generator.ranking_config import load_motive_weights
 from generator.multi_policy_pipeline import load_model
 from generator.multi_policy_data import build_rollout_provenance
 from generator.policy_registry import POLICY_NAMES
@@ -66,11 +67,16 @@ def evaluate_contexts(model, env, candidates, calculator, args) -> list[dict]:
     total = args.contexts * args.top_k
     completed = 0
     results = []
-
+    score_fn = make_predicted_score_fn(
+       {
+        "baseline_payoff": calculator.baseline_payoff,
+        "baseline_motives": calculator.baseline_motives,
+       },
+       args.motive_weights,)
     for index in range(args.contexts):
         seed = args.seed + index + 1
         observation, _ = env.reset(seed=seed)
-        selected = select_top_k(model, observation, POLICY_NAMES, args.top_k)
+        selected = select_top_k(model, observation, POLICY_NAMES, args.top_k, score_fn=score_fn)
         print(f"\nContext {index + 1}/{args.contexts} (seed={seed})", flush=True)
         print(f"  Selected: {', '.join(selected)}", flush=True)
 
@@ -104,7 +110,10 @@ def save_report(results: list[dict], calculator: ImprovementCalculator,
     pds_count = sum(item["certification"]["pds_admit"] for item in outcomes)
     joint_count = sum(item["certification"]["cds_admit"] and
                       item["certification"]["pds_admit"] for item in outcomes)
-
+    certifiable_count = sum(
+    item["certification"]["cds_admit"] or item["certification"]["pds_admit"]
+    for item in outcomes
+    )
     report = {
         "baseline_source": "measured_idle_execution",
         "baseline_episodes": args.baseline_episodes,
@@ -117,9 +126,22 @@ def save_report(results: list[dict], calculator: ImprovementCalculator,
         "executions_avoided": possible - executed,
         "cds_admitted": cds_count,
         "pds_admitted": pds_count,
+        "cds_or_pds_admitted": certifiable_count,
         "jointly_certifiable_found": joint_count,
         "elapsed_seconds": round(elapsed, 2),
         "results": results,
+        "ranking": {
+            "formula": (
+               "predicted_delta_payoff "
+               "+ safety_weight * predicted_delta_safety "
+               "+ fuel_weight * predicted_delta_fuel"
+           ),
+           "motive_weights": {
+             "safety": float(args.motive_weights[0]),
+             "fuel": float(args.motive_weights[1]),
+           },
+           "ranking_config": str(args.ranking_config),
+        },
     }
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -143,10 +165,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", default="models/multi_policy_generator.pt")
     parser.add_argument("--pilot-checkpoint", default="models/pilot_ppo.pt")
-    parser.add_argument("--baseline-episodes", type=int, default=50)
+    parser.add_argument("--baseline-episodes", type=int, default=20)
     parser.add_argument("--contexts", type=int, default=10)
     parser.add_argument("--seed", type=int, default=9000)
     parser.add_argument("--top-k", type=int, default=3)
+    parser.add_argument(
+    "--ranking-config",
+    default="reports/multi_policy/motive_weights.json",
+    help="Validation-tuned motive weights shared with offline filtering",)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--output", default="reports/multi_policy/live_filter.json")
@@ -171,7 +197,12 @@ def main(argv=None):
     )
     if not conditioned:
         raise ValueError("A policy-conditioned checkpoint is required")
-
+    args.motive_weights = load_motive_weights( args.ranking_config)
+    print(
+    f"Ranking weights: Safety={args.motive_weights[0]:.3f}, "
+    f"Fuel={args.motive_weights[1]:.3f}",
+    flush=True,
+    )
     calculator = measure_idle_baseline(args.baseline_episodes, args.seed, args.gamma)
     print(f"Loading candidate policies from {args.pilot_checkpoint} ...", flush=True)
     env = SubRepEnv(seed=args.seed)

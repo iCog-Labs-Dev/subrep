@@ -4,7 +4,7 @@
 import numpy as np
 import pytest
 
-from generator import evaluate_candidate_filter as evaluator
+from generator import evaluate_candidate_filter as evaluator, ranking_config
 from generator.policy_registry import POLICY_NAMES
 
 
@@ -240,7 +240,7 @@ def test_evaluation_uses_only_saved_test_split(tmp_path, monkeypatch):
     captured = {}
 
     
-    def fake_evaluate_filter(groups, model, baseline_stats, k, seed):
+    def fake_evaluate_filter(groups, model, baseline_stats, k, seed, motive_weights=None):
        captured["groups"] = groups
 
        metrics = {
@@ -275,12 +275,92 @@ def test_evaluation_uses_only_saved_test_split(tmp_path, monkeypatch):
         "evaluate_filter",
         fake_evaluate_filter,
     )
-
+    ranking_config = tmp_path / "motive_weights.json"
+    ranking_config.write_text(
+      '{"motive_weights": {"safety": 0.5, "fuel": 0.5}, '
+      '"split_signature": "split-A"}',
+      encoding="utf-8",
+   )
     evaluator.main([
         "--split-manifest", str(tmp_path / "manifest.json"),
         "--model-path", str(tmp_path / "model.pt"),
         "--output-dir", str(tmp_path / "reports"),
+        "--ranking-config", str(ranking_config),
     ])
 
     assert list(captured["groups"]) == ["test-context"]
     assert "train-context" not in captured["groups"]
+def test_offline_filter_uses_configured_motive_weights(monkeypatch):
+    import torch
+
+    class MotiveModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.zeros(()))
+
+        def forward(self, obs, ids):
+            ids = ids.float()
+
+            payoff = torch.zeros(
+                len(ids), 1, device=ids.device
+            ) + self.anchor
+
+            motives = torch.stack(
+                [ids, len(POLICY_NAMES) - 1 - ids],
+                dim=1,
+            )
+            return payoff, motives
+
+    rows = [
+        {
+            "policy": name,
+            "obs": np.zeros(8),
+            "payoff": 0.0,
+            "motives": np.zeros(2),
+        }
+        for name in POLICY_NAMES
+    ]
+
+    groups = {"context-1": rows}
+
+    baseline = {
+        "baseline_payoff": 0.0,
+        "baseline_motives": [0.0, 0.0],
+    }
+
+    captured = []
+
+    def capture_assessment(groups, selections, baseline_stats):
+        captured.append(dict(selections))
+        return {}
+
+    monkeypatch.setattr(
+        evaluator,
+        "assess",
+        capture_assessment,
+    )
+
+    evaluator.evaluate_filter(
+        groups,
+        MotiveModel(),
+        baseline,
+        k=1,
+        motive_weights=(1.0, 0.0),
+    )
+
+    safety_selection = captured[0]["context-1"]
+    captured.clear()
+
+    evaluator.evaluate_filter(
+        groups,
+        MotiveModel(),
+        baseline,
+        k=1,
+        motive_weights=(0.0, 1.0),
+    )
+
+    fuel_selection = captured[0]["context-1"]
+
+    assert safety_selection == [POLICY_NAMES[-1]]
+    assert fuel_selection == [POLICY_NAMES[0]]
+    assert safety_selection != fuel_selection

@@ -131,7 +131,7 @@ python -m generator.evaluate_generator_report --model-path models/generator.pt -
 | `generator/dataset_split.py` | Computes and persists the train/val/test file assignment |
 | `generator/train_generator.py` | Trains on train split, selects best checkpoint via val split |
 | `generator/evaluate_generator_mse.py` | Test-split MSE per feature, vs. mean-outcome baseline |
-| `generator/evaluate_generator_report.py` | CDS/PDS admission, rejection reasons, baseline comparison, on held-out seeds |
+| `generator/evaluate_generator_report.py` | CDS or PDS admission, rejection reasons, baseline comparison, on held-out seeds |
 | `generator/compare_dataset_sizes.py` | Test MSE across multiple training-data sizes, fixed val/test |
 | `generator/skill_generator.py` | Model definition (unchanged) |
 | `certification/*`, `baseline/*` | Reused as-is; not modified |
@@ -146,11 +146,11 @@ python -m data_collector.collect_mixed_generator_data --episodes 1000 --save-dir
 python -m generator.multi_policy_pipeline train --data-dir data/raw_mixed --epochs 50
 python -m generator.multi_policy_pipeline evaluate --data-dir data/raw_mixed
 python -m generator.multi_policy_pipeline sizes --data-dir data/raw_mixed --sizes 100 300 500 --epochs 50
-python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 50
+python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 20
 python -m generator.evaluate_generator_report --multi-policy --data-dir data/raw_mixed
-python -u -m data_collector.run_filtered_candidates --contexts 20 --top-k 3 --baseline-episodes 50
+python -u -m data_collector.run_filtered_candidates --contexts 20 --top-k 3 --baseline-episodes 20
 ```
 
-The outputs are, respectively: `data/raw_mixed/*.npz`; model checkpoints in `models/` and `data/mixed_split_manifest.json`; `reports/multi_policy/prediction_metrics.json`; `reports/multi_policy/dataset_size_metrics.json`; `reports/multi_policy/filter_metrics.json` and `results_summary.md`; `reports/multi_policy/generator_evaluation_report.json`; and `reports/multi_policy/live_filter.json`. The offline filter uses previously measured candidate outcomes, whereas the live filter executes only selected candidates. Both compare with a freshly measured idle baseline and apply the unchanged CDS/PDS gates.
+The outputs are, respectively: `data/raw_mixed/*.npz`; model checkpoints in `models/` and `data/mixed_split_manifest.json`; `reports/multi_policy/prediction_metrics.json`; `reports/multi_policy/dataset_size_metrics.json`; `reports/multi_policy/filter_metrics.json` and `results_summary.md`; `reports/multi_policy/generator_evaluation_report.json`; and `reports/multi_policy/live_filter.json`. The offline filter uses previously measured candidate outcomes, whereas the live filter executes only selected candidates. Both compare with a freshly measured idle baseline and apply the unchanged CDS or PDS gates.
 
 See [`MULTI_POLICY_GENERATOR.md`](MULTI_POLICY_GENERATOR.md) for detailed command usage, configurable paths, and interpretation.

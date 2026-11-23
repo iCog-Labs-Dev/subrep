@@ -2,7 +2,7 @@
 
 ## Scope
 
-`PolicyConditionedSkillGenerator(obs, policy_id)` predicts rollout payoff and two motives (Safety and Fuel) for the nine existing candidate policies. The legacy `SkillGenerator(obs)` and existing single-policy/MDN workflows remain available and unchanged. Predictions are used only to select candidates; actual CDS/PDS certification always uses measured payoff and motives. The corrected fuel mapping and existing certification implementations are not modified.
+`PolicyConditionedSkillGenerator(obs, policy_id)` predicts rollout payoff and two motives (Safety and Fuel) for the nine existing candidate policies. The legacy `SkillGenerator(obs)` and existing single-policy/MDN workflows remain available and unchanged. Predictions are used only to select candidates; actual certification always uses measured payoff and motives and admits a candidate when either CDS or PDS passes. The corrected fuel mapping and existing certification implementations are not modified.
 
 All commands below run **from the repository root**. Each command is one line and works in Windows PowerShell. Install `requirements.txt` and provide the trained pilot checkpoint `models/pilot_ppo.pt` before collecting or running live policies. Use a fresh `data/raw_mixed` directory; do not mix records from older collections with different outcome definitions.
 
@@ -37,11 +37,7 @@ python -m generator.multi_policy_pipeline evaluate --data-dir data/raw_mixed
 
 Loads both saved checkpoints and the same split manifest. Evaluates only held-out test contexts. Compares **three** methods: `multi_policy`, `observation_only`, and `per_policy_training_mean`. The last predicts the mean measured payoff/Safety/Fuel **separately for each policy**, computed from training records only. Overall and per-policy MAE and MSE are reported for payoff, Safety, and Fuel. Lower is better.
 
-Output: `reports/multi_policy/prediction_metrics.json` (set folder with `--output-dir`). The printed JSON contains overall metrics; open the saved report for the per-policy breakdown. Equivalent wrapper:
-
-```bash
-python -m generator.evaluate_generator_mse --multi-policy --data-dir data/raw_mixed
-```
+Output: `reports/multi_policy/prediction_metrics.json` (set folder with `--output-dir`). The printed JSON contains overall metrics; open the saved report for the per-policy breakdown.
 
 ## 4. Compare training dataset sizes
 
@@ -63,27 +59,36 @@ python -m generator.compare_dataset_sizes --multi-policy --data-dir data/raw_mix
 python -m generator.evaluate_generator_report --multi-policy --data-dir data/raw_mixed
 ```
 
-Runs the integrated multi-policy report path on the held-out mixed dataset. It is distinct from the legacy `evaluate_generator_report` command, which evaluates the original single-policy generator and candidate-set certification workflow.
+Loads the trained checkpoints and saved split, then evaluates measured candidate outcomes on held-out contexts against an idle baseline. The report summarizes per-policy CDS and PDS certification results and is saved to `reports/multi_policy/generator_evaluation_report.json` by default. Override the output path with `--output`:
 
-Output: `reports/multi_policy/generator_evaluation_report.json`.
+
+## 6. Tune motive weights on validation data
+
+```bash
+python -m generator.tune_motive_weights --data-dir data/raw_mixed --fixed-top-k 3 --grid-step 0.1
+```
+
+Loads only the saved validation contexts and the policy-conditioned checkpoint. It searches a predefined Safety/Fuel simplex grid and selects the weights that maximize certification recall while keeping the execution budget fixed at top-3. Ties are broken by validation precision, then weights closest to equal, then lower Safety weight. It does not tune the generator or inspect test outcomes.
+
+Output: `reports/multi_policy/motive_weights.json`. This file stores all evaluated combinations and the selected weights. It is the frozen ranking configuration shared by offline and live filtering. Run this command before either filtering command. Re-run it when intentionally repeating the validation tuning procedure.
 
 ## 6. Evaluate candidate filtering offline
 
 ```bash
-python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 50
+python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 20 --ranking-config reports/multi_policy/motive_weights.json
 ```
 
-Uses complete **held-out** contexts with previously measured outcomes for all nine policies. Compares neural top-K, random top-K, fixed-order top-K (same execution budget), and all candidates (full budget). `--k 3` selects three of nine candidates per context. 
+Uses complete **held-out** contexts with previously measured outcomes for all nine policies. Compares neural top-K, random top-K, fixed-order top-K (same execution budget), and all candidates (full budget). The ranking weights are loaded from the validation-tuned configuration; the test split is not used to choose them. `--k 3` selects three of nine candidates per context. 
 
-Outputs: `reports/multi_policy/filter_metrics.json` (detailed metrics) and `reports/multi_policy/results_summary.md` (comparison table). The reported execution savings are **counterfactual**: collecting the offline benchmark still executed all nine candidates. Certifiable means passing **both** unchanged CDS and PDS checks on measured outcomes. Missed-certifiable rate counts certifiable candidates excluded by the filter. CDS/PDS admission rates are **not** task-success rates.
+Outputs: `reports/multi_policy/filter_metrics.json` (detailed metrics) and `reports/multi_policy/results_summary.md` (comparison table). The reported execution savings are **counterfactual**: collecting the offline benchmark still executed all nine candidates. Certifiable means passing **either** CDS or PDS checks on measured outcomes. Missed-certifiable rate counts certifiable candidates excluded by the filter. 
 
 ## 7. Run the live candidate filter
 
 ```bash
-python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 50
+python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 20 --ranking-config reports/multi_policy/motive_weights.json
 ```
 
-Runs a freshly measured idle baseline, predicts the nine policies at each starting context, executes only the top three candidates, and applies existing CDS/PDS checks to each measured rollout. With ten contexts and top-K of three, this executes **30 selected candidates** instead of 90, plus 50 separate idle-baseline episodes. `--contexts` sets the number of starting contexts; `--top-k` sets candidates executed per context; 
+Loads the same validation-tuned ranking configuration used by offline evaluation, predicts the nine policies at each starting context, executes only the top three candidates, and applies existing CDS or PDS checks to each measured rollout. With ten contexts and top-K of three, this executes **30 selected candidates** instead of 90, plus 20 separate idle-baseline episodes. `--contexts` sets the number of starting contexts; `--top-k` sets candidates executed per context;
 
 Output: `reports/multi_policy/live_filter.json` (override with `--output`). This is an opt-in experimental runtime.
 

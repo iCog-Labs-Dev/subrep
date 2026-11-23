@@ -14,7 +14,11 @@ from generator.multi_policy_data import (
     load_records, load_manifest, partition, group_contexts,
 )
 from generator.multi_policy_pipeline import load_model
-from generator.candidate_filter import select_top_k
+from generator.candidate_filter import (
+    make_predicted_score_fn,
+    select_top_k,
+)
+from generator.ranking_config import load_motive_weights
 from generator.policy_registry import POLICY_NAMES
 
 
@@ -82,7 +86,7 @@ def assess(groups, selections, baseline_stats):
     )
 
 
-def evaluate_filter(groups, model, baseline_stats, k=3, seed=42):
+def evaluate_filter(groups, model, baseline_stats, k=3, seed=42,  motive_weights=(0.5, 0.5),):
     import random
 
     rng = random.Random(seed)
@@ -90,14 +94,14 @@ def evaluate_filter(groups, model, baseline_stats, k=3, seed=42):
     random_selection = {}
     fixed = {}
     all_candidates = {}
-
+    score_fn = make_predicted_score_fn(baseline_stats,motive_weights,)
     fixed_order = ["ppo_deterministic"] + [
         policy for policy in POLICY_NAMES if policy != "ppo_deterministic"
     ]
 
     for context, rows in groups.items():
         names = [row["policy"] for row in rows]
-        neural[context] = select_top_k(model, rows[0]["obs"], names, k)
+        neural[context] = select_top_k(model,rows[0]["obs"], names,k,score_fn=score_fn,)
         random_selection[context] = rng.sample(sorted(names), k)
         fixed[context] = [name for name in fixed_order if name in names][:k]
         all_candidates[context] = names
@@ -125,6 +129,10 @@ def main(argv=None):
     )
     parser.add_argument("--baseline-episodes", type=int, default=20)
     parser.add_argument("--k", type=int, default=3)
+    parser.add_argument(
+    "--ranking-config",
+    default="reports/multi_policy/motive_weights.json",
+    help="Validation-tuned motive weights shared with live filtering",)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", default="reports/multi_policy")
     args = parser.parse_args(argv)
@@ -145,7 +153,9 @@ def main(argv=None):
     )
     if not conditioned:
         raise ValueError("Filter requires policy-conditioned model")
-
+    motive_weights = load_motive_weights(
+    args.ranking_config,
+    expected_split_signature=manifest["split_signature"],)
     from generator.evaluate_generator_report import compute_idle_baseline_stats
 
     baseline_stats = compute_idle_baseline_stats(
@@ -158,13 +168,30 @@ def main(argv=None):
         baseline_stats,
         k=args.k,
         seed=args.seed,
+        motive_weights=motive_weights,
     )
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    report = {
+      **result,
+      "ranking": {
+         "formula": (
+            "predicted_delta_payoff "
+            "+ safety_weight * predicted_delta_safety "
+            "+ fuel_weight * predicted_delta_fuel"
+         ),
+         "motive_weights": {
+            "safety": float(motive_weights[0]),
+            "fuel": float(motive_weights[1]),
+        },
+        "ranking_config": str(args.ranking_config),
+      },
+    }
+
     (out / "filter_metrics.json").write_text(
-        json.dumps(result, indent=2)
-    )
+    json.dumps(report, indent=2))
+
 
     lines = [
         "# Multi-policy candidate filter — offline held-out evaluation",
@@ -172,6 +199,7 @@ def main(argv=None):
         "All outcomes below were measured during complete candidate-set collection.",
         "Execution savings are **simulated**, not savings achieved while collecting the benchmark.",
         "CDS/PDS decisions use recorded outcomes and unchanged gates.",
+        f"Neural ranking score: predicted payoff improvement + weighted predicted motive improvements (Safety={motive_weights[0]:.3f}, Fuel={motive_weights[1]:.3f}).",
         "| Method | Executed | Savings | Certifiable found | Missed rate | CDS admit | PDS admit |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
