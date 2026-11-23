@@ -62,6 +62,9 @@ python -m generator.evaluate_generator_report --multi-policy --data-dir data/raw
 Loads the trained checkpoints and saved split, then evaluates measured candidate outcomes on held-out contexts against an idle baseline. The report summarizes per-policy CDS and PDS certification results and is saved to `reports/multi_policy/generator_evaluation_report.json` by default. Override the output path with `--output`:
 
 
+The policy-conditioned model standardises payoff, Safety, and Fuel targets using the training split's mean and standard deviation. Training loss is calculated in standardised space, while predictions are converted back to their original units before being returned. This prevents targets with larger numerical scales from dominating the loss. The observation-only baseline retains its existing training procedure. The noop policy's Fuel prediction is explicitly fixed at zero because it does not activate the engine; this is a structural policy constraint, not a certification decision.
+
+
 ## 6. Tune motive weights on validation data
 
 ```bash

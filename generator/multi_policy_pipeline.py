@@ -15,7 +15,7 @@ from generator.multi_policy_data import (
     load_records, load_manifest, load_or_create_manifest, partition,
     normalize_rollout_provenance,
 )
-from generator.policy_registry import POLICY_NAMES
+from generator.policy_registry import POLICY_NAMES, policy_index
 def dataset(rows):
     return TensorDataset(
         torch.tensor(np.stack([r["obs"] for r in rows]), dtype=torch.float32),
@@ -47,7 +47,19 @@ def fit(
         )
         if conditioned
         else SkillGenerator(hidden_dim=hidden_dim)
-    )
+    ) 
+    if conditioned:
+       targets = np.array(
+           [[row["payoff"], *row["motives"]] for row in rows],
+           dtype=np.float64,
+       )
+       model.target_mean.copy_(torch.tensor(targets.mean(0), dtype=torch.float32))
+       model.target_std.copy_(torch.tensor(
+          np.maximum(targets.std(0), 1e-6), dtype=torch.float32
+       ))
+       noop_id = policy_index("noop")
+       model.fixed_motive_mask[noop_id, 1] = True
+       model.fixed_motive_value[noop_id, 1] = 0.0
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     train_loader = DataLoader(dataset(rows), batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(dataset(validation), batch_size=batch_size)
@@ -62,10 +74,18 @@ def fit(
         for obs, ids, payoff, motives in train_loader:
             optimizer.zero_grad()
             pred_p, pred_m = model(obs, ids) if conditioned else model(obs)
-            loss = (
-                torch.nn.functional.mse_loss(pred_p, payoff)
-                + torch.nn.functional.mse_loss(pred_m, motives)
-            )
+            if conditioned:
+               mu, sd = model.target_mean, model.target_std
+               pred = torch.cat([pred_p, pred_m], dim=1)
+               true = torch.cat([payoff, motives], dim=1)
+               loss = torch.nn.functional.mse_loss(
+                  (pred - mu) / sd, (true - mu) / sd
+               )
+            else:
+              loss = (
+                 torch.nn.functional.mse_loss(pred_p, payoff)
+                 + torch.nn.functional.mse_loss(pred_m, motives)
+              )
             loss.backward()
             optimizer.step()
             training_losses.append((len(obs), float(loss.item())))
@@ -75,15 +95,19 @@ def fit(
             losses = []
             for obs, ids, payoff, motives in val_loader:
                 p, m = model(obs, ids) if conditioned else model(obs)
-                losses.append(
-                    (
-                        len(obs),
-                        float(
-                            torch.nn.functional.mse_loss(p, payoff)
-                            + torch.nn.functional.mse_loss(m, motives)
-                        ),
-                    )
+                if conditioned:
+                  mu, sd = model.target_mean, model.target_std
+                  pred = torch.cat([p, m], dim=1)
+                  true = torch.cat([payoff, motives], dim=1)
+                  val_batch_loss = torch.nn.functional.mse_loss(
+                  (pred - mu) / sd, (true - mu) / sd
                 )
+                else:
+                    val_batch_loss = (
+                      torch.nn.functional.mse_loss(p, payoff)
+                      + torch.nn.functional.mse_loss(m, motives)
+                     )
+                losses.append((len(obs), float(val_batch_loss)))
             val_loss = sum(n * loss for n, loss in losses) / sum(
                 n for n, _ in losses
             )
@@ -233,7 +257,22 @@ def load_model(
         if checkpoint["conditioned"]
         else SkillGenerator(hidden_dim=checkpoint["hidden_dim"])
     )
-    model.load_state_dict(checkpoint["state_dict"])
+    state_dict = checkpoint["state_dict"]
+    try:
+      model.load_state_dict(state_dict)
+    except RuntimeError as exc:
+       buffer_keys = {
+        "target_mean",
+        "target_std",
+        "fixed_motive_mask",
+        "fixed_motive_value",
+       }
+       missing_buffers = buffer_keys.intersection(model.state_dict()).difference(state_dict)
+       if checkpoint["conditioned"] and missing_buffers:
+           raise ValueError(
+            "Checkpoint predates target standardisation; retrain with the current pipeline"
+           )  from exc
+       raise
     model.eval()
     return model, checkpoint["conditioned"]
 

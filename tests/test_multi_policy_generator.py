@@ -31,7 +31,7 @@ def make_data(tmp_path, n=16):
                 skill_id=name,
                 payoff=float(policy_id + seed / 10),
                 motives=np.array(
-                    [policy_id / 10, -policy_id],
+                    [policy_id / 10, 0.0 if name == "noop" else -policy_id],
                     dtype=np.float32,
                 ),
                 terminated=True,
@@ -315,3 +315,60 @@ def test_checkpoint_rejects_runtime_rollout_mismatch(tmp_path):
                 "max_steps": -1,
             },
         )
+def test_conditioned_training_standardises_targets_and_fixes_noop_fuel(tmp_path):
+    rows = load_records(str(make_data(tmp_path)))
+    manifest = load_or_create_manifest(
+        rows,
+        str(tmp_path / "manifest.json"),
+    )
+    parts = partition(rows, manifest)
+
+    model, _ = fit(
+        parts["train"],
+        parts["val"],
+        epochs=1,
+        patience=1,
+    )
+
+    targets = np.array(
+        [[row["payoff"], *row["motives"]] for row in parts["train"]],
+        dtype=np.float64,
+    )
+    np.testing.assert_allclose(
+        model.target_mean.numpy(),
+        targets.mean(0).astype(np.float32),
+    )
+    np.testing.assert_allclose(
+        model.target_std.numpy(),
+        np.maximum(targets.std(0), 1e-6).astype(np.float32),
+    )
+
+    noop_id = policy_index("noop")
+    assert model.fixed_motive_mask[noop_id, 1]
+    assert model.fixed_motive_value[noop_id, 1].item() == 0.0
+
+    obs = torch.tensor(parts["train"][0]["obs"], dtype=torch.float32)
+    _, motives = model(obs, noop_id)
+    assert motives[1].item() == 0.0
+def test_checkpoint_without_target_standardisation_buffers_is_rejected(tmp_path):
+    rows = load_records(str(make_data(tmp_path)))
+    manifest = load_or_create_manifest(rows, str(tmp_path / "manifest.json"))
+    checkpoint = tmp_path / "old_model.pt"
+    save_model(
+        PolicyConditionedSkillGenerator(),
+        checkpoint,
+        conditioned=True,
+        manifest=manifest,
+    )
+    saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    for key in (
+        "target_mean",
+        "target_std",
+        "fixed_motive_mask",
+        "fixed_motive_value",
+    ):
+        saved["state_dict"].pop(key)
+    torch.save(saved, checkpoint)
+
+    with pytest.raises(ValueError, match="predates target standardisation"):
+        load_model(checkpoint, expected_manifest=manifest)

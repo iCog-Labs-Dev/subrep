@@ -127,6 +127,13 @@ class PolicyConditionedSkillGenerator(SkillGenerator):
         self.embedding_dim = embedding_dim
         self.num_policies = num_policies
         self.policy_embedding = nn.Embedding(num_policies, embedding_dim)
+        self.register_buffer("target_mean", torch.zeros(1 + motive_dim))
+        self.register_buffer("target_std", torch.ones(1 + motive_dim))
+        self.register_buffer(
+           "fixed_motive_mask",
+           torch.zeros(num_policies, motive_dim, dtype=torch.bool),
+        )
+        self.register_buffer("fixed_motive_value", torch.zeros(num_policies, motive_dim))
 
     def forward(self, obs: Tensor, policy_id: Tensor | int) -> tuple[Tensor, Tensor]:
         if obs.ndim not in (1, 2) or obs.shape[-1] != self.observation_dim:
@@ -143,4 +150,11 @@ class PolicyConditionedSkillGenerator(SkillGenerator):
             raise ValueError('Policy ID outside registry')
         features = torch.cat((batch, self.policy_embedding(ids)), dim=-1)
         payoff, motives = super().forward(features)
+        payoff = payoff * self.target_std[0] + self.target_mean[0]
+        motives = motives * self.target_std[1:] + self.target_mean[1:]
+        motives = torch.where(
+           self.fixed_motive_mask[ids],
+           self.fixed_motive_value[ids],
+           motives,
+      )
         return (payoff.squeeze(0), motives.squeeze(0)) if single else (payoff, motives)
