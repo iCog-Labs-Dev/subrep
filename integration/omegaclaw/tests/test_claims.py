@@ -163,7 +163,7 @@ WRONG_EXPLANATIONS = [
     ),
     pytest.param(
         f"{RANKING} Previously SubRep selected skill_speed.",
-        {"WRONG_SKILL_ROLE"},
+        {"UNKNOWN_SKILL"},
         id="skill-from-another-request-described-as-selected",
     ),
     pytest.param(
@@ -283,7 +283,7 @@ def test_abstention_must_not_name_a_selection():
     ) == set()
     assert _codes("In this synthetic scenario skill_safety was selected.", request) == {
         "ABSTENTION_NOT_STATED",
-        "WRONG_SKILL_ROLE",
+        "UNKNOWN_SKILL",
     }
 
 
@@ -311,3 +311,180 @@ def test_stage_description_passes_only_for_its_own_stage(skill_id, described_cod
         assert codes == set()
     else:
         assert codes == {"WRONG_EXCLUSION_STAGE"}
+
+
+def _signed_request() -> RecommendationRequest:
+    """skill_safety is selected at 0.82; the runner-up skill_negative scores -0.4."""
+
+    return _request(
+        admitted=(_skill("skill_safety", 0.2, 0.8, -0.1), _skill("skill_negative", -0.5, 0.1, 0.1))
+    )
+
+
+def _single_request() -> RecommendationRequest:
+    """skill_safety is the only admitted skill, so there is no runner-up."""
+
+    return _request(admitted=(_skill("skill_safety", 0.2, 0.8, -0.1),))
+
+
+SIGNED_SCORES = [
+    pytest.param(
+        f"{SELECTED}, ahead of skill_negative at 0.40.",
+        {"SCORE_MISMATCH"},
+        id="negative-score-written-as-positive",
+    ),
+    pytest.param(
+        "Using synthetic evidence, skill_safety was selected with a score of -0.82, ahead "
+        "of skill_negative at -0.40.",
+        {"SCORE_MISMATCH", "UNSUPPORTED_NUMBER"},
+        id="positive-score-written-as-negative",
+    ),
+    pytest.param(
+        f"{SELECTED}, ahead of skill_negative at -0.40.",
+        set(),
+        id="both-signs-correct",
+    ),
+    pytest.param(
+        f'{SELECTED}. "selected_score": -0.82, "runner_up_score": -0.4.',
+        {"SCORE_MISMATCH", "UNSUPPORTED_NUMBER"},
+        id="pasted-selected-score-with-the-wrong-sign",
+    ),
+    pytest.param(
+        f'{SELECTED}. "runner_up_score": 0.4.',
+        {"SCORE_MISMATCH"},
+        id="pasted-negative-runner-up-score-without-its-sign",
+    ),
+    pytest.param(
+        f'{SELECTED}. "selected_score": 0.82, "runner_up_score": -0.4.',
+        set(),
+        id="pasted-scores-with-correct-signs",
+    ),
+]
+
+
+@pytest.mark.parametrize(("explanation", "expected"), SIGNED_SCORES)
+def test_score_signs_are_checked_in_both_directions(explanation, expected):
+    assert _codes(explanation, _signed_request()) == expected
+
+
+SIGNED_NUMBERS = [
+    pytest.param(f"{RANKING} Its safety delta is -0.8.", {"UNSUPPORTED_NUMBER"}, id="flipped-delta"),
+    pytest.param(f"{RANKING} Its efficiency delta is +0.1.", set(), id="plus-sign-matches-a-positive-value"),
+    pytest.param(f"{RANKING} Its efficiency delta is -0.1.", set(), id="correct-negative-delta"),
+    pytest.param(f"{RANKING} Efficiency fell by 0.1.", set(), id="unsigned-size-of-a-decline"),
+]
+
+
+@pytest.mark.parametrize(("explanation", "expected"), SIGNED_NUMBERS)
+def test_an_explicit_sign_must_match_the_evidence(explanation, expected):
+    # +0.1 is allowed only because the admission margin is 0.1 in this request.
+    assert _codes(explanation) == expected
+
+
+PASTED_DECISION_FIELDS = [
+    pytest.param(
+        f"{RANKING} selected_skill_id: skill_unknown.",
+        _request,
+        {"WRONG_SKILL_ROLE"},
+        id="unknown-selected-skill-id",
+    ),
+    pytest.param(
+        f"{RANKING} runner_up_skill_id: skill_unknown.",
+        _request,
+        {"WRONG_SKILL_ROLE"},
+        id="unknown-runner-up-skill-id",
+    ),
+    pytest.param(
+        f"{RANKING} runner_up_skill_id: null.",
+        _request,
+        {"WRONG_SKILL_ROLE"},
+        id="null-runner-up-when-one-exists",
+    ),
+    pytest.param(
+        f"{SELECTED} as the only admitted skill. runner_up_skill_id: skill_unknown.",
+        _single_request,
+        {"WRONG_SKILL_ROLE"},
+        id="unknown-runner-up-when-there-is-none",
+    ),
+    pytest.param(
+        f"{SELECTED} as the only admitted skill. runner_up_skill_id: operator_pick.",
+        _single_request,
+        {"WRONG_SKILL_ROLE"},
+        id="excluded-skill-as-runner-up-when-there-is-none",
+    ),
+    pytest.param(
+        f"{SELECTED} as the only admitted skill. runner_up_skill_id: null.",
+        _single_request,
+        set(),
+        id="null-runner-up-when-there-is-none",
+    ),
+    pytest.param(
+        f"{RANKING} abstain: true.",
+        _request,
+        {"DECISION_MISMATCH"},
+        id="pasted-abstain-contradicts-the-selection",
+    ),
+    pytest.param(
+        f"{RANKING} score_gap: 0.28.",
+        _request,
+        {"SCORE_MISMATCH"},
+        id="pasted-score-gap-is-the-runner-up-score",
+    ),
+    pytest.param(
+        f"{RANKING} reason_code: no_admissible_skills.",
+        _request,
+        {"DECISION_MISMATCH"},
+        id="pasted-abstention-reason-on-a-selection",
+    ),
+    pytest.param(
+        f'{RANKING} \\"runner_up_skill_id\\": \\"skill_efficiency\\", \\"abstain\\": false.',
+        _request,
+        set(),
+        id="escaped-correct-pasted-fields",
+    ),
+    pytest.param(
+        f"{RANKING} The selected_skill_id is the field SubRep fills.",
+        _request,
+        set(),
+        id="field-named-in-prose-is-not-a-pasted-value",
+    ),
+]
+
+
+@pytest.mark.parametrize(("explanation", "build", "expected"), PASTED_DECISION_FIELDS)
+def test_pasted_decision_fields_are_compared_with_the_decision(explanation, build, expected):
+    assert _codes(explanation, build()) == expected
+
+
+def test_pasted_decision_fields_in_an_abstention():
+    request = _request(admitted=())
+    abstained = "No recommendation in this synthetic scenario."
+
+    assert _codes(f"{abstained} selected_skill_id: null, reason_code: no_admissible_skills.", request) == set()
+    assert _codes(f"{abstained} selected_skill_id: skill_safety.", request) == {"WRONG_SKILL_ROLE"}
+    assert _codes(f"{abstained} abstain: false.", request) == {"DECISION_MISMATCH"}
+
+
+UNKNOWN_SKILL_ROLES = [
+    pytest.param(f"{RANKING} skill_speed was the runner-up.", {"UNKNOWN_SKILL"}, id="unknown-runner-up"),
+    pytest.param(
+        f"{RANKING} skill_speed was excluded by the operator.",
+        {"UNKNOWN_SKILL"},
+        id="unknown-excluded-skill",
+    ),
+    pytest.param(
+        f"{RANKING} skill_speed scored 0.37.",
+        {"UNKNOWN_SKILL", "UNSUPPORTED_NUMBER"},
+        id="unknown-skill-given-a-score",
+    ),
+    pytest.param(
+        f"{RANKING} objective_deltas at 0.8 are evidence fields, not skills.",
+        set(),
+        id="request-field-is-not-an-unknown-skill",
+    ),
+]
+
+
+@pytest.mark.parametrize(("explanation", "expected"), UNKNOWN_SKILL_ROLES)
+def test_skills_outside_the_request_are_flagged_in_every_role(explanation, expected):
+    assert _codes(explanation) == expected

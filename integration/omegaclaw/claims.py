@@ -4,7 +4,8 @@ The checks are deliberately narrow. Each pattern matches a specific wrong claim
 (for example an operator exclusion described as a certification failure) in one
 clause, and a claim that is negated or hypothetical ("not a certification
 failure", "would have selected") is not counted. A paraphrase the patterns do not
-cover passes; the live evaluation estimates how often that happens.
+cover passes, so an explanation without findings has no errors detected by the
+checks; it is not proven accurate. A person reviews live responses for that.
 """
 
 from __future__ import annotations
@@ -164,14 +165,18 @@ _SELECTING_VERB = (
     r"(?:the\s+)?(?:skill\s+)?"
 )
 # A decision field pasted into the prose, as in '"runner_up_skill_id": "skill_safety"'.
-_FIELD_VALUE = r"\b{field}[\"'\s]*[:=][\"'\s]*"
-_SNAKE_CASE_NAME =r"(?<![\w-])(?P<name>[a-z][a-z0-9-]*_[a-z0-9_-]*[a-z0-9])(?![\w-])"
-_UNKNOWN_SELECTION = (
-    re.compile(_SNAKE_CASE_NAME + _SELECTED_AFTER_ID),
-    re.compile(_SELECTING_VERB + _SNAKE_CASE_NAME),
+_DECISION_FIELD = re.compile(
+    r"(?<![\w.])(?:subrep_decision\.)?(?P<field>selected_skill_id|runner_up_skill_id|abstain|"
+    r"selected_score|runner_up_score|score_gap|reason_code)\b"
+    r"[\"'\s\\]*(?:[:=]|\bis\b|\bwas\b|\bequals\b)[\"'\s\\]*"
+    r"(?P<value>null|none|true|false|[-+]?(?:\d+\.\d+|\.\d+|\d+)|[a-z][\w-]*)"
 )
+_SKILL_ID_FIELDS = ("selected_skill_id", "runner_up_skill_id")
+_SCORE_FIELDS = ("selected_score", "runner_up_score", "score_gap")
+_NULL_WORDS = frozenset({"null", "none"})
+_SNAKE_CASE_NAME = r"(?<![\w-])(?P<name>[a-z][a-z0-9-]*_[a-z0-9_-]*[a-z0-9])(?![\w-])"
 # A whole number counts only when no word follows it, so "(2 objectives)" is not a score.
-_NUMBER = r"(?P<number>-?(?:\d+\.\d+|\.\d+|\d+(?![\d.]*\s*[a-z%])))"
+_NUMBER = r"(?P<number>[-+]?(?:\d+\.\d+|\.\d+|\d+(?![\d.]*\s*[a-z%])))"
 _SCORE_AFTER_ID = (
     r"\s*(?:\(\s*(?:score\s*(?:of|=|:)?\s*)?|\s+at\s+|\s*[=:]\s*|,?\s+(?:with\s+)?"
     r"(?:a\s+|its\s+)?(?:final\s+)?(?:selection\s+)?score\s*(?:of|=|:)?\s*|\s+"
@@ -181,7 +186,7 @@ _SCORE_WORD = re.compile(
     r"\b(?:final\s+)?(?:selection\s+)?(?:score|scored)\s*(?:of|=|:|was|is|at)?\s*"
     r"(?:about\s+|approximately\s+|roughly\s+|~\s*)?" + _NUMBER
 )
-_DECIMAL = re.compile(r"(?<![\w.])-?(?:\d+\.\d+|\.\d+)(?![\w])")
+_DECIMAL = re.compile(r"(?<![\w.])[-+]?(?:\d+\.\d+|\.\d+)(?![\w])")
 _PERCENT = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*%")
 
 _EXECUTION_GENERIC = tuple(
@@ -215,6 +220,29 @@ _REAL_EVIDENCE = tuple(
 )
 _ABSTENTION_TERMS = ("abstain", "no admissible", "no recommendation")
 
+# Roles an explanation can give a skill that the request does not contain.
+_UNKNOWN_SKILL_ROLES = (
+    ("selected", re.compile(_SNAKE_CASE_NAME + _SELECTED_AFTER_ID)),
+    ("selected", re.compile(_SELECTING_VERB + _SNAKE_CASE_NAME)),
+    (
+        "the runner-up",
+        re.compile(
+            _SNAKE_CASE_NAME
+            + rf"\s+(?:was|is|remains|ranked\s+as|served\s+as)\s+(?:the\s+)?{_RUNNER_UP}"
+        ),
+    ),
+    ("the runner-up", re.compile(rf"{_RUNNER_UP}\s+(?:was|is)\s+" + _SNAKE_CASE_NAME)),
+    (
+        "excluded",
+        re.compile(
+            _SNAKE_CASE_NAME
+            + r"\s+(?:was|is|has\s+been|got)\s+(?:also\s+)?"
+            r"(?:excluded|removed|rejected|filtered\s+out|ruled\s+out)\b"
+        ),
+    ),
+    ("scored", re.compile(_SNAKE_CASE_NAME + _SCORE_AFTER_ID)),
+)
+
 
 def explanation_findings(request: RecommendationRequest, explanation: str) -> list[Finding]:
     """Return a factual finding for every wrong claim the checks recognise."""
@@ -223,6 +251,8 @@ def explanation_findings(request: RecommendationRequest, explanation: str) -> li
     findings: list[Finding] = []
     findings.extend(_decision_named(request, text))
     findings.extend(_role_claims(request, text))
+    findings.extend(_unknown_skill_claims(request, text))
+    findings.extend(_decision_field_claims(request, text))
     findings.extend(_exclusion_stage_claims(request, text))
     findings.extend(_score_claims(request, text))
     findings.extend(_unsupported_numbers(request, text))
@@ -280,21 +310,13 @@ def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
     decision = request.subrep_decision
     excluded = {exclusion.skill_id for exclusion in request.exclusions}
     actual = "abstained" if decision.abstain else f"selected {decision.selected_skill_id!r}"
-    findings = [
-        _finding(
-            "WRONG_SKILL_ROLE",
-            f"explanation describes {name!r} as selected, but it is not a skill in the "
-            f"request and SubRep {actual}",
-        )
-        for name in _unknown_selections(request, text)
-    ]
+    findings: list[Finding] = []
     for skill_id in _skill_ids(request):
         skill = _skill_pattern(skill_id)
         if skill_id != decision.selected_skill_id:
             selected = (
                 re.compile(skill + _SELECTED_AFTER_ID),
                 re.compile(_SELECTING_VERB + skill),
-                re.compile(_FIELD_VALUE.format(field="selected_skill_id") + skill),
             )
             if any(_asserted_in_a_sentence(pattern, text) for pattern in selected):
                 findings.append(
@@ -308,7 +330,6 @@ def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
         runner_forms = [
             rf"{skill}\s+(?:was|is|remains|ranked\s+as|served\s+as)\s+(?:the\s+)?{_RUNNER_UP}",
             rf"{_RUNNER_UP}\s+(?:was|is)\s+{skill}",
-            _FIELD_VALUE.format(field="runner_up_skill_id") + skill,
         ]
         if skill_id in excluded:
             # "excluded_skill, the runner-up" is only unambiguous for a skill that cannot
@@ -335,8 +356,8 @@ def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
     return findings
 
 
-def _unknown_selections(request: RecommendationRequest, text: str) -> set[str]:
-    """Skill-like names (snake_case) claimed as selected that the request does not contain.
+def _unknown_skill_claims(request: RecommendationRequest, text: str) -> list[Finding]:
+    """Skill-like names (snake_case) given a role, though the request does not contain them.
 
     Omega replays earlier requests from its history, so a model can name a skill
     from another request; request field names such as selected_skill_id are not skills.
@@ -348,13 +369,87 @@ def _unknown_selections(request: RecommendationRequest, text: str) -> set[str]:
         for reference in request.valid_evidence_refs()
         for segment in reference.split(".")
     )
-    names: set[str] = set()
+    roles: dict[str, set[str]] = {}
     for sentence in _SENTENCE_BREAK.split(text):
-        for pattern in _UNKNOWN_SELECTION:
+        for role, pattern in _UNKNOWN_SKILL_ROLES:
             for match in _asserted(pattern, sentence):
                 if match["name"] not in known:
-                    names.add(match["name"])
-    return names
+                    roles.setdefault(match["name"], set()).add(role)
+    return [
+        _finding(
+            "UNKNOWN_SKILL",
+            f"explanation describes {name!r} as {' and '.join(sorted(described))}, but no "
+            "skill with that ID is in the request",
+        )
+        for name, described in sorted(roles.items())
+    ]
+
+
+def _decision_field_claims(request: RecommendationRequest, text: str) -> list[Finding]:
+    """Compare decision fields pasted into the explanation with SubRep's own decision."""
+
+    decision = request.subrep_decision
+    known = {skill_id.lower() for skill_id in _skill_ids(request)}
+    findings: list[Finding] = []
+    seen: set[tuple[str, str]] = set()
+    for match in _DECISION_FIELD.finditer(text):
+        field, value = match["field"], match["value"]
+        if (field, value) in seen:
+            continue
+        seen.add((field, value))
+        finding = _decision_field_problem(field, value, decision, known)
+        if finding is not None:
+            findings.append(finding)
+    return findings
+
+
+def _decision_field_problem(field: str, value: str, decision: Any, known: set[str]) -> Finding | None:
+    expected = getattr(decision, field)
+    is_null = value in _NULL_WORDS
+    if field in _SKILL_ID_FIELDS:
+        if not is_null and "_" not in value and value not in known:
+            return None  # prose such as "selected_skill_id is the field", not a pasted value
+        stated = None if is_null else value
+        if stated == (None if expected is None else expected.lower()):
+            return None
+        unknown = "" if stated is None or stated in known else ", which is not a skill in the request"
+        return _finding(
+            "WRONG_SKILL_ROLE",
+            f"explanation states {field} {value!r}{unknown}, but SubRep's decision has "
+            f"{expected!r}",
+        )
+    if field == "abstain":
+        if value not in {"true", "false"} or (value == "true") == decision.abstain:
+            return None
+        return _finding(
+            "DECISION_MISMATCH",
+            f"explanation states abstain {value}, but SubRep's decision has abstain "
+            f"{str(decision.abstain).lower()}",
+        )
+    if field in _SCORE_FIELDS:
+        numeric = re.fullmatch(r"[-+]?(?:\d+\.\d+|\.\d+|\d+)", value) is not None
+        if not numeric and not is_null:
+            return None
+        if is_null and expected is None:
+            return None
+        if numeric and expected is not None and _matches(value, expected):
+            return None
+        return _finding(
+            "SCORE_MISMATCH",
+            f"explanation states {field} {value}, but SubRep's decision has "
+            f"{'null' if expected is None else format(expected, '.6g')}",
+        )
+    # reason_code
+    if not is_null and "_" not in value:
+        return None  # prose such as "reason_code is the reason", not a pasted value
+    if is_null and expected is None:
+        return None
+    if expected is not None and value == expected.lower():
+        return None
+    return _finding(
+        "DECISION_MISMATCH",
+        f"explanation states reason_code {value}, but SubRep's decision has {expected!r}",
+    )
 
 
 def _asserted_in_a_sentence(pattern: re.Pattern[str], text: str) -> bool:
@@ -473,13 +568,32 @@ def _last_mention_end(clause: str, skill_id: str, before: int) -> int:
     return ends[-1] if ends else before
 
 
-def _matches(written: str, value: float) -> bool:
-    """True when ``written`` is ``value`` rounded or truncated to the shown decimals."""
+def _tolerance(written: str) -> float:
+    """Half a unit of the last decimal shown, so rounding or truncation still matches."""
 
-    number = abs(float(written))
     decimals = len(written.split(".", 1)[1]) if "." in written else 0
-    tolerance = 0.5 * 10 ** (-decimals) + 1e-9
-    return abs(number - abs(value)) <= tolerance
+    return 0.5 * 10 ** (-decimals) + 1e-9
+
+
+def _matches(written: str, value: float) -> bool:
+    """True when ``written`` is ``value`` to the shown decimals, sign included.
+
+    Used for scores: a score of -0.4 written as 0.4 is a wrong score.
+    """
+
+    return abs(float(written) - value) <= _tolerance(written)
+
+
+def _matches_number(written: str, value: float) -> bool:
+    """Like ``_matches`` when a sign is written; otherwise compare sizes only.
+
+    An unsigned number may describe a decline ("safety fell by 0.1" for a delta of
+    -0.1), so only an explicit sign is held to the sign of the evidence.
+    """
+
+    if written[0] in "+-":
+        return _matches(written, value)
+    return abs(float(written) - abs(value)) <= _tolerance(written)
 
 
 def _unsupported_numbers(request: RecommendationRequest, text: str) -> list[Finding]:
@@ -490,13 +604,12 @@ def _unsupported_numbers(request: RecommendationRequest, text: str) -> list[Find
     unsupported: list[str] = []
     for match in _PERCENT.finditer(stripped):
         written = match.group(1)
-        decimals = len(written.split(".", 1)[1]) if "." in written else 0
         value = float(written) / 100.0
-        tolerance = 0.5 * 10 ** (-(decimals + 2)) + 1e-9
-        if not any(abs(value - candidate) <= tolerance for candidate in allowed):
+        tolerance = _tolerance(written) / 100.0
+        if not any(abs(value - abs(candidate)) <= tolerance for candidate in allowed):
             unsupported.append(match.group(0))
     for match in _DECIMAL.finditer(_PERCENT.sub(" ", stripped)):
-        if not any(_matches(match.group(0), candidate) for candidate in allowed):
+        if not any(_matches_number(match.group(0), candidate) for candidate in allowed):
             unsupported.append(match.group(0))
     if not unsupported:
         return []
@@ -509,14 +622,13 @@ def _unsupported_numbers(request: RecommendationRequest, text: str) -> list[Find
 
 
 def _allowed_numbers(request: RecommendationRequest) -> list[float]:
-    """Every number in the request, plus the products and gaps a score explanation uses."""
+    """Every number in the request, with its sign, plus the products and gaps a score
+    explanation uses. Gaps between scores are sizes, so they are positive."""
 
-    values = [abs(value) for value in _numeric_leaves(request.to_dict())]
+    values = list(_numeric_leaves(request.to_dict()))
     weights = {item.objective_id: item.weight for item in request.objective_weights}
     for skill in request.admitted_skills:
-        values.extend(
-            abs(weights[name] * delta) for name, delta in skill.objective_deltas.items()
-        )
+        values.extend(weights[name] * delta for name, delta in skill.objective_deltas.items())
     scores = [skill.score for skill in request.admitted_skills]
     values.extend(abs(a - b) for index, a in enumerate(scores) for b in scores[index + 1 :])
     values.append(1.0)
