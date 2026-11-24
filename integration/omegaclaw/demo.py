@@ -60,6 +60,15 @@ def _parser() -> argparse.ArgumentParser:
         default=1,
         help="Run every selected scenario this many times, one full pass at a time.",
     )
+    parser.add_argument(
+        "--first-trial",
+        type=_positive_int,
+        default=1,
+        help=(
+            "Number of the first trial in this run, for a script that restarts Omega "
+            "between trials and calls the demo once per trial."
+        ),
+    )
     return parser
 
 
@@ -71,7 +80,23 @@ def _positive_int(value: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.backend == "live":
+        missing = [
+            flag
+            for flag, value in (
+                ("--provider", args.provider),
+                ("--model", args.model),
+                ("--omega-image", args.omega_image),
+            )
+            if not (value and value.strip())
+        ]
+        if missing:
+            parser.error(
+                f"live runs must record {', '.join(missing)} so the report shows what was "
+                "tested; for Omega outside Docker, pass its version or commit as --omega-image"
+            )
     audit_store = JsonlAuditStore(args.audit_path)
     settings = {
         "timeout": args.timeout,
@@ -81,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         "omega_image": args.omega_image,
         "scenario_names": args.scenario,
         "repeat": args.repeat,
+        "first_trial": args.first_trial,
     }
 
     if args.backend == "synthetic":
@@ -126,6 +152,7 @@ def _run_scenarios(
     omega_image: str | None,
     scenario_names: list[str] | None,
     repeat: int,
+    first_trial: int = 1,
 ) -> int:
     adapter = OmegaRecommendationAdapter(
         backend=backend,
@@ -140,7 +167,7 @@ def _run_scenarios(
         for scenario in predefined_scenarios()
         if not selected_names or scenario.name in selected_names
     )
-    for trial in range(1, repeat + 1):
+    for trial in range(first_trial, first_trial + repeat):
         for scenario in scenarios:
             started_at = perf_counter()
             outcome = service.recommend_from_library(
@@ -181,7 +208,7 @@ def _run_scenarios(
 
 
 def summarize(results: list[dict]) -> dict:
-    """Summarise outcomes, response format, and factual accuracy as separate measures."""
+    """Summarise outcomes, response format, and the factual checks as separate measures."""
 
     latencies = sorted(float(item["latency_seconds"]) for item in results)
     outcomes = [item["outcome"] for item in results]
@@ -228,19 +255,21 @@ def _format_summary(attempts: list[dict], first_attempts: list[dict]) -> dict:
 
 
 def _factual_summary(attempts: list[dict], first_attempts: list[dict]) -> dict:
-    """Did what Omega said match the SubRep evidence, by the automated checks?"""
+    """How often the automated checks found no factual error.
+
+    The checks match known error patterns, so "no errors detected by the checks" is
+    not proof that an explanation is accurate; people review the responses for that.
+    """
 
     checked = [attempt for attempt in attempts if attempt.get("explanation_checked")]
     first_checked = [attempt for attempt in first_attempts if attempt.get("explanation_checked")]
-    accurate = [attempt for attempt in checked if not _codes(attempt, FACTUAL_FINDING)]
-    first_accurate = [
-        attempt for attempt in first_checked if not _codes(attempt, FACTUAL_FINDING)
-    ]
+    clean = [attempt for attempt in checked if not _codes(attempt, FACTUAL_FINDING)]
+    first_clean = [attempt for attempt in first_checked if not _codes(attempt, FACTUAL_FINDING)]
     return {
         "checked_attempt_count": len(checked),
-        "accurate_attempt_count": len(accurate),
-        "accuracy_rate": _rate(len(accurate), len(checked)),
-        "first_attempt_accuracy_rate": _rate(len(first_accurate), len(first_checked)),
+        "no_errors_detected_count": len(clean),
+        "no_errors_detected_rate": _rate(len(clean), len(checked)),
+        "first_attempt_no_errors_detected_rate": _rate(len(first_clean), len(first_checked)),
         "finding_counts": _finding_counts(checked, FACTUAL_FINDING),
     }
 
@@ -263,18 +292,28 @@ def _rate(count: int, total: int) -> float | None:
 
 
 def _subrep_commit() -> str | None:
+    """The commit the run used, marked when tracked files differ from it."""
+
     try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            check=True,
-            cwd=Path(__file__).resolve().parent,
-            text=True,
-            timeout=10,
-        )
+        commit = _git("rev-parse", "HEAD")
+        changed = _git("status", "--porcelain", "--untracked-files=no")
     except (OSError, subprocess.SubprocessError):
         return None
-    return completed.stdout.strip() or None
+    if not commit:
+        return None
+    return f"{commit} (with uncommitted changes)" if changed else commit
+
+
+def _git(*arguments: str) -> str:
+    completed = subprocess.run(
+        ["git", *arguments],
+        capture_output=True,
+        check=True,
+        cwd=Path(__file__).resolve().parent,
+        text=True,
+        timeout=10,
+    )
+    return completed.stdout.strip()
 
 
 if __name__ == "__main__":

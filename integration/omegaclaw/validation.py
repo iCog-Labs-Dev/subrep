@@ -32,7 +32,7 @@ class ResponseAssessment:
     """Every finding for one raw response, plus the parsed response when it parses.
 
     ``explanation_checked`` is false when the response had no explanation to check,
-    so its factual accuracy is unknown rather than perfect.
+    so the factual checks could not run on it, which is not the same as passing them.
     """
 
     response: OmegaRecommendationResponse | None
