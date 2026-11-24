@@ -560,3 +560,81 @@ def test_a_landing_reads_safer_than_a_crash():
     assert securing(after_crash) > securing(after_landing)
     assert crash_signal.weights[SAFETY] > landing_signal.weights[SAFETY]
     assert crash_signal.pds_epsilon <= landing_signal.pds_epsilon
+
+
+# ---------------------------------------------------------------------------
+# The trained MDN and the gate configurations
+# ---------------------------------------------------------------------------
+
+TRAINED_MDN = Path(__file__).resolve().parent.parent / "models" / "lunar_mdn.pth"
+
+
+def test_the_trained_lunar_mdn_loads_into_the_runtime_pipeline():
+    """The tracked MDN gives valid concentrations and a non-empty region at start observations."""
+    from demo.run_lunar_lander_metamo import build_pipeline, mdn_view
+
+    pipeline = build_pipeline(seed=CONTROLLER_SEED, gates="cvar", cvar_samples=1000, mdn_path=TRAINED_MDN)
+    env = SubRepEnv(seed=SEEDS[0])
+    try:
+        for seed in SEEDS:
+            observation, _ = env.reset(seed=seed)
+            view = mdn_view(pipeline.model, observation)
+            concentration = np.asarray(view["concentration"])
+            support = np.asarray(view["support"])
+            assert concentration.shape == (NUM_OBJECTIVES,)
+            assert np.all(np.isfinite(concentration)) and np.all(concentration > 0.0)
+            assert np.all((support >= 0.0) & (support <= 1.0))
+            assert support.sum() >= 1.0 - 1e-6
+            # Fitted to a schedule that weighs Safety 0.7-0.8.
+            assert 0.65 <= view["mean"][SAFETY] <= 0.85
+    finally:
+        env.close()
+
+
+@pytest.fixture(scope="module")
+def ci_records():
+    """(baseline_stats, records) on SEEDS for the candidates that all crash."""
+    env = SubRepEnv(seed=SEEDS[0])
+    try:
+        candidates = ci_candidates(env)
+        return [evaluate_candidates(env, candidates, seed=seed) for seed in SEEDS]
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("mdn", ["untrained", "trained"])
+@pytest.mark.parametrize("gates", ["pds", "cvar", "pds-or-cvar"])
+def test_no_configuration_admits_a_task_failure(ci_records, gates, mdn):
+    """With the epsilon scale, crashes are rejected before any gate, at the loosest budgets."""
+    from bridge.controller import MetaMoController
+    from bridge.governor import FakeGovernor
+    from bridge.protocol import GovernorSignal
+    from demo.run_lunar_lander_metamo import build_pipeline
+    from env.lunar_lander_metamo import lunar_lander_epsilon_scale
+
+    scale = lunar_lander_epsilon_scale()
+    sig = GovernorSignal(
+        weights=np.full(NUM_OBJECTIVES, 1.0 / NUM_OBJECTIVES),
+        pds_epsilon=EPSILON_MAX,
+        cvar_tail_level=BudgetCoefficients().alpha_max,
+    )
+    for baseline_stats, records in ci_records:
+        assert all(scale.fails_task(r, baseline_stats) for r in records)
+        controller = MetaMoController(
+            FakeGovernor([sig]),
+            build_pipeline(
+                seed=CONTROLLER_SEED,
+                gates=gates,
+                cvar_samples=1000,
+                mdn_path=None if mdn == "untrained" else TRAINED_MDN,
+            ),
+            seed=CONTROLLER_SEED,
+            epsilon_scale=scale,
+        )
+        certified = controller.certify(
+            context=np.asarray(baseline_stats["info"]["start_obs"]),
+            candidate_skills=records,
+            baseline_stats=baseline_stats,
+            signal=sig,
+        )
+        assert not any(r.is_certified for r in certified), (gates, mdn)

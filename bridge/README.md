@@ -417,6 +417,34 @@ come from the start-state candidates.
 
 ---
 
+## MetaMo weights and the MDN region
+
+Four weight objects meet in the loop, and they answer different questions:
+
+| Object | Comes from | Used for |
+|---|---|---|
+| w_t | MetaMo (`w_meta`) | selection: which admitted skill runs now |
+| Dirichlet(α_MDN(x)) | the MDN's concentration head at context x | CVaR: the weights a skill must be robust to |
+| the MDN support region {w : wᵢ ≤ sᵢ(x)} | the MDN's support head at x | the weights the MDN considers plausible at x |
+| the pipeline's W_x store | the weights certified skills were selected with at x | the PDS and CDS region, when a context recurs |
+
+**The rule.** MetaMo chooses the weights used now; the MDN supplies the
+weights a skill must be robust to. A CVaR certificate at x speaks for the
+weights the Dirichlet puts its mass on, which the support region bounds, so it
+covers w_t only if w_t lies inside that region.
+
+**The membership test** is `inside_support_region(w, s)` in `weights.py`: inside
+when wᵢ ≤ sᵢ for every i, within 1e-6. It is the definition goal decomposition
+already uses to refuse priorities outside the MDN's region
+(`decomposition/verifier.py`, `Priorities`), restated here so the bridge does
+not import goal decomposition. It is exact and works for any number of
+objectives.
+
+**Outside the region.** The demo reports, on every step where an MDN is given
+or CVaR is in use, whether w_t is inside (`w_t_inside_mdn_region`). A step
+outside the region changes no verdict: the configured gates decide as they
+would anyway.
+
 ## Known limitation: OR semantics + an untrained MDN
 
 The demo runs `gate_type="PDS"`, `use_cvar=True`, `require_cds_or_cvar=True`,
@@ -425,9 +453,16 @@ There is no AND mode.
 
 With an **untrained** MDN the Dirichlet concentration is arbitrary and the CVaR
 gate admits nearly everything, so it can overrule PDS rejections and ε stops
-being observable in the admitted count. The demo prints a PDS-only column
-alongside for exactly this reason. Train the MDN, or switch to `PDS` without
-`use_cvar`, before drawing conclusions about gate behaviour.
+being observable in the admitted count. Switch to `PDS` without `use_cvar`
+before drawing conclusions about gate behaviour.
+
+A trained MDN does not remove the problem; it changes which candidates CVaR
+lets through. On LunarLander (seeds 1–40, the task-failure guard first), the
+untrained MDN's CVaR admits slightly fewer than PDS, while the trained one,
+fitted to weigh Safety at about 0.73, admits 90–95 of 97 timeouts that PDS
+rejects, at every tail level tested. The LunarLander demo therefore reports
+PDS, CVaR, OR and AND apart whenever an MDN is given or CVaR is in use
+(`docs/subrep_metamo_integration.md`, "Trained MDN and CVaR").
 
 Every assertion in `test_bridge_e2e.py` that concerns ε or abstention runs with
 `use_cvar=False` for this reason.
