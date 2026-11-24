@@ -23,6 +23,10 @@ What to watch:
   * With `--risk task`, `risk` is the stimulus risk MetaMo received: the flown
     episode's own danger (env/lunar_lander_rollout.py, `task_risk_of`), plus
     the rejection penalty for an abstention.
+  * With `--governor fixed`, the weights, eps and alpha stay constant: by
+    default MetaMo's own starting signal, held. The fixed governor has no
+    modulators and does not appraise outcomes, so the modulator columns read
+    `n/a`, and with `--risk task` the recorded feedback is null.
 
 Current behaviour the summary measures rather than assumes:
   * MetaMo's caution modulators follow the outcomes rather than pinning at 1.0,
@@ -55,10 +59,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bridge._loader import find_metamo_root  # noqa: E402
-from bridge.budget import BudgetCoefficients  # noqa: E402
+from bridge.budget import MODULATOR_NEUTRAL, BudgetCoefficients  # noqa: E402
 from bridge.controller import MetaMoController  # noqa: E402
 from bridge.epsilon_scale import EpsilonScale  # noqa: E402
-from bridge.protocol import SkillOutcome  # noqa: E402
+from bridge.governor import FakeGovernor  # noqa: E402
+from bridge.protocol import GovernorSignal, SkillOutcome  # noqa: E402
 from certification.pds_test import PDSGate  # noqa: E402
 from data_collector.collect_candidate_sets import (  # noqa: E402
     CandidatePolicy,
@@ -66,8 +71,11 @@ from data_collector.collect_candidate_sets import (  # noqa: E402
     _random_policy,
 )
 from env.lunar_lander_metamo import (  # noqa: E402
+    LUNAR_LANDER_INITIAL_GOALS,
+    LUNAR_LANDER_MODULATOR_GAIN,
     LUNAR_LANDER_OBJECTIVES,
     lunar_lander_epsilon_scale,
+    lunar_lander_weights,
     make_lunar_lander_governor,
 )
 from env.lunar_lander_rollout import (  # noqa: E402
@@ -92,6 +100,22 @@ OBS_DIM = 8
 SAFETY = 0
 SATURATION_LEVEL = 0.95
 EPSILON_MAX = BudgetCoefficients().epsilon_max
+FIXED_NOTE = "constant signal; outcomes reach the governor but do not change it"
+
+
+def starting_signal() -> GovernorSignal:
+    """MetaMo's signal before any outcome: the initial goals, every modulator neutral.
+
+    The fixed governor's default, so `--governor fixed` means "MetaMo frozen at
+    its starting point". Computed from the LunarLander mapping, without MetaMo.
+    """
+    coefficients = BudgetCoefficients()
+    modulators = np.full(LUNAR_LANDER_MODULATOR_GAIN.shape[1], MODULATOR_NEUTRAL)
+    return GovernorSignal(
+        weights=lunar_lander_weights(LUNAR_LANDER_INITIAL_GOALS, modulators),
+        pds_epsilon=coefficients.epsilon_0,
+        cvar_tail_level=coefficients.alpha_0,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -236,19 +260,25 @@ def summarise(
     """Measured diagnostics over the run.
 
     With an epsilon scale, also the number of task-failure rejections and the
-    PDS tolerance range.
+    PDS tolerance range. Without modulators (the fixed governor), the Securing
+    range and saturation step are None.
     """
     eps = [s["signal"]["epsilon"] for s in steps]
     alpha = [s["signal"]["alpha"] for s in steps]
-    securing = [s["modulators"]["securing"] for s in steps]
+    securing = [s["modulators"]["securing"] for s in steps if s["modulators"]]
     saturated_at = next(
-        (s["step"] for s in steps if s["modulators"]["securing"] >= SATURATION_LEVEL),
+        (
+            s["step"]
+            for s in steps
+            if s["modulators"] and s["modulators"]["securing"] >= SATURATION_LEVEL
+        ),
         None,
     )
     summary = {
         "epsilon_range": [min(eps), max(eps)],
         "alpha_range": [min(alpha), max(alpha)],
-        "securing_range": [min(securing), max(securing)],
+        # None when the governor has no modulators (`--governor fixed`).
+        "securing_range": [min(securing), max(securing)] if securing else None,
         "first_weights": steps[0]["signal"]["weights"],
         "last_weights": steps[-1]["signal"]["weights"],
         "admitted_total": sum(s["admitted_count"] for s in steps),
@@ -306,6 +336,22 @@ def parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         "the baseline, as before",
     )
     parser.add_argument(
+        "--governor",
+        choices=("metamo", "fixed"),
+        default="metamo",
+        help="metamo: MetaMo sets the weights, eps and alpha every step; fixed: they "
+        "stay constant (--weights, --epsilon, --alpha; by default MetaMo's starting signal)",
+    )
+    parser.add_argument(
+        "--weights",
+        default=None,
+        help="fixed governor only: the constant weights, as Safety,Fuel on the simplex",
+    )
+    parser.add_argument("--epsilon", type=float, default=None,
+                        help="fixed governor only: the constant PDS budget eps")
+    parser.add_argument("--alpha", type=float, default=None,
+                        help="fixed governor only: the constant CVaR tail level alpha")
+    parser.add_argument(
         "--no-selection",
         choices=("noop", "stop"),
         default="noop",
@@ -318,7 +364,45 @@ def parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.steps < 1:
         parser.error("--steps must be >= 1")
+    args.fixed_signal = None
+    fixed_options = [
+        name for name, value in
+        (("--weights", args.weights), ("--epsilon", args.epsilon), ("--alpha", args.alpha))
+        if value is not None
+    ]
+    if args.governor != "fixed":
+        if fixed_options:
+            parser.error(f"{', '.join(fixed_options)} needs --governor fixed")
+        return args
+    start = starting_signal()
+    try:
+        weights = (
+            start.weights if args.weights is None
+            else [float(v) for v in args.weights.split(",")]
+        )
+        if len(weights) != NUM_OBJECTIVES:
+            raise ValueError(
+                f"--weights needs {NUM_OBJECTIVES} values "
+                f"({','.join(LUNAR_LANDER_OBJECTIVES)}), got {len(weights)}"
+            )
+        args.fixed_signal = GovernorSignal(
+            weights=np.asarray(weights, dtype=np.float64),
+            pds_epsilon=start.pds_epsilon if args.epsilon is None else args.epsilon,
+            cvar_tail_level=start.cvar_tail_level if args.alpha is None else args.alpha,
+        )
+    except ValueError as error:
+        parser.error(str(error))
     return args
+
+
+def _modulators_text(modulators: Optional[Dict[str, float]]) -> str:
+    """The Securing, Threshold and Approach columns of a row, or n/a without modulators."""
+    if not modulators:
+        return f"{'n/a':>6} {'n/a':>6} {'n/a':>6}"
+    return (
+        f"{modulators['securing']:>6.3f} "
+        f"{modulators['threshold']:>6.3f} {modulators['approach']:>6.3f}"
+    )
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -344,11 +428,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         first = evaluate_candidates(env, candidates, seed=seeds[0])
         payoff_scale, motive_scale = appraisal_scales(first[1])
 
-        governor = make_lunar_lander_governor(
-            payoff_scale=payoff_scale,
-            motive_scale=motive_scale,
-            cvar_samples=args.cvar_samples,
-        )
+        fixed = args.governor == "fixed"
+        if fixed:
+            governor = FakeGovernor([args.fixed_signal])
+        else:
+            governor = make_lunar_lander_governor(
+                payoff_scale=payoff_scale,
+                motive_scale=motive_scale,
+                cvar_samples=args.cvar_samples,
+            )
         pipeline = build_pipeline(
             seed=args.seed, use_cvar=args.cvar, cvar_samples=args.cvar_samples
         )
@@ -374,6 +462,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         task_risk = args.risk == "task"
         if task_risk:
             config["risk"] = "task"
+        # Likewise only for the fixed governor.
+        if fixed:
+            config["governor"] = {
+                "kind": "fixed",
+                "weights": [float(w) for w in args.fixed_signal.weights],
+                "epsilon": args.fixed_signal.pds_epsilon,
+                "alpha": args.fixed_signal.cvar_tail_level,
+                "note": FIXED_NOTE,
+            }
 
         print("=" * 100)
         print("MetaMo -> SubRep, MO-LunarLander (2 objectives: Safety, Fuel)")
@@ -383,7 +480,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"gates: {config['gates']}   nothing admitted: {args.no_selection}   "
               f"MetaMo commit: {config['metamo_commit']}")
         print(f"appraisal scales: payoff={payoff_scale:.3f}  motive={motive_scale:.3f}")
-        if task_risk:
+        if fixed:
+            print(f"governor: fixed ({_weights_text(args.fixed_signal.weights)}  "
+                  f"eps={args.fixed_signal.pds_epsilon:g}  "
+                  f"alpha={args.fixed_signal.cvar_tail_level:g}); {FIXED_NOTE}")
+        if task_risk and fixed:
+            print("risk fed back: the flown episode's task danger (crash, landing or neither); "
+                  "the fixed governor does not appraise it, so the `risk` column is n/a")
+        elif task_risk:
             print("risk fed back: the flown episode's task danger (crash, landing or neither); "
                   "the `risk` column is the stimulus risk MetaMo received")
         if scale is not None:
@@ -474,7 +578,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "epsilon": float(record.pds_epsilon),
                     "alpha": float(record.cvar_tail_level),
                 },
-                "modulators": {k: float(v) for k, v in record.modulators.items()},
+                "modulators": (
+                    None if fixed else {k: float(v) for k, v in record.modulators.items()}
+                ),
                 "candidate_count": record.candidate_count,
                 "admitted_count": record.admitted_count,
                 "pds_only_admitted": pds_admitted_count(
@@ -491,7 +597,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             if scale is not None:
                 step["pds_tolerance"] = float(record.pds_tolerance)
                 step["task_failures"] = int(record.task_failures)
-            if task_risk:
+            if task_risk and fixed:
+                # The fixed governor does not appraise outcomes, so there is no
+                # stimulus to record; the flown outcome is in the flown_* fields.
+                step["feedback"] = None
+            elif task_risk:
                 stimulus = governor.last_stimulus
                 step["feedback"] = {
                     "admitted": selected is not None,
@@ -508,11 +618,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                 shown = "STOP"
             else:
                 shown = "-"
-            mods = step["modulators"]
             weights = step["signal"]["weights"]
             print(
-                f"{step['step']:>4} {seed:>4} {mods['securing']:>6.3f} "
-                f"{mods['threshold']:>6.3f} {mods['approach']:>6.3f} "
+                f"{step['step']:>4} {seed:>4} {_modulators_text(step['modulators'])} "
                 f"{step['signal']['epsilon']:>7.4f}"
                 + (f" {step['pds_tolerance']:>6.1f}" if scale is not None else "")
                 + f" {step['signal']['alpha']:>6.3f} "
@@ -522,7 +630,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 + (f" {step['pds_only_admitted']:>4}" if args.cvar else "")
                 + f"  {shown:<22} {flown['result']:<8} "
                 f"{flown['delta_r']:>+8.1f} {min(flown['delta_n']):>+9.1f}"
-                + (f" {step['feedback']['risk']:>5.2f}" if task_risk else "")
+                + (
+                    (f" {'n/a':>5}" if fixed else f" {step['feedback']['risk']:>5.2f}")
+                    if task_risk else ""
+                )
             )
             if args.verbose:
                 for c in step_candidates:
@@ -542,7 +653,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         env.close()
 
     summary = summarise(steps, scale)
-    final_modulators = governor.modulator_summary()
+    final_modulators = None if fixed else governor.modulator_summary()
 
     print("-" * len(header))
     print(f"eps   range: [{summary['epsilon_range'][0]:.4f}, {summary['epsilon_range'][1]:.4f}]   "
@@ -554,14 +665,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("selections: " + ", ".join(f"{k}={v}" for k, v in summary["selections"].items()))
     print("flown results: " + ", ".join(f"{k}={v}" for k, v in summary["results"].items()))
     saturated = summary["securing_saturated_at_step"]
-    print(
-        f"caution: securing at decision time ranged "
-        f"[{summary['securing_range'][0]:.3f}, {summary['securing_range'][1]:.3f}]; "
-        + (f"first step with securing >= {SATURATION_LEVEL}: {saturated}"
-           if saturated is not None
-           else f"securing >= {SATURATION_LEVEL}: not reached")
-        + f"; after the last step: {final_modulators['securing']:.3f}"
-    )
+    if fixed:
+        print("caution: not modelled; the fixed governor has no modulators")
+    else:
+        print(
+            f"caution: securing at decision time ranged "
+            f"[{summary['securing_range'][0]:.3f}, {summary['securing_range'][1]:.3f}]; "
+            + (f"first step with securing >= {SATURATION_LEVEL}: {saturated}"
+               if saturated is not None
+               else f"securing >= {SATURATION_LEVEL}: not reached")
+            + f"; after the last step: {final_modulators['securing']:.3f}"
+        )
     if scale is not None:
         low, high = summary["pds_tolerance_range"]
         print(f"pds tolerance range: [{low:.1f}, {high:.1f}]   task failures rejected "
@@ -575,7 +689,10 @@ def main(argv: Optional[List[str]] = None) -> int:
               "admission in this run")
 
     if args.json_out is not None:
-        summary["final_modulators"] = {k: float(v) for k, v in final_modulators.items()}
+        summary["final_modulators"] = (
+            None if final_modulators is None
+            else {k: float(v) for k, v in final_modulators.items()}
+        )
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(
             json.dumps({"config": config, "steps": steps, "summary": summary}, indent=2),

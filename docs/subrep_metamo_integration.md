@@ -343,6 +343,8 @@ python demo/run_lunar_lander_metamo.py --steps 10 --candidates ci      # no PPO 
 | `--risk motive\|task` | the risk fed back to MetaMo. `task`: the flown episode's own danger (crash 1.0, landing 0.1, otherwise 0.5), and a `risk` column. `motive`: the worst objective change against the baseline. Default `motive` |
 | `--epsilon-scale off\|on` | `on`: PDS tolerates ε·U with U = 300.9, and candidates that crash are rejected first; adds the `tol` and `fail` columns. Default `off` |
 | `--no-selection noop\|stop` | when nothing is admitted: fly the noop baseline, or fly nothing. Both feed MetaMo a zero-Δ outcome with `admitted=False` |
+| `--governor metamo\|fixed` | `metamo`: MetaMo sets the weights, ε and α every step. `fixed`: they stay constant, by default at MetaMo's starting signal (Safety 0.632, ε 0.1, α 0.1). The fixed governor has no modulators and does not appraise outcomes, so the modulator columns read `n/a` and, with `--risk task`, the recorded feedback is null. Default `metamo` |
+| `--weights S,F`, `--epsilon E`, `--alpha A` | `--governor fixed` only: the constant weights (on the simplex), ε and α |
 | `--cvar`, `--cvar-samples` | also apply the CVaR gate (OR semantics); a `pds` column then shows the PDS-only count |
 | `--verbose` | print every candidate's Δr, Δn, PDS margin and verdict |
 | `--json-out PATH` | save the configuration, every step and the summary as JSON |
@@ -537,6 +539,82 @@ earlier behaviour.
 ```bash
 python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo --risk task
 python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --risk task --verbose
+```
+
+### How far priorities have to move
+
+In PDS full-simplex mode, the weights never change an admission: the gate reads
+Δr + min Δn, with no w in it. They change only which admitted skill is picked,
+the highest Δr + w·Δn. With w = (s, 1 − s), each admitted skill's score is a
+line in the Safety weight s, so the pick can change only where two lines
+cross. The **switch point** s* is where the top-scoring admitted skill changes.
+`experiments/priorities/` computes every switch point exactly, and checks it
+against a 10,001-point grid.
+
+**Switch points** (seeds 1–40, admission held at ε 0.1 with the ε scale, so the
+admitted set is the same at every s):
+
+| Candidates | Seeds with a switch in (0, 1) | Switch points | s* in 0–0.3 | 0.3–0.6 | 0.6–0.9 | 0.9–1 |
+|---|---|---|---|---|---|---|
+| `ppo` | 12/40 | 12 | 4 | 4 | 2 | 2 |
+| `tradeoff` | 31/40 | 41 | 6 | 7 | 11 | 17 |
+
+- On `ppo`, every switch is between `ppo_deterministic` and `ppo_stochastic`.
+- On `tradeoff`, most switches hand the pick to a fuel-wasting candidate as the
+  Safety weight rises: those candidates land with more Safety shaping and burn
+  more fuel. 17 of the 41 lie above 0.9.
+
+**The weights MetaMo can reach and visits.** Reachable: the Safety weight
+`lunar_lander_weights` gives over every Securing, Threshold and Approach in
+[0, 1], the only modulators the mapping reads. Visited: the demo's live runs,
+seeds 1–16. "Crossed" counts the steps where a switch point lies between the
+starting Safety weight 0.632 and that step's, with admission held at ε 0.1;
+"pick differs" counts the steps where, on the step's own admitted set, the pick
+under MetaMo's weights differs from the pick under the starting weights.
+
+| Run, seeds 1–16 | Visited | Reachable at the run's final goals | Crossed | Pick differs |
+|---|---|---|---|---|
+| `ppo`, motive risk | 0.600–0.722 | 0.209–0.876 | 0/16 | 0/16 |
+| `ppo`, `--risk task` | 0.255–0.632 | 0.205–0.873 | 2/16 | 2/16 |
+| `tradeoff --epsilon-scale on`, motive risk | 0.630–0.747 | 0.209–0.876 | 1/16 | 1/16 |
+| `tradeoff --epsilon-scale on`, `--risk task` | 0.261–0.632 | 0.205–0.873 | 2/16 | 2/16 |
+| `ci`, `--risk task` | 0.632–0.914 | 0.292–0.917 | — | 0/16 |
+
+At the initial goals the reachable range is 0.250–0.899.
+
+- **The mapping can reach every switch point below 0.9,** 24 of the 41 on
+  `tradeoff`.
+- **MetaMo's live movement changes the pick on 0 to 2 of 16 steps.** Under the
+  task risk, caution relaxes after landings and the Safety weight falls toward
+  0.26; on seeds 9 and 11 that crosses the `ppo_deterministic` /
+  `ppo_stochastic` switch (0.401 and 0.415). Most trade-off switches lie above
+  the starting weight, where MetaMo goes only with rising caution: on seed 7,
+  the motive risk takes the Safety weight to 0.724, past the switch at 0.694,
+  and the pick becomes `ppo_waste_main_12`.
+  On `ci`, where caution rises furthest, every candidate crashes, so nothing is
+  admitted to choose between.
+- The two counts agree on every run, and the reported live pick equals the
+  demo's selection on every step.
+- The weight mapping is unchanged.
+
+**The controlled case** (seed 1, `tradeoff` candidates, ε 0.1 with the scale):
+the same 8 skills are admitted at every Safety weight, with switch points at
+0.725, 0.790 and 0.993. At Safety 0.692 the pick is `ppo_deterministic`
+(Δn = (+326.0, −91.0)); at 0.757 it is `ppo_waste_main_12` (Δn = (+338.5,
+−124.0)), which trades 33 units of fuel for 12.5 of Safety. Both are admitted.
+`tests/test_lunar_lander_integration.py::test_safety_and_fuel_priorities_select_different_admitted_skills`
+finds such a case at runtime and asserts it.
+
+**The fixed-priority mode** holds the signal constant, by default at MetaMo's
+starting point, so a run with `--governor fixed` is the same loop with MetaMo
+frozen:
+
+```bash
+python experiments/epsilon_scale/collect.py
+python experiments/priorities/switch_weights.py
+python experiments/priorities/reachable_weights.py
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --governor fixed
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --governor fixed --weights 0.8,0.2
 ```
 
 ---

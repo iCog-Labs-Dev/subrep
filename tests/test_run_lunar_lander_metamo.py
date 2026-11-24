@@ -368,3 +368,74 @@ def test_the_ppo_candidates_run_and_every_selection_was_admitted(tmp_path):
         if step["selected"] is not None:
             assert step["selected"] in admitted
             assert step["flown_skill_id"] == step["selected"]
+
+
+# ---------------------------------------------------------------------------
+# The fixed-priority mode
+# ---------------------------------------------------------------------------
+
+
+def test_fixed_priorities_mode_runs(tmp_path, noop_run):
+    """By default the fixed governor holds MetaMo's starting signal on every step."""
+    path = tmp_path / "fixed.json"
+    code, output, _ = run_demo(
+        ["--steps", "2", "--seed", str(SEED), "--candidates", "ci",
+         "--governor", "fixed", "--json-out", str(path)]
+    )
+    assert code == 0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    constant = data["config"]["governor"]
+    assert constant["kind"] == "fixed"
+
+    _, metamo, _ = noop_run
+    start = metamo["steps"][0]["signal"]
+    assert constant["weights"] == start["weights"]
+    assert constant["epsilon"] == start["epsilon"]
+    assert constant["alpha"] == start["alpha"]
+    for step in data["steps"]:
+        assert step["signal"] == {
+            "weights": constant["weights"],
+            "epsilon": constant["epsilon"],
+            "alpha": constant["alpha"],
+        }
+        assert step["modulators"] is None
+    assert data["summary"]["securing_range"] is None
+    assert data["summary"]["securing_saturated_at_step"] is None
+    assert "governor: fixed" in output
+
+
+def test_fixed_priorities_mode_runs_with_the_task_risk(tmp_path):
+    """The path that reads the governor's stimulus and modulators, which the fixed governor lacks."""
+    from env.lunar_lander_metamo import LUNAR_LANDER_EPSILON_UNIT
+
+    path = tmp_path / "fixed_task.json"
+    code, _, flown = run_demo(
+        ["--steps", "2", "--seed", str(SEED), "--candidates", "ci",
+         "--governor", "fixed", "--weights", "0.3,0.7", "--epsilon", "0.2", "--alpha", "0.25",
+         "--risk", "task", "--epsilon-scale", "on", "--json-out", str(path)]
+    )
+    assert code == 0
+    assert flown == 2  # the outcomes are still flown and reach the governor
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["config"]["risk"] == "task"
+    for step in data["steps"]:
+        assert step["signal"] == {"weights": [0.3, 0.7], "epsilon": 0.2, "alpha": 0.25}
+        assert step["pds_tolerance"] == pytest.approx(0.2 * LUNAR_LANDER_EPSILON_UNIT)
+        assert step["modulators"] is None
+        assert step["feedback"] is None
+    assert data["summary"]["final_modulators"] is None
+
+
+@pytest.mark.parametrize("weights", ["0.7,0.4", "1.0", "-0.1,1.1"])
+def test_fixed_priorities_reject_weights_off_the_simplex(weights):
+    with pytest.raises(SystemExit) as raised:
+        lunar_demo.main(["--governor", "fixed", "--weights", weights,
+                         "--candidates", "ci", "--steps", "1"])
+    assert raised.value.code == 2
+
+
+@pytest.mark.parametrize("option", [["--weights", "0.7,0.3"], ["--epsilon", "0.2"], ["--alpha", "0.2"]])
+def test_fixed_options_need_the_fixed_governor(option):
+    with pytest.raises(SystemExit) as raised:
+        lunar_demo.main([*option, "--candidates", "ci", "--steps", "1"])
+    assert raised.value.code == 2

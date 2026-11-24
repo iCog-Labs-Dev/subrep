@@ -41,6 +41,7 @@ whole file skips without a MetaMo checkout.
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
@@ -296,6 +297,31 @@ def _certify_with_scale(baseline_stats, records, epsilon: float):
     )
 
 
+def _switch_weights(records) -> List[float]:
+    """Safety weights in (0, 1) where the selector's pick among `records` changes.
+
+    Two objectives, w = (s, 1 - s): each record's score is a line in s, so the
+    pick can only change where two lines cross. Ties go to the lower skill_id,
+    as in `MetaMoController.select`.
+    """
+    def pick(s: float) -> str:
+        return min(
+            records,
+            key=lambda r: (-(r.delta_r + s * r.delta_n[0] + (1.0 - s) * r.delta_n[1]), r.skill_id),
+        ).skill_id
+
+    crossings = set()
+    for a, b in itertools.combinations(records, 2):
+        slope = (a.delta_n[0] - a.delta_n[1]) - (b.delta_n[0] - b.delta_n[1])
+        if slope:
+            s = -((a.delta_r + a.delta_n[1]) - (b.delta_r + b.delta_n[1])) / slope
+            if 0.0 < s < 1.0:
+                crossings.add(float(s))
+    edges = [0.0] + sorted(crossings) + [1.0]
+    picks = [pick((lo + hi) / 2.0) for lo, hi in zip(edges[:-1], edges[1:])]
+    return [s for s, below, above in zip(edges[1:-1], picks[:-1], picks[1:]) if below != above]
+
+
 def test_real_crashes_are_rejected_at_the_loosest_epsilon():
     """With the epsilon scale, eps_max tolerates a loss of about 150, more than
     some crash margins; the task-failure guard still rejects every crash."""
@@ -409,6 +435,73 @@ def test_a_tighter_epsilon_rejects_a_real_trade_off_landing():
     assert loose.is_certified, (trade_off.skill_id, margin)
     assert not tight.is_certified, (trade_off.skill_id, margin)
     assert "rejection_reason" not in tight.metadata  # rejected by PDS, not by the guard
+
+
+@requires_pilot
+def test_safety_and_fuel_priorities_select_different_admitted_skills():
+    """Two priority settings pick different skills from the same admitted set.
+
+    Real records from the demo's trade-off candidates, certified with the
+    epsilon scale at eps 0.1. The seed is chosen at runtime: the first in 1-10
+    whose admitted set has a pick switch with the Safety weight s* in
+    (0.2, 0.8). The two settings are s* - delta and s* + delta, with delta at
+    most 0.05 and less than half the distance to any other switch on that seed.
+    """
+    from bridge.controller import MetaMoController
+    from bridge.governor import FakeGovernor
+    from bridge.protocol import GovernorSignal
+    from data_collector.collect_candidate_sets import build_extended_candidate_policies
+    from env.lunar_lander_candidates import build_tradeoff_candidate_policies
+    from env.lunar_lander_metamo import lunar_lander_epsilon_scale
+
+    epsilon = 0.1
+    env = SubRepEnv(seed=1)
+    try:
+        candidates = tuple(
+            build_extended_candidate_policies(env, pilot_checkpoint=str(PILOT_CHECKPOINT))
+        ) + build_tradeoff_candidate_policies(pilot_checkpoint=str(PILOT_CHECKPOINT))
+        found = None
+        for seed in range(1, 11):
+            baseline_stats, records = evaluate_candidates(env, candidates, seed=seed)
+            admitted = [
+                r for r in _certify_with_scale(baseline_stats, records, epsilon) if r.is_certified
+            ]
+            points = _switch_weights(admitted)
+            inside = [s for s in points if 0.2 < s < 0.8]
+            if inside:
+                found = (seed, baseline_stats, records, inside[0], points)
+                break
+    finally:
+        env.close()
+    assert found, "no seed in 1-10 has a pick switch with the Safety weight in (0.2, 0.8)"
+    seed, baseline_stats, records, s_star, points = found
+    delta = min([0.05] + [abs(s - s_star) / 2.0 for s in points if s != s_star])
+
+    def certify_and_pick(safety_weight: float):
+        sig = GovernorSignal(
+            weights=np.array([safety_weight, 1.0 - safety_weight]),
+            pds_epsilon=epsilon,
+            cvar_tail_level=0.1,
+        )
+        controller = MetaMoController(
+            FakeGovernor([sig]),
+            make_pipeline(),
+            seed=CONTROLLER_SEED,
+            epsilon_scale=lunar_lander_epsilon_scale(),
+        )
+        certified = controller.certify(
+            context=np.asarray(baseline_stats["info"]["start_obs"]),
+            candidate_skills=records,
+            baseline_stats=baseline_stats,
+            signal=sig,
+        )
+        return {r.skill_id for r in certified if r.is_certified}, controller.select(certified, sig)[0]
+
+    fuel_set, fuel_pick = certify_and_pick(s_star - delta)
+    safety_set, safety_pick = certify_and_pick(s_star + delta)
+    assert fuel_set == safety_set, seed
+    assert fuel_pick != safety_pick, (seed, s_star, fuel_pick)
+    assert fuel_pick in fuel_set and safety_pick in safety_set
 
 
 @requires_pilot

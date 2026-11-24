@@ -17,6 +17,10 @@ static config:
 The executed outcome feeds back through `stimulus.py` into MetaMo's appraisal
 comonad Ψ, closing the loop.
 
+In PDS full-simplex mode, the weights affect selection only: admission is
+Δr + min Δn ≥ −tolerance, which has no w in it
+(`tests/test_bridge_controller.py::test_priorities_do_not_change_full_simplex_pds_admission`).
+
 ## Two budgets, two routes
 
 The two risk budgets reach the gates by **different mechanisms**. This looks
