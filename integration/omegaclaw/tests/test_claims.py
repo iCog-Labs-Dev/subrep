@@ -16,6 +16,8 @@ from integration.omegaclaw.contracts import (
     SkillEvidence,
     SkillExclusion,
 )
+from integration.omegaclaw.scenarios import predefined_scenarios
+from integration.omegaclaw.service import SubRepOmegaRecommendationService
 
 # One excluded skill per stage, so each case can name the stage it misstates.
 EXCLUDED = {
@@ -488,3 +490,60 @@ UNKNOWN_SKILL_ROLES = [
 @pytest.mark.parametrize(("explanation", "expected"), UNKNOWN_SKILL_ROLES)
 def test_skills_outside_the_request_are_flagged_in_every_role(explanation, expected):
     assert _codes(explanation) == expected
+
+
+# Answers from the live minimax/minimax-m3 run that the checks flagged although they
+# were correct. They must pass, and the real errors next to them must still be caught.
+
+
+def _scenario_request(name: str) -> RecommendationRequest:
+    scenario = next(item for item in predefined_scenarios() if item.name == name)
+    service = SubRepOmegaRecommendationService(adapter=None)
+    return service.build_request_from_library(
+        **scenario.service_arguments(), evidence_label="SYNTHETIC", request_id="live-regression"
+    )
+
+
+LIVE_RISK_BUDGET_ANSWER = (
+    "SubRep selected skill_efficiency with a final selection score of 0.9100000000000001 under "
+    "MAX_FINAL_SELECTION_SCORE, ahead of the admitted runner-up skill_safety at 0.19 (score gap "
+    "0.7200000000000002). skill_fast_pds was excluded at the RISK_BUDGET stage: it holds a SubRep "
+    "certificate and is runtime admissible, but its certificate epsilon 0.05 exceeds the local "
+    "maximum 0.0 of this request risk budget; this is not a certification failure. All evidence "
+    "is synthetic, and no skill was executed, run, or deployed."
+)
+LIVE_NEGATED_LIST_ANSWER = (
+    "Per the authoritative SubRep decision, skill_efficiency was selected with "
+    "subrep_decision.selected_score 0.8200000000000001; the only admitted runner-up is "
+    "skill_safety at subrep_decision.runner_up_score 0.28. The decision rests on synthetic "
+    "evidence (evidence_label SYNTHETIC), not real, observed, or measured data: objective "
+    "weights efficiency 0.8 and safety 0.2. Nothing has been executed."
+)
+
+
+def test_live_answer_quoting_a_number_from_an_exclusion_reason_passes():
+    assert _codes(LIVE_RISK_BUDGET_ANSWER, _scenario_request("risk_budget_exclusion")) == set()
+
+
+def test_a_number_absent_from_the_request_text_is_still_flagged():
+    wrong = LIVE_RISK_BUDGET_ANSWER.replace("epsilon 0.05", "epsilon 0.06")
+
+    assert _codes(wrong, _scenario_request("risk_budget_exclusion")) == {"UNSUPPORTED_NUMBER"}
+
+
+def test_live_answer_negating_a_list_of_real_evidence_words_passes():
+    assert _codes(LIVE_NEGATED_LIST_ANSWER, _scenario_request("changed_task_priorities")) == set()
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "Observed results confirm the gain.",
+        "The evidence is not real. Measured data confirm the gain.",
+        "The evidence is synthetic, but real-world results agree.",
+    ],
+)
+def test_synthetic_evidence_called_real_outside_a_negated_list_is_still_flagged(claim):
+    explanation = f"{RANKING} {claim}"
+
+    assert "SYNTHETIC_PRESENTED_AS_REAL" in _codes(explanation)

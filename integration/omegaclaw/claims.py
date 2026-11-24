@@ -187,6 +187,13 @@ _SCORE_WORD = re.compile(
     r"(?:about\s+|approximately\s+|roughly\s+|~\s*)?" + _NUMBER
 )
 _DECIMAL = re.compile(r"(?<![\w.])[-+]?(?:\d+\.\d+|\.\d+)(?![\w])")
+_TEXT_NUMBER = re.compile(r"(?<![\w.])-?(?:\d+\.\d+|\.\d+|\d+)(?![\w.])")
+# Identity and timestamp fields hold digits that are not evidence.
+_NUMBER_FREE_FIELDS = frozenset({"request_id", "created_at", "schema_version"})
+# "not real, observed, or measured data": the "not" covers every item of the list.
+_NEGATED_LIST = re.compile(
+    r"\b(not|never|nor)\s+([a-z-]+(?:\s*,\s*(?:(?:or|and|nor)\s+)?[a-z-]+|\s+(?:or|nor)\s+[a-z-]+)+)"
+)
 _PERCENT = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*%")
 
 _EXECUTION_GENERIC = tuple(
@@ -625,7 +632,17 @@ def _allowed_numbers(request: RecommendationRequest) -> list[float]:
     """Every number in the request, with its sign, plus the products and gaps a score
     explanation uses. Gaps between scores are sizes, so they are positive."""
 
-    values = list(_numeric_leaves(request.to_dict()))
+    payload = request.to_dict()
+    values = list(_numeric_leaves(payload))
+    # Numbers written inside the request text count too, such as the epsilon in an
+    # exclusion reason ("Certificate epsilon 0.05 exceeds the local maximum 0").
+    values.extend(
+        float(number)
+        for key, value in payload.items()
+        if key not in _NUMBER_FREE_FIELDS
+        for text in _text_leaves(value)
+        for number in _TEXT_NUMBER.findall(text)
+    )
     weights = {item.objective_id: item.weight for item in request.objective_weights}
     for skill in request.admitted_skills:
         values.extend(weights[name] * delta for name, delta in skill.objective_deltas.items())
@@ -633,6 +650,17 @@ def _allowed_numbers(request: RecommendationRequest) -> list[float]:
     values.extend(abs(a - b) for index, a in enumerate(scores) for b in scores[index + 1 :])
     values.append(1.0)
     return values
+
+
+def _text_leaves(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for child in value.values():
+            yield from _text_leaves(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _text_leaves(child)
 
 
 def _numeric_leaves(value: Any) -> Iterable[float]:
@@ -674,6 +702,24 @@ def _execution_claims(request: RecommendationRequest, text: str) -> list[Finding
     ]
 
 
+def _spread_negation(text: str) -> str:
+    """Repeat a list's negation before each item, so splitting at commas keeps it.
+
+    "not real, observed, or measured data" becomes
+    "not real, not observed, or not measured data".
+    """
+
+    def spread(match: re.Match[str]) -> str:
+        word = match.group(1)
+        items = re.split(r"(\s*,\s*(?:(?:or|and|nor)\s+)?|\s+(?:or|nor)\s+)", match.group(2))
+        return word + " " + "".join(
+            part if index % 2 else f"{'' if index == 0 else 'not '}{part}"
+            for index, part in enumerate(items)
+        )
+
+    return _NEGATED_LIST.sub(spread, text)
+
+
 def _evidence_label_claims(request: RecommendationRequest, text: str) -> list[Finding]:
     if request.evidence_label != "SYNTHETIC":
         return []
@@ -688,7 +734,7 @@ def _evidence_label_claims(request: RecommendationRequest, text: str) -> list[Fi
     claims = sorted(
         {
             match.group(0)
-            for sentence in _SENTENCE_BREAK.split(text)
+            for sentence in _SENTENCE_BREAK.split(_spread_negation(text))
             for clause in _clauses(sentence)
             for pattern in _REAL_EVIDENCE
             for match in _asserted(pattern, clause)

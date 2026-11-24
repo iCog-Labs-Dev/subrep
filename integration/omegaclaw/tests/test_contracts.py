@@ -188,3 +188,26 @@ def test_every_stage_except_certification_says_it_is_not_a_certification_failure
             assert "certif" in reason.description.lower(), code
         else:
             assert "not a certification" in reason.description, code
+
+
+def test_evidence_label_and_whole_sections_can_be_cited():
+    # Live answers cited these; they exist in the request, so they are valid references.
+    refs = _request().valid_evidence_refs()
+
+    assert {"evidence_label", "objective_order", "admitted_skills", "subrep_decision"} <= refs
+    assert "objective_order.0" in refs
+
+
+def test_an_empty_section_can_be_cited_in_an_abstention():
+    refs = _request(admitted_skills=()).valid_evidence_refs()
+
+    assert "admitted_skills" in refs
+    assert "subrep_decision.reason_code" in refs
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["explanation_evidence.objective_order", "exclusions[0].stage", "subrep_decision.winner"],
+)
+def test_paths_that_do_not_exist_are_still_rejected(reference):
+    assert reference not in _request().valid_evidence_refs()

@@ -526,20 +526,23 @@ class RecommendationRequest:
         }
 
     def valid_evidence_refs(self) -> set[str]:
-        """Return every leaf path OmegaClaw may cite in its explanation."""
+        """Return every path OmegaClaw may cite: each value and each section holding them.
+
+        Sections count too, so an explanation can cite a whole list such as
+        objective_order, or an empty one such as admitted_skills in an abstention.
+        """
 
         payload = self.to_dict()
         references: set[str] = set()
 
         def visit(value: Any, prefix: str) -> None:
+            references.add(prefix)
             if isinstance(value, Mapping):
                 for key, child in value.items():
-                    visit(child, f"{prefix}.{key}" if prefix else str(key))
+                    visit(child, f"{prefix}.{key}")
             elif isinstance(value, (list, tuple)):
                 for index, child in enumerate(value):
                     visit(child, f"{prefix}.{index}")
-            else:
-                references.add(prefix)
 
         for root in (
             "subrep_decision",
@@ -550,6 +553,7 @@ class RecommendationRequest:
             "exclusions",
             "explanation_evidence",
             "audit_only_certificate_evidence",
+            "evidence_label",
         ):
             visit(payload[root], root)
         return references
