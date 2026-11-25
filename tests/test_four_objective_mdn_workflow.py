@@ -58,3 +58,29 @@ def test_collect_stage_uses_disjoint_contexts_and_only_requested_policies(tmp_pa
     with np.load(next((out/'candidate_sets').glob('*.npz'))) as d:
         assert list(d['candidate_skill_ids'])==['zero_action','ppo','lag1','lag2','lag3']
         assert d['candidate_motives'].shape==(5,4)
+
+
+def test_eight_policy_pool_preserves_fixed_actions_and_excludes_random():
+    from demo.run_four_objective_mdn import configure_candidates, FIXED_ACTIONS
+    class Collector:
+        low=np.array([-1.,-1.]); high=np.array([1.,1.])
+        policies={'zero_action':lambda obs: np.zeros(2), 'random':None,
+                  **{name:None for name in ('ppo','lag1','lag2','linear')}}
+    collector=Collector()
+    models={name:None for name in ('ppo','lag1','lag2','linear')}
+    names=configure_candidates(collector, models, FIXED_ACTIONS)
+    assert len(names)==9 and 'random' not in names
+    for name, action in FIXED_ACTIONS.items():
+        result=collector.policies[name](None)
+        assert np.allclose(result,action)
+        result[:]=99
+        assert np.allclose(collector.policies[name](None),action)
+    replay=Collector()
+    assert configure_candidates(replay,models,json.loads(json.dumps(FIXED_ACTIONS)))==names
+
+
+def test_pool_rejects_changed_specification():
+    import pytest
+    from demo.run_four_objective_mdn import configure_candidates
+    with pytest.raises(ValueError,match='specification'):
+        configure_candidates(None,{}, {'axis0_positive':[1,0]})

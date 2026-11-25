@@ -18,6 +18,31 @@ from utils.safety_reuse_benchmark import Collector, Config, fit_scales, write_js
 OBJECTIVES = ['Safety', 'Task', 'ControlEfficiency', 'ActionSmoothness']
 
 
+FIXED_ACTIONS = {
+    'axis0_positive': [0.35, 0.0], 'axis0_negative': [-0.35, 0.0],
+    'axis1_positive': [0.0, 0.35], 'axis1_negative': [0.0, -0.35],
+}
+
+
+def configure_candidates(collector, models, fixed_actions):
+    """Use the recorded pool identically for training and evaluation."""
+    if fixed_actions and fixed_actions != FIXED_ACTIONS:
+        raise ValueError('Unsupported fixed-action specification')
+    if set(models).intersection({'zero_action', *FIXED_ACTIONS}):
+        raise ValueError('Checkpoint name collides with a baseline policy')
+    if fixed_actions:
+        if collector.low.shape != (2,) or collector.high.shape != (2,):
+            raise ValueError('Fixed-action pool requires two action dimensions')
+        for name, action in fixed_actions.items():
+            a = np.asarray(action, dtype=np.float32)
+            if np.any(a < collector.low) or np.any(a > collector.high):
+                raise ValueError('Fixed action exceeds environment bounds')
+            collector.policies[name] = lambda obs, a=a: a.copy()
+    names = ['zero_action', *fixed_actions, *models]
+    collector.policies = {name: collector.policies[name] for name in names}
+    return names
+
+
 def export_training(records, destination, scales):
     """Keep raw values for support training; attach scales for the MDN adapter."""
     scales = np.asarray(scales, dtype=float)
@@ -69,6 +94,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output', required=True)
     p.add_argument('--checkpoint', action='append')
+    p.add_argument('--include-fixed-controls', action='store_true', help='Add four constant-action controls; requires four checkpoints')
+    p.add_argument('--support-loss-mode', choices=['margin', 'priority-reuse'], default='margin')
     p.add_argument('--stage', choices=['collect','train','all'], default='all')
     p.add_argument('--contexts', type=int, default=300)
     p.add_argument('--scale-contexts', type=int, default=30)
@@ -96,14 +123,18 @@ def main():
             model = SafetyPPOPilot.load(path, map_location='cpu'); model.eval()
             models[path.stem] = model
             provenance.append(dict(name=path.stem, path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+        if args.include_fixed_controls and len(models) != 4:
+            p.error('Eight-policy pool requires exactly four checkpoints')
+        fixed_actions = FIXED_ACTIONS if args.include_fixed_controls else {}
         config = Config(str(root), objectives=4, max_steps=args.max_steps)
         collector = Collector(config, models)
         try:
-            collector.policies = {k:v for k,v in collector.policies.items() if k=='zero_action' or k in models}
+            candidate_names = configure_candidates(collector, models, fixed_actions)
             root.mkdir(parents=True)
             scale_seeds = list(range(args.context_seed+1, args.context_seed+1+args.scale_contexts))
             train_seeds = list(range(scale_seeds[-1]+1, scale_seeds[-1]+1+args.contexts))
             write_json(root/'manifest.json', dict(settings=vars(args), checkpoints=provenance,
+                fixed_actions=fixed_actions, candidate_names=candidate_names,
                 scale_context_seeds=scale_seeds, training_context_seeds=train_seeds,
                 role='Training/development only; trainers split context groups internally. No independent final test.',
                 source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()))
@@ -124,6 +155,10 @@ def main():
         if (root/'mdn').exists() or (root/'support').exists():
             p.error('Training output already exists; refusing to overwrite checkpoints')
         commands = training_commands(root, args.epsilon, args.regularization, args.support_epochs, args.seed)
+        if args.support_loss_mode == 'priority-reuse':
+            commands[1] += ['--loss-mode', 'priority-reuse', '--priority-file',
+                            str(Path(__file__).resolve().parents[1]/'configs/safety_four_objective_priorities.json'),
+                            '--priority-weight', '1']
         write_json(root/'training_commands.json', commands)
         (root/'mdn').mkdir()
         for command in commands:

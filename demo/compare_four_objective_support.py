@@ -20,7 +20,7 @@ from pilot.safety_gymnasium_ppo import SafetyPPOPilot
 from utils.contextual_safety_benchmark import certify, context_key, eligible, priority_queries
 from utils.mdn_checkpoint_loader import load_mdn_checkpoint
 from utils.safety_reuse_benchmark import Collector, Config, write_json
-from demo.run_four_objective_mdn import OBJECTIVES
+from demo.run_four_objective_mdn import OBJECTIVES, configure_candidates
 
 METHODS = ('full_simplex', 'full_plus_fixed', 'full_plus_mdn')
 
@@ -178,10 +178,14 @@ def main():
     collector=Collector(config,models)
     contexts=[]
     try:
-        collector.policies={k:v for k,v in collector.policies.items() if k=='zero_action' or k in models}
+        candidate_names = configure_candidates(collector, models, manifest.get('fixed_actions', {}))
+        if manifest.get('candidate_names', candidate_names) != candidate_names:
+            raise ValueError('Candidate pool differs from collection manifest')
         root.mkdir(parents=True)
         write_json(root/'manifest.json',dict(settings=vars(args),config=vars(config),evaluation_seeds=seeds,
             training_manifest=manifest, checkpoints=manifest['checkpoints'],
+            candidate_names=candidate_names, fixed_actions=manifest.get('fixed_actions', {}),
+            evaluation_groups=[dict(group=i//100+1, context_seeds=seeds[i:i+100]) for i in range(0,len(seeds),100)],
             mdn_checkpoint=str(checkpoint),mdn_sha256=hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
             scales=scale_data, fixed_caps=fixed.tolist(),
             source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

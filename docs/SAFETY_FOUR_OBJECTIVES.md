@@ -275,3 +275,109 @@ actual selections/outcomes with full-simplex and fixed-region baselines. Earlier
 comparison contexts are now development evidence and should not serve as the
 final evaluation of this changed method. Do not widen a certified region after
 certification or bypass a failed gate merely to increase reuse.
+
+## Four report figures from saved comparison evidence
+
+Generate four PNG figures (plus vector PDF copies) without simulation or retraining:
+
+```bash
+python -m utils.plot_four_objective_comparison \
+  --benchmark-dir data/four_objective_priority_comparison_20261125_115918 \
+  --output-dir "data/four_objective_figures_$(date +%Y%m%d_%H%M%S)" \
+  --bootstrap-samples 2000 --seed 42
+```
+
+The input directory must contain `support_comparison.json` and `manifest.json`
+from the four-objective priority comparison. Use an environment with NumPy and
+Matplotlib. The output directory must be new. The generated `README.md` contains
+captions and suggested report placements; `figure_statistics.json` records
+plotted values, source hashes, and uncertainty settings.
+
+1. Certification and actual reuse: after Pilot Results.
+2. Task performance and safety–control trade-offs: under Safety-Cost Result.
+3. Outcomes under changing priorities: after Baseline Comparison.
+4. Learned-region coverage and regional selection: under Interpretation.
+
+Outcome intervals resample whole contexts with all methods and priorities kept
+paired. They describe context variation for the fixed models, not variation
+across training seeds. Idle fallback is included in outcome averages. The cost
+budget is a separate diagnostic, not an absolute safety guarantee supplied by
+regional certification. Preference-region volume does not measure environmental
+safety coverage. These comparisons evaluate region strategies within SubRep;
+they do not establish superiority over standalone PPO or PPO-Lagrangian.
+
+## Eight-candidate protocol
+
+`demo.run_four_objective_mdn --include-fixed-controls` requires exactly four
+checkpoint policies and adds `axis0_positive`, `axis0_negative`, `axis1_positive`,
+and `axis1_negative` with constant actions `[0.35,0]`, `[-0.35,0]`, `[0,0.35]`,
+and `[0,-0.35]`. Zero action remains the separate baseline. The manifest records
+candidate order and action values; comparison reconstructs and validates that
+pool. Existing checkpoint-only manifests remain supported.
+
+Use a new collection directory, separate scale/training contexts, and optionally
+`--support-loss-mode priority-reuse` to use the predefined priority-aware loss.
+The default remains the original margin loss. Changing the pool requires new
+candidate data and MDN/support training, not new PPO training.
+
+Evaluate with `demo.compare_four_objective_support --contexts 300` and an unused
+seed range. This gives 2,400 non-baseline pairs per method, 2,700 outcomes per
+collection including idle, and 1,500 priority queries per method. Evidence and
+re-execution each collect outcomes, so 2,700 is not the total simulator rollout
+count. The evaluation manifest records consecutive groups of up to 100 contexts;
+these are reporting groups, not independent policy-training seeds.
+
+This matches the earlier two-objective evaluation size, but its candidate mix
+(two trained plus six simple policies) differs from this four-trained/four-fixed
+pool. Objective scaling, epsilon, and training differences also prevent attributing
+cross-report differences solely to objective count.
+
+## Offline standalone baselines and certification ablation
+
+After comparison, use saved evidence and execution outcomes:
+
+```bash
+python -m utils.analyze_four_objective_baselines \
+  --benchmark-dir data/four_objective_eight_policy_20261125_160526_comparison \
+  --output-dir "data/four_objective_baselines_$(date +%Y%m%d_%H%M%S)" \
+  --ppo-policy safety_ppo_four_objective_seed42_v1 \
+  --lagrangian-policy safety_ppo_lagrangian_four_objective_seed42_v1 \
+  --bootstrap-samples 2000 --seed 42
+```
+
+Policy arguments must be exact saved candidate names. Choose them before viewing
+baseline results; do not silently substitute the best-performing Lagrangian
+variant. The command reconstructs every saved selection from evidence and fails
+if it differs. Outcomes are measured from execution only. It reports all three
+region strategies against always-PPO, always-PPO-Lagrangian, idle, uniform random
+candidate/certified selection, and unrestricted selection. Random baselines are
+exact expectations across saved outcomes, not newly simulated random policies.
+
+The output includes raw four-objective outcomes, goal/budget outcomes, filtering
+costs, descriptive four-objective Pareto membership, priority reuse success and
+paired context-bootstrap differences. Reuse success requires a nonfallback
+certified selection scoring at least as well as idle. This is distinct from goal
+success. Removing certification removes both admission and region restrictions;
+the report separates gate-rejected from outside-region selections. It is not an
+isolated CDS-only versus PDS-only ablation. All priority comparisons reuse the
+same frozen library per context, between reset episodes; no within-episode
+adaptation or independent safety guarantee is established. Full results, rows,
+source hashes and uncertainty settings are in `analysis.json`; tables are in
+`report.md`. No simulator or policy retraining is required.
+
+After the offline analyser has written `end_to_end_analysis/analysis.json`, generate
+Pareto projections and an exploratory frozen-library preference sweep:
+
+```bash
+python -m utils.plot_four_objective_extensions \
+  --benchmark-dir data/four_objective_eight_policy_20261125_160526_comparison \
+  --output-dir "data/four_objective_extra_figures_$(date +%Y%m%d_%H%M%S)" \
+  --points-per-leg 20
+```
+
+This reads the baseline analysis at the specified location and verifies its source
+hashes. Pareto status uses all four raw mean objectives. The 61-point sweep moves
+from safety to task to effort to smoothness, retaining context-specific
+certificates and support caps without retraining. It is exploratory offline
+analysis of existing outcomes, not additional independent testing or adaptation
+within a trajectory. PNG/PDF outputs and placement captions accompany plot data.
