@@ -547,3 +547,240 @@ def test_synthetic_evidence_called_real_outside_a_negated_list_is_still_flagged(
     explanation = f"{RANKING} {claim}"
 
     assert "SYNTHETIC_PRESENTED_AS_REAL" in _codes(explanation)
+
+
+# Skill IDs need not contain an underscore ("ghost", "unknown-skill"). Every ID an
+# explanation names as selected or runner-up is compared with SubRep's decision.
+
+PLAIN_NAME_CLAIMS = [
+    pytest.param(f"{RANKING} selected_skill_id: ghost.", _request, {"WRONG_SKILL_ROLE"}, id="pasted-selected-plain-name"),
+    pytest.param(f'{RANKING} "selected_skill_id": "ghost".', _request, {"WRONG_SKILL_ROLE"}, id="pasted-selected-quoted-plain-name"),
+    pytest.param(f"{RANKING} runner_up_skill_id: unknown-skill.", _request, {"WRONG_SKILL_ROLE"}, id="pasted-runner-up-hyphenated-name"),
+    pytest.param(
+        f"{SELECTED} as the only admitted skill. runner_up_skill_id: ghost.",
+        _single_request,
+        {"WRONG_SKILL_ROLE"},
+        id="pasted-runner-up-when-there-is-none",
+    ),
+    pytest.param(f"{RANKING} SubRep selected ghost.", _request, {"UNKNOWN_SKILL"}, id="prose-selected-verb"),
+    pytest.param(f"{RANKING} ghost was selected.", _request, {"UNKNOWN_SKILL"}, id="prose-was-selected"),
+    pytest.param(f"{RANKING} The selected skill is ghost.", _request, {"UNKNOWN_SKILL"}, id="prose-selected-skill-is"),
+    pytest.param(f"{RANKING} unknown-skill was the runner-up.", _request, {"UNKNOWN_SKILL"}, id="prose-was-the-runner-up"),
+    pytest.param(f"{RANKING} The runner-up is unknown-skill.", _request, {"UNKNOWN_SKILL"}, id="prose-runner-up-is"),
+    pytest.param(
+        f"{SELECTED}, ahead of the admitted runner-up ghost at 0.28.",
+        _request,
+        {"UNKNOWN_SKILL"},
+        id="prose-admitted-runner-up-name",
+    ),
+    pytest.param(
+        f"{SELECTED} as the only admitted skill. The runner-up is ghost.",
+        _single_request,
+        {"UNKNOWN_SKILL"},
+        id="prose-runner-up-when-there-is-none",
+    ),
+    pytest.param(f"{RANKING} The selected skill is skill_efficiency.", _request, {"WRONG_SKILL_ROLE"}, id="known-skill-as-selected-skill"),
+    pytest.param(
+        f"{SELECTED}, ahead of the admitted runner-up skill_safety.",
+        _request,
+        {"WRONG_SKILL_ROLE"},
+        id="selected-skill-named-as-runner-up",
+    ),
+    pytest.param(f"{RANKING} ghost was excluded by the operator.", _request, {"UNKNOWN_SKILL"}, id="plain-name-excluded"),
+    pytest.param(f"{RANKING} ghost scored 0.37.", _request, {"UNKNOWN_SKILL", "UNSUPPORTED_NUMBER"}, id="plain-name-scored"),
+]
+
+
+@pytest.mark.parametrize(("explanation", "build", "expected"), PLAIN_NAME_CLAIMS)
+def test_every_named_selected_or_runner_up_id_is_compared_with_the_decision(explanation, build, expected):
+    assert _codes(explanation, build()) == expected
+
+
+def test_plain_names_in_an_abstention_are_compared_with_the_decision():
+    request = _request(admitted=())
+    abstained = "No recommendation in this synthetic scenario."
+
+    assert _codes(f"{abstained} selected_skill_id: ghost.", request) == {"WRONG_SKILL_ROLE"}
+    assert _codes(f"{abstained} SubRep selected ghost.", request) == {"UNKNOWN_SKILL"}
+    assert _codes(f"{abstained} selected_skill_id: null.", request) == set()
+
+
+ROLE_WORDING_THAT_NAMES_NO_SKILL = [
+    pytest.param(f"{RANKING} The selected skill shows a safety delta of 0.8.", id="selected-skill-shows"),
+    pytest.param(
+        "Using synthetic evidence, skill_safety was selected with a score of 0.82 by SubRep, "
+        "ahead of skill_efficiency at 0.28.",
+        id="selected-with-and-by",
+    ),
+    pytest.param(
+        f"{RANKING} The admitted runner-up named by the decision is skill_efficiency.",
+        id="runner-up-named-by-the-decision",
+    ),
+    pytest.param(f"{RANKING} skill_efficiency is the admitted runner-up.", id="correct-admitted-runner-up"),
+    pytest.param(
+        f"{RANKING} If efficiency dominated, SubRep would have selected skill_efficiency.",
+        id="hypothetical-selection",
+    ),
+    pytest.param(f"{RANKING} No other skill was selected or recommended.", id="nothing-else-selected"),
+    pytest.param(f"{RANKING} The selected_skill_id is the field SubRep fills.", id="field-named-in-prose"),
+]
+
+
+@pytest.mark.parametrize("explanation", ROLE_WORDING_THAT_NAMES_NO_SKILL)
+def test_role_wording_that_names_no_other_skill_passes(explanation):
+    assert _codes(explanation) == set()
+
+
+def test_no_runner_up_wording_passes_when_there_is_none():
+    assert _codes(
+        f"{SELECTED} as the only admitted skill, so there is no admitted runner-up.",
+        _single_request(),
+    ) == set()
+
+
+# From the small live check: two correct answers the checks flagged, and one real
+# error they missed (weights given to the wrong objectives).
+
+LIVE_SWAPPED_WEIGHTS = (
+    "Per the authoritative SubRep decision, skill_safety was selected under rule "
+    "MAX_FINAL_SELECTION_SCORE with final_selection_score 0.8200000000000001, ahead of the "
+    "admitted runner-up skill_efficiency at 0.28, a score_gap of 0.54. This is consistent with "
+    "the stated objective_order (safety, then efficiency) and objective weights (safety 0.2, "
+    "efficiency 0.8): in the supplied explanation evidence, skill_safety carries objective_deltas "
+    "safety 0.8 and efficiency -0.1. The evidence_label is SYNTHETIC; nothing was executed."
+)
+
+
+def test_live_answer_with_swapped_weights_is_flagged():
+    assert _codes(LIVE_SWAPPED_WEIGHTS, _scenario_request("clear_preferred_skill")) == {
+        "WEIGHT_MISMATCH"
+    }
+
+
+def test_live_answer_with_correct_weights_passes():
+    corrected = LIVE_SWAPPED_WEIGHTS.replace("(safety 0.2, efficiency 0.8)", "(safety 0.8, efficiency 0.2)")
+
+    assert _codes(corrected, _scenario_request("clear_preferred_skill")) == set()
+
+
+WEIGHT_WORDING = [
+    pytest.param("Objective weights are safety 0.8 and efficiency 0.2.", set(), id="list-after-weights"),
+    pytest.param("Safety carries weight 0.8 and efficiency carries weight 0.2.", set(), id="objective-carries-weight"),
+    pytest.param("It trades off efficiency under efficiency weight 0.2.", set(), id="objective-weight-number"),
+    pytest.param(
+        "Weights safety 0.8 and efficiency 0.2; skill_safety deltas are safety 0.8 and efficiency -0.1.",
+        set(),
+        id="deltas-after-weights-are-not-weights",
+    ),
+    pytest.param("Objective weights are safety 0.2 and efficiency 0.8.", {"WEIGHT_MISMATCH"}, id="swapped-list"),
+    pytest.param("Safety carries weight 0.2.", {"WEIGHT_MISMATCH"}, id="wrong-named-weight"),
+]
+
+
+@pytest.mark.parametrize(("sentence", "expected"), WEIGHT_WORDING)
+def test_each_weight_must_belong_to_its_objective(sentence, expected):
+    assert _codes(f"{RANKING} {sentence}") == expected
+
+
+LIVE_ABSTENTION_ANSWER = (
+    "Abstention: no skill is recommended for this request. The authoritative SubRep decision "
+    "carries reason_code NO_ADMISSIBLE_SKILLS, and both selected_skill_id and runner_up_skill_id "
+    "are null. rejected_candidate is excluded at the CERTIFICATION stage: it failed the SubRep "
+    "CDS/PDS certification gates and holds no certificate. skill_efficiency is excluded at the "
+    "OPERATOR stage: it was removed by an explicit operator instruction, which is not a "
+    "certification, runtime admissibility, or risk budget result. All evidence in this request "
+    "is synthetic, not real, observed, measured, or empirical. Nothing has been executed."
+)
+
+
+@pytest.mark.parametrize(
+    "opening",
+    ["Abstention: no skill is recommended for this request.", "The outcome is an abstention."],
+)
+def test_live_abstention_wording_is_recognised(opening):
+    answer = LIVE_ABSTENTION_ANSWER.replace(
+        "Abstention: no skill is recommended for this request.", opening
+    )
+
+    assert _codes(answer, _scenario_request("abstention_mixed_reasons")) == set()
+
+
+def test_an_abstention_that_is_never_stated_is_still_flagged():
+    unstated = LIVE_ABSTENTION_ANSWER.replace(
+        "Abstention: no skill is recommended for this request. The authoritative SubRep "
+        "decision carries reason_code NO_ADMISSIBLE_SKILLS, and both selected_skill_id and "
+        "runner_up_skill_id are null. ",
+        "",
+    )
+    assert "abstention" not in unstated.lower() and "no_admissible" not in unstated.lower()
+
+    assert _codes(unstated, _scenario_request("abstention_mixed_reasons")) == {
+        "ABSTENTION_NOT_STATED"
+    }
+
+
+def test_rather_than_a_list_of_real_evidence_words_passes():
+    answer = f"{RANKING} It is synthetic rather than real, observed, or measured data."
+
+    assert _codes(answer) == set()
+
+
+def test_real_evidence_after_rather_than_something_else_is_still_flagged():
+    answer = f"{RANKING} Rather than synthetic, these are real-world results."
+
+    assert "SYNTHETIC_PRESENTED_AS_REAL" in _codes(answer)
+
+
+# From the final small live check: an accepted answer the checks missed. Every number
+# is in the request, but no skill has these deltas.
+LIVE_WRONG_DELTAS = (
+    "SubRep's final decision selected skill_safety with subrep_decision.selected_score "
+    "0.8200000000000001 under selection_rule MAX_FINAL_SELECTION_SCORE; the admitted runner-up "
+    "is skill_efficiency with subrep_decision.runner_up_score 0.28, giving a score_gap of 0.54. "
+    "This ordering matches the supplied objective_order (safety first, then efficiency) and "
+    "objective_weights (safety 0.8, efficiency 0.2), and both skills show objective_deltas of "
+    "0.8 for safety and 0.2 for efficiency. The evidence is synthetic (evidence_label "
+    "SYNTHETIC), not real, observed, or measured, and nothing was executed, run, or deployed."
+)
+
+
+def test_live_answer_with_wrong_deltas_is_flagged():
+    assert _codes(LIVE_WRONG_DELTAS, _scenario_request("clear_preferred_skill")) == {
+        "DELTA_MISMATCH"
+    }
+
+
+DELTA_WORDING = [
+    pytest.param(
+        "skill_safety shows a safety objective delta of 0.8 and an efficiency objective delta of -0.1.",
+        set(),
+        id="objective-delta-of",
+    ),
+    pytest.param(
+        "Per-skill objective deltas (skill_safety: safety 0.8, efficiency -0.1; skill_efficiency: "
+        "safety -0.1, efficiency 0.8).",
+        set(),
+        id="per-skill-list",
+    ),
+    pytest.param("skill_safety carries objective_deltas safety 0.8 and efficiency -0.1.", set(), id="field-name-form"),
+    pytest.param("Efficiency fell by 0.1 for skill_safety.", set(), id="unsigned-decline-without-delta"),
+    pytest.param(
+        "Per-skill objective deltas (skill_safety: safety -0.1, efficiency 0.8).",
+        {"DELTA_MISMATCH"},
+        id="swapped-deltas",
+    ),
+    pytest.param("skill_efficiency shows a safety delta of +0.8.", {"DELTA_MISMATCH"}, id="wrong-signed-delta"),
+]
+
+
+@pytest.mark.parametrize(("sentence", "expected"), DELTA_WORDING)
+def test_each_delta_must_belong_to_its_skill_and_objective(sentence, expected):
+    assert _codes(f"{RANKING} {sentence}") == expected
+
+
+@pytest.mark.parametrize(
+    ("weights", "expected"),
+    [("(safety 0.8, efficiency 0.2)", set()), ("(safety 0.2, efficiency 0.8)", {"WEIGHT_MISMATCH"})],
+)
+def test_weights_written_as_a_field_name_are_checked(weights, expected):
+    assert _codes(f"{RANKING} It matches objective_weights {weights}.") == expected

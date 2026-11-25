@@ -156,24 +156,62 @@ _STAGE_NAMES = {
 }
 
 _RUNNER_UP = r"(?:runner[- ]up|second[- ]best)"
-_SELECTED_AFTER_ID = (
-    r"\s+(?:was|is|has\s+been|got|gets|will\s+be|remains)\s+(?:the\s+)?"
-    r"(?:selected|chosen|recommended|picked|selection|recommendation|winner|top\s+choice)\b"
-)
-_SELECTING_VERB = (
-    r"\b(?:selected|selects|chose|chooses|chosen|recommends|recommended|picked|picks)\s+"
-    r"(?:the\s+)?(?:skill\s+)?"
-)
 # A decision field pasted into the prose, as in '"runner_up_skill_id": "skill_safety"'.
 _DECISION_FIELD = re.compile(
     r"(?<![\w.])(?:subrep_decision\.)?(?P<field>selected_skill_id|runner_up_skill_id|abstain|"
     r"selected_score|runner_up_score|score_gap|reason_code)\b"
-    r"[\"'\s\\]*(?:[:=]|\bis\b|\bwas\b|\bequals\b)[\"'\s\\]*"
-    r"(?P<value>null|none|true|false|[-+]?(?:\d+\.\d+|\.\d+|\d+)|[a-z][\w-]*)"
+    r"[\"'\s\\]*(?P<separator>[:=]|\bis\b|\bwas\b|\bequals\b)(?P<before_value>[\"'\s\\]*)"
+    r"(?P<value>null|none|true|false|[-+]?(?:\d+\.\d+|\.\d+|\d+)|[a-z0-9][\w-]*)"
 )
 _SKILL_ID_FIELDS = ("selected_skill_id", "runner_up_skill_id")
 _SCORE_FIELDS = ("selected_score", "runner_up_score", "score_gap")
 _NULL_WORDS = frozenset({"null", "none"})
+# Any word can be a skill ID ("ghost", "unknown-skill"). A role sentence names one
+# where an ID stands, so every name found there is compared with the decision,
+# except ordinary words that also stand there: "was selected with score 0.82",
+# "the selected skill shows", "the admitted runner-up named by the decision".
+_NAME = r"(?<![\w-])(?P<name>[a-z0-9](?:[\w-]*[a-z0-9])?)(?![\w-])"
+_NOT_A_SKILL_ID = frozenset(
+    """
+    a an the this that these those it its they them their which what who whom whose
+    one ones none nothing no any each every either neither both all some another other
+    others such same there here
+    is was be been being are were has have had do does did exists exist existed named
+    listed given shown reported admitted excluded selected chosen recommended picked
+    defined set left required needed kept made found considered ranked scored used
+    removed rejected filtered ruled also then now still only not never already again
+    instead therefore thus hence so finally ultimately clearly correctly
+    deterministically automatically explicitly simply just even
+    skill skills option options candidate candidates policy policies choice choices
+    decision decisions result results outcome outcomes answer explanation
+    recommendation selection winner score scores rule value field fields entry item id
+    position slot place request evidence subrep omega omegaclaw model system agent
+    operator certificate certification stage budget weight weights objective objectives
+    with by under for from as based using on at in of to into onto because since over
+    above below among between according due per via after before and or nor but than
+    while when where whereas if though although unless without within against despite
+    through throughout toward towards upon
+    runner runner-up second-best best top first second third last highest lowest
+    highest-scoring top-scoring lower-scoring higher-scoring next sole single final
+    eligible null
+    """.split()
+)
+_ROLE_CLAIMS = (
+    ("selected", _NAME + r"\s+(?:was|is|has\s+been|got|gets|will\s+be|remains)\s+(?:the\s+)?"
+     r"(?:selected|chosen|recommended|picked)\b"),
+    ("selected", _NAME + r"\s+(?:was|is|remains)\s+(?:the\s+)?(?:selection|recommendation|winner|"
+     r"top\s+choice)\b"),
+    ("selected", r"\b(?:selected|selects|chose|chooses|chosen|recommends|recommended|picked|picks)"
+     r"\s+(?:the\s+skill\s+)?" + _NAME),
+    ("selected", r"\b(?:selected|chosen|recommended)\s+skill(?:\s+id)?\s+(?:is|was)\s+(?:the\s+)?"
+     + _NAME),
+    ("runner-up", _NAME + r"\s+(?:was|is|remains|ranked\s+as|served\s+as)\s+(?:the\s+)?"
+     r"(?:admitted\s+)?" + _RUNNER_UP),
+    ("runner-up", rf"\b{_RUNNER_UP}(?:\s+skill)?(?:\s+id)?\s+(?:is|was)\s+(?:the\s+)?(?:skill\s+)?"
+     + _NAME),
+    ("runner-up", rf"\b{_RUNNER_UP}(?:\s+skill)?\s+" + _NAME),
+)
+_ROLE_CLAIM_PATTERNS = tuple((role, re.compile(pattern)) for role, pattern in _ROLE_CLAIMS)
 _SNAKE_CASE_NAME = r"(?<![\w-])(?P<name>[a-z][a-z0-9-]*_[a-z0-9_-]*[a-z0-9])(?![\w-])"
 # A whole number counts only when no word follows it, so "(2 objectives)" is not a score.
 _NUMBER = r"(?P<number>[-+]?(?:\d+\.\d+|\.\d+|\d+(?![\d.]*\s*[a-z%])))"
@@ -190,11 +228,17 @@ _DECIMAL = re.compile(r"(?<![\w.])[-+]?(?:\d+\.\d+|\.\d+)(?![\w])")
 _TEXT_NUMBER = re.compile(r"(?<![\w.])-?(?:\d+\.\d+|\.\d+|\d+)(?![\w.])")
 # Identity and timestamp fields hold digits that are not evidence.
 _NUMBER_FREE_FIELDS = frozenset({"request_id", "created_at", "schema_version"})
-# "not real, observed, or measured data": the "not" covers every item of the list.
+# "not real, observed, or measured data": the negation covers every item of the list,
+# and so does "rather than" or "instead of". A list ends with "or", "and" or "nor", so
+# "rather than synthetic, these are real-world results" is not one.
 _NEGATED_LIST = re.compile(
-    r"\b(not|never|nor)\s+([a-z-]+(?:\s*,\s*(?:(?:or|and|nor)\s+)?[a-z-]+|\s+(?:or|nor)\s+[a-z-]+)+)"
+    r"\b(not|never|nor|rather\s+than|instead\s+of)\s+"
+    r"([a-z-]+(?:\s*,\s*[a-z-]+)*\s*,?\s+(?:or|and|nor)\s+[a-z-]+)"
 )
 _PERCENT = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*%")
+# "weights" and "deltas" also arrive as field names: objective_weights, objective_deltas.
+_WEIGHT_WORD = re.compile(r"(?:\b|(?<=_))weights?\b")
+_DELTA_WORD = re.compile(r"(?:\b|(?<=_))deltas?\b")
 
 _EXECUTION_GENERIC = tuple(
     re.compile(pattern)
@@ -225,28 +269,34 @@ _REAL_EVIDENCE = tuple(
         r"\b(?:was|were)\s+(?:observed|measured)\b",
     )
 )
-_ABSTENTION_TERMS = ("abstain", "no admissible", "no recommendation")
+# Ways a correct abstention is worded: "SubRep abstained", "an abstention",
+# "no admissible skill", "no recommendation", "no skill is recommended".
+_ABSTENTION_STATED = re.compile(
+    r"\babst(?:ain\w*|ention)\b|\bno_admissible_skills\b|\bno\s+admissible\b"
+    r"|\bno\s+recommendation\b|\black\s+of\s+(?:a\s+)?recommendation\b"
+    r"|\bno\s+(?:skill|candidate|option)\s+(?:is|was|has\s+been)\s+(?:selected|recommended|chosen)\b"
+)
 
-# Roles an explanation can give a skill that the request does not contain.
+# Other roles an explanation can give a skill the request does not contain. Selected
+# and runner-up claims are compared with the decision itself in _role_claims.
 _UNKNOWN_SKILL_ROLES = (
-    ("selected", re.compile(_SNAKE_CASE_NAME + _SELECTED_AFTER_ID)),
-    ("selected", re.compile(_SELECTING_VERB + _SNAKE_CASE_NAME)),
-    (
-        "the runner-up",
-        re.compile(
-            _SNAKE_CASE_NAME
-            + rf"\s+(?:was|is|remains|ranked\s+as|served\s+as)\s+(?:the\s+)?{_RUNNER_UP}"
-        ),
-    ),
-    ("the runner-up", re.compile(rf"{_RUNNER_UP}\s+(?:was|is)\s+" + _SNAKE_CASE_NAME)),
     (
         "excluded",
         re.compile(
-            _SNAKE_CASE_NAME
+            _NAME
             + r"\s+(?:was|is|has\s+been|got)\s+(?:also\s+)?"
             r"(?:excluded|removed|rejected|filtered\s+out|ruled\s+out)\b"
         ),
     ),
+    ("scored", re.compile(_NAME + r"\s+(?:scored|scores)\s+(?:of\s+)?" + _NUMBER)),
+    (
+        "scored",
+        re.compile(
+            _NAME + r"\s+(?:has|had)\s+(?:a\s+)?(?:final\s+)?(?:selection\s+)?score\s+"
+            r"(?:of\s+)?" + _NUMBER
+        ),
+    ),
+    # A snake_case name is a skill ID, so the looser score forms ("x at 0.5") apply to it.
     ("scored", re.compile(_SNAKE_CASE_NAME + _SCORE_AFTER_ID)),
 )
 
@@ -262,6 +312,8 @@ def explanation_findings(request: RecommendationRequest, explanation: str) -> li
     findings.extend(_decision_field_claims(request, text))
     findings.extend(_exclusion_stage_claims(request, text))
     findings.extend(_score_claims(request, text))
+    findings.extend(_weight_claims(request, text))
+    findings.extend(_delta_claims(request, text))
     findings.extend(_unsupported_numbers(request, text))
     findings.extend(_execution_claims(request, text))
     findings.extend(_evidence_label_claims(request, text))
@@ -300,7 +352,7 @@ def _asserted(pattern: re.Pattern[str], clause: str) -> Iterable[re.Match[str]]:
 def _decision_named(request: RecommendationRequest, text: str) -> list[Finding]:
     decision = request.subrep_decision
     if decision.abstain:
-        if not any(term in text for term in _ABSTENTION_TERMS):
+        if not _ABSTENTION_STATED.search(text):
             return [
                 _finding(
                     "ABSTENTION_NOT_STATED",
@@ -314,53 +366,91 @@ def _decision_named(request: RecommendationRequest, text: str) -> list[Finding]:
 
 
 def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
+    """Compare every skill an explanation names as selected or runner-up with the decision."""
+
     decision = request.subrep_decision
-    excluded = {exclusion.skill_id for exclusion in request.exclusions}
+    ids = {skill_id.lower(): skill_id for skill_id in _skill_ids(request)}
+    excluded = {exclusion.skill_id.lower() for exclusion in request.exclusions}
+    named: dict[str, set[str]] = {"selected": set(), "runner-up": set()}
+    for sentence in _SENTENCE_BREAK.split(text):
+        for role, pattern in _ROLE_CLAIM_PATTERNS:
+            for match in _asserted(pattern, sentence):
+                if _could_be_skill_id(match["name"], request):
+                    named[role].add(match["name"])
+        # "excluded_skill, the runner-up" is only unambiguous for a skill that cannot be
+        # one; after the selected skill the phrase usually introduces the next name.
+        for skill_id in excluded:
+            appositive = re.compile(rf"{_skill_pattern(skill_id)}\s*,\s*(?:the\s+)?{_RUNNER_UP}")
+            if next(_asserted(appositive, sentence), None) is not None:
+                named["runner-up"].add(skill_id)
+
+    selected = decision.selected_skill_id.lower() if decision.selected_skill_id else None
+    runner_up = decision.runner_up_skill_id.lower() if decision.runner_up_skill_id else None
     actual = "abstained" if decision.abstain else f"selected {decision.selected_skill_id!r}"
     findings: list[Finding] = []
-    for skill_id in _skill_ids(request):
-        skill = _skill_pattern(skill_id)
-        if skill_id != decision.selected_skill_id:
-            selected = (
-                re.compile(skill + _SELECTED_AFTER_ID),
-                re.compile(_SELECTING_VERB + skill),
-            )
-            if any(_asserted_in_a_sentence(pattern, text) for pattern in selected):
-                findings.append(
-                    _finding(
-                        "WRONG_SKILL_ROLE",
-                        f"explanation describes {skill_id!r} as selected, but SubRep {actual}",
-                    )
-                )
-        if skill_id == decision.runner_up_skill_id:
+    for name in sorted(named["selected"] - {selected}):
+        if name not in ids:
+            findings.append(_unknown_skill(name, "selected"))
             continue
-        runner_forms = [
-            rf"{skill}\s+(?:was|is|remains|ranked\s+as|served\s+as)\s+(?:the\s+)?{_RUNNER_UP}",
-            rf"{_RUNNER_UP}\s+(?:was|is)\s+{skill}",
-        ]
-        if skill_id in excluded:
-            # "excluded_skill, the runner-up" is only unambiguous for a skill that cannot
-            # be one; after the selected skill the phrase usually introduces the next name.
-            runner_forms.append(rf"{skill}\s*,\s*(?:the\s+)?{_RUNNER_UP}")
-        runner = re.compile("|".join(f"(?:{form})" for form in runner_forms))
-        if _asserted_in_a_sentence(runner, text):
-            if skill_id in excluded:
-                message = (
-                    f"explanation must not describe excluded skill {skill_id!r} "
-                    "as an admitted runner-up"
+        findings.append(
+            _finding(
+                "WRONG_SKILL_ROLE",
+                f"explanation describes {ids[name]!r} as selected, but SubRep {actual}",
+            )
+        )
+    for name in sorted(named["runner-up"] - {runner_up}):
+        if name not in ids:
+            findings.append(_unknown_skill(name, "the runner-up"))
+        elif name in excluded:
+            findings.append(
+                _finding(
+                    "WRONG_SKILL_ROLE",
+                    f"explanation must not describe excluded skill {ids[name]!r} as an "
+                    "admitted runner-up",
                 )
-            elif decision.runner_up_skill_id is None:
-                message = (
-                    f"explanation describes {skill_id!r} as the runner-up, but SubRep "
-                    "has no admitted runner-up"
+            )
+        elif runner_up is None:
+            findings.append(
+                _finding(
+                    "WRONG_SKILL_ROLE",
+                    f"explanation describes {ids[name]!r} as the runner-up, but SubRep has no "
+                    "admitted runner-up",
                 )
-            else:
-                message = (
-                    f"explanation describes {skill_id!r} as the runner-up, but SubRep's "
-                    f"runner-up is {decision.runner_up_skill_id!r}"
+            )
+        else:
+            findings.append(
+                _finding(
+                    "WRONG_SKILL_ROLE",
+                    f"explanation describes {ids[name]!r} as the runner-up, but SubRep's "
+                    f"runner-up is {decision.runner_up_skill_id!r}",
                 )
-            findings.append(_finding("WRONG_SKILL_ROLE", message))
+            )
     return findings
+
+
+def _could_be_skill_id(name: str, request: RecommendationRequest) -> bool:
+    """False for ordinary words and request field names found where an ID could stand."""
+
+    if name in _NOT_A_SKILL_ID or name.isdigit():
+        return False
+    return name in {skill_id.lower() for skill_id in _skill_ids(request)} or (
+        name not in _request_field_names(request)
+    )
+
+
+def _request_field_names(request: RecommendationRequest) -> set[str]:
+    return {
+        segment.lower()
+        for reference in request.valid_evidence_refs()
+        for segment in reference.split(".")
+    }
+
+
+def _unknown_skill(name: str, role: str) -> Finding:
+    return _finding(
+        "UNKNOWN_SKILL",
+        f"explanation describes {name!r} as {role}, but no skill with that ID is in the request",
+    )
 
 
 def _unknown_skill_claims(request: RecommendationRequest, text: str) -> list[Finding]:
@@ -371,25 +461,14 @@ def _unknown_skill_claims(request: RecommendationRequest, text: str) -> list[Fin
     """
 
     known = {skill_id.lower() for skill_id in _skill_ids(request)}
-    known.update(
-        segment.lower()
-        for reference in request.valid_evidence_refs()
-        for segment in reference.split(".")
-    )
     roles: dict[str, set[str]] = {}
     for sentence in _SENTENCE_BREAK.split(text):
         for role, pattern in _UNKNOWN_SKILL_ROLES:
             for match in _asserted(pattern, sentence):
-                if match["name"] not in known:
-                    roles.setdefault(match["name"], set()).add(role)
-    return [
-        _finding(
-            "UNKNOWN_SKILL",
-            f"explanation describes {name!r} as {' and '.join(sorted(described))}, but no "
-            "skill with that ID is in the request",
-        )
-        for name, described in sorted(roles.items())
-    ]
+                name = match["name"]
+                if name not in known and _could_be_skill_id(name, request):
+                    roles.setdefault(name, set()).add(role)
+    return [_unknown_skill(name, " and ".join(sorted(described))) for name, described in sorted(roles.items())]
 
 
 def _decision_field_claims(request: RecommendationRequest, text: str) -> list[Finding]:
@@ -404,18 +483,25 @@ def _decision_field_claims(request: RecommendationRequest, text: str) -> list[Fi
         if (field, value) in seen:
             continue
         seen.add((field, value))
-        finding = _decision_field_problem(field, value, decision, known)
+        # "selected_skill_id: ghost" or '"selected_skill_id" is "ghost"' states a value;
+        # "selected_skill_id is the field" is prose about the field.
+        explicit = match["separator"] in {":", "="} or any(
+            quote in match["before_value"] for quote in "\"'"
+        )
+        finding = _decision_field_problem(field, value, decision, known, explicit=explicit)
         if finding is not None:
             findings.append(finding)
     return findings
 
 
-def _decision_field_problem(field: str, value: str, decision: Any, known: set[str]) -> Finding | None:
+def _decision_field_problem(
+    field: str, value: str, decision: Any, known: set[str], *, explicit: bool
+) -> Finding | None:
     expected = getattr(decision, field)
     is_null = value in _NULL_WORDS
     if field in _SKILL_ID_FIELDS:
-        if not is_null and "_" not in value and value not in known:
-            return None  # prose such as "selected_skill_id is the field", not a pasted value
+        if not is_null and not explicit and value in _NOT_A_SKILL_ID:
+            return None
         stated = None if is_null else value
         if stated == (None if expected is None else expected.lower()):
             return None
@@ -447,7 +533,7 @@ def _decision_field_problem(field: str, value: str, decision: Any, known: set[st
             f"{'null' if expected is None else format(expected, '.6g')}",
         )
     # reason_code
-    if not is_null and "_" not in value:
+    if not is_null and not explicit and "_" not in value:
         return None  # prose such as "reason_code is the reason", not a pasted value
     if is_null and expected is None:
         return None
@@ -458,14 +544,6 @@ def _decision_field_problem(field: str, value: str, decision: Any, known: set[st
         f"explanation states reason_code {value}, but SubRep's decision has {expected!r}",
     )
 
-
-def _asserted_in_a_sentence(pattern: re.Pattern[str], text: str) -> bool:
-    """Role claims span commas ("excluded_skill, the runner-up"), so check whole sentences."""
-
-    return any(
-        next(_asserted(pattern, sentence), None) is not None
-        for sentence in _SENTENCE_BREAK.split(text)
-    )
 
 
 def _clauses(sentence: str) -> list[str]:
@@ -564,6 +642,110 @@ def _score_claims(request: RecommendationRequest, text: str) -> list[Finding]:
             )
         findings.append(_finding("SCORE_MISMATCH", message))
     return findings
+
+
+def _weight_claims(request: RecommendationRequest, text: str) -> list[Finding]:
+    """Check that each weight is given to its own objective.
+
+    A live answer wrote "objective weights (safety 0.2, efficiency 0.8)" for weights of
+    0.8 and 0.2: every number exists in the request, so only the pairing is wrong.
+    """
+
+    weights = {item.objective_id.lower(): item.weight for item in request.objective_weights}
+    names = "|".join(re.escape(name) for name in sorted(weights, key=len, reverse=True))
+    pair = re.compile(
+        rf"(?<![\w.])(?P<objective>{names})(?![\w-])\s*(?:of\s+|=|:|at\s+|is\s+)?\s*" + _NUMBER
+    )
+    named_weight = re.compile(
+        rf"(?<![\w.])(?P<objective>{names})(?![\w-])\s+(?:(?:carries|has|had|with|at)\s+"
+        r"(?:a\s+|an\s+)?)?(?:objective\s+)?weight\s*(?:of\s+|=|:|is\s+)?\s*" + _NUMBER
+    )
+    # Deltas and skills follow weights in most answers; stop reading a weight list there.
+    skills = "|".join(_skill_pattern(skill_id) for skill_id in _skill_ids(request))
+    list_end = re.compile(r"deltas?\b|delta_r|\bscores?\b|;" + (f"|{skills}" if skills else ""))
+    stated: list[tuple[str, str]] = []
+    for sentence in _SENTENCE_BREAK.split(text):
+        for word in _WEIGHT_WORD.finditer(sentence):
+            window = sentence[word.end() : word.end() + 120]
+            end = list_end.search(window)
+            window = window[: end.start()] if end else window
+            stated.extend((match["objective"], match["number"]) for match in pair.finditer(window))
+        stated.extend(
+            (match["objective"], match["number"]) for match in named_weight.finditer(sentence)
+        )
+    wrong: dict[str, set[str]] = {}
+    for objective, number in stated:
+        if not _matches(number, weights[objective]):
+            wrong.setdefault(objective, set()).add(number)
+    return [
+        _finding(
+            "WEIGHT_MISMATCH",
+            f"explanation gives objective {objective!r} weight {', '.join(sorted(numbers))}, but "
+            f"its SubRep weight is {weights[objective]:.6g}",
+        )
+        for objective, numbers in sorted(wrong.items())
+    ]
+
+
+def _delta_claims(request: RecommendationRequest, text: str) -> list[Finding]:
+    """Check that each objective delta is given to its own skill and objective.
+
+    A live answer wrote "both skills show objective_deltas of 0.8 for safety and 0.2 for
+    efficiency"; each number is in the request, but no skill has those deltas.
+    """
+
+    deltas = {
+        skill.skill_id.lower(): {name.lower(): value for name, value in skill.objective_deltas.items()}
+        for skill in request.admitted_skills
+    }
+    if not deltas:
+        return []
+    names = "|".join(
+        re.escape(item.objective_id.lower())
+        for item in sorted(request.objective_weights, key=lambda item: -len(item.objective_id))
+    )
+    pairs = re.compile(
+        rf"(?<![\w.])(?P<objective>{names})(?![\w-])\s*(?:objective\s+)?(?P<delta_word>deltas?\s*)?"
+        rf"(?:of\s+|=|:)?\s*{_NUMBER}"
+        rf"|(?<![\w.])(?P<number_first>[-+]?(?:\d+\.\d+|\.\d+))\s+(?:for|on|in)\s+(?P<objective_after>{names})(?![\w-])"
+    )
+    owners = re.compile(
+        "|".join(_skill_pattern(skill_id) for skill_id in deltas)
+        + r"|\b(?:both|each|all)\s+(?:admitted\s+)?skills?\b"
+    )
+    wrong: dict[tuple[str, str], set[str]] = {}
+    for sentence in _SENTENCE_BREAK.split(text):
+        delta_word = _DELTA_WORD.search(sentence)
+        for match in pairs.finditer(sentence):
+            objective = match["objective"] or match["objective_after"]
+            number = match["number"] or match["number_first"]
+            own_word = bool(match["delta_word"])
+            # A pair is a delta claim when it says "delta" itself, or follows the word
+            # "delta" in its sentence with no "weight" in between.
+            after_delta = (
+                delta_word is not None
+                and delta_word.end() <= match.start()
+                and not _WEIGHT_WORD.search(sentence[delta_word.end() : match.start()])
+            )
+            if not (own_word or after_delta):
+                continue
+            owner = None
+            for found in owners.finditer(sentence[: match.start()]):
+                owner = found.group(0)
+            if owner is None:
+                continue
+            claimed_by = list(deltas) if owner not in deltas else [owner]
+            for skill_id in claimed_by:
+                if not _matches_number(number, deltas[skill_id][objective]):
+                    wrong.setdefault((skill_id, objective), set()).add(number)
+    return [
+        _finding(
+            "DELTA_MISMATCH",
+            f"explanation gives {skill_id!r} the {objective} delta {', '.join(sorted(numbers))}, "
+            f"but its SubRep {objective} delta is {deltas[skill_id][objective]:.6g}",
+        )
+        for (skill_id, objective), numbers in sorted(wrong.items())
+    ]
 
 
 def _last_mention_end(clause: str, skill_id: str, before: int) -> int:
@@ -711,7 +893,7 @@ def _spread_negation(text: str) -> str:
 
     def spread(match: re.Match[str]) -> str:
         word = match.group(1)
-        items = re.split(r"(\s*,\s*(?:(?:or|and|nor)\s+)?|\s+(?:or|nor)\s+)", match.group(2))
+        items = re.split(r"(\s*,\s*(?:(?:or|and|nor)\s+)?|\s+(?:or|and|nor)\s+)", match.group(2))
         return word + " " + "".join(
             part if index % 2 else f"{'' if index == 0 else 'not '}{part}"
             for index, part in enumerate(items)
