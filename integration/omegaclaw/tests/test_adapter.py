@@ -14,6 +14,7 @@ from integration.omegaclaw.contracts import (
     AUDIT_SCHEMA_VERSION,
     EXCLUSION_STAGES,
     INTEGRATION_MODE,
+    MAX_EXPLANATION_CHARS,
     RESPONSE_SCHEMA_VERSION,
     SELECTION_BASIS,
     ObjectiveWeight,
@@ -805,3 +806,36 @@ def test_rejects_selection_when_admitted_set_is_empty(tmp_path):
 
     assert outcome.status == "invalid_response"
     assert "authoritative SubRep decision" in outcome.error
+
+
+def _response_of_length(length: int) -> str:
+    base = "safe_skill was selected by SubRep with a score of 1.5. "
+    return _response(explanation=base + "x" * (length - len(base)))
+
+
+def test_explanation_at_the_length_limit_is_accepted(tmp_path):
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(response=_response_of_length(MAX_EXPLANATION_CHARS)),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+
+    assert adapter.recommend(_request()).status == "accepted"
+
+
+def test_explanation_over_the_length_limit_is_rejected(tmp_path):
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(response=_response_of_length(MAX_EXPLANATION_CHARS + 1)),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+
+    outcome = adapter.recommend(_request())
+
+    assert outcome.status == "invalid_response"
+    assert f"at most {MAX_EXPLANATION_CHARS} characters" in outcome.error
+
+
+def test_prompt_states_the_same_length_limit_as_the_check():
+    assert MAX_EXPLANATION_CHARS == 1500
+    assert f"under {MAX_EXPLANATION_CHARS} characters" in build_recommendation_prompt(_request())

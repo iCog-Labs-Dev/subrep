@@ -18,6 +18,9 @@ TIE_BREAKER = "LEXICOGRAPHIC_SKILL_ID"
 INTEGRATION_MODE = "EXPLANATION_ONLY"
 SELECTION_BASIS = "SUBREP_DECISION"
 NO_ADMISSIBLE_SKILLS = "NO_ADMISSIBLE_SKILLS"
+# Room to describe a decision with all five exclusion stages: correct live answers
+# for that case ran from 921 to 1214 characters.
+MAX_EXPLANATION_CHARS = 1500
 VALID_ADVISORY_CONCERN_CODES = {
     "SMALL_SCORE_GAP",
     "NEGATIVE_OBJECTIVE_TRADEOFF",
@@ -651,8 +654,8 @@ class OmegaRecommendationResponse:
         if self.mode != INTEGRATION_MODE:
             raise ValueError(f"mode must be {INTEGRATION_MODE!r}")
         explanation = _non_empty(self.explanation, "explanation")
-        if len(explanation) > 1000:
-            raise ValueError("explanation must be at most 1000 characters")
+        if len(explanation) > MAX_EXPLANATION_CHARS:
+            raise ValueError(f"explanation must be at most {MAX_EXPLANATION_CHARS} characters")
         object.__setattr__(self, "explanation", explanation)
 
         if self.abstain:

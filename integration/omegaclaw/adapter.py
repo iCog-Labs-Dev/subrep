@@ -9,6 +9,7 @@ from .audit import JsonlAuditStore
 from .contracts import (
     CERTIFICATION_STAGE,
     INTEGRATION_MODE,
+    MAX_EXPLANATION_CHARS,
     OBJECTIVE_COMPATIBILITY_STAGE,
     OPERATOR_STAGE,
     RISK_BUDGET_STAGE,
@@ -223,7 +224,7 @@ def build_recommendation_prompt(request: RecommendationRequest) -> str:
         "of objects shaped exactly as {\"code\": \"ALLOWED_CODE\", \"message\": "
         "\"short concern\", \"evidence_refs\": [\"exact.leaf.path\"]}; never return "
         "bare code strings. (10) Return mode and selection_basis exactly as required, and "
-        "keep the explanation under 1000 characters. In the Omega internal command "
+        f"keep the explanation under {MAX_EXPLANATION_CHARS} characters. In the Omega internal command "
         "protocol, invoke only the channel send action, exactly once, with the response "
         "JSON as its message: output one line that starts with the word send, then a "
         "space, then the whole response JSON on that same line, as in send {\"schema_version\": "
