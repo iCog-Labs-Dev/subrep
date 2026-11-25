@@ -71,6 +71,51 @@ def margin_loss(caps, delta, payoff, epsilon, regularization, eligibility="feasi
                   'eligible_pass_rate': float((margins[eligible] >= 0).float().mean()) if eligible.any() else None}
 
 
+def priority_reuse_loss(caps, delta, payoff, priorities, epsilon, regularization, priority_weight=1.):
+    """Target incremental reuse at declared weights, not acceptance at unused weights.
+
+    A shared cap region must both contain a query and certify an improving
+    candidate. Min over candidates permits specialization rather than requiring
+    every candidate to pass. Exact validation metrics retain full-simplex skills.
+    """
+    # Reuse the existing geometry/shape/settings validation.
+    margin_loss(caps, delta, payoff, epsilon, regularization)
+    if (priorities.ndim != 2 or priorities.shape[1] != caps.shape[1] or len(priorities) < 1
+            or not torch.isfinite(priorities).all() or (priorities < 0).any()
+            or not torch.allclose(priorities.sum(-1), torch.ones_like(priorities[:, 0]), atol=1e-6, rtol=0)):
+        raise ValueError('Priorities must be finite nonnegative simplex rows')
+    if not np.isfinite(priority_weight) or priority_weight <= 0:
+        raise ValueError('Priority weight must be positive')
+    scores = payoff[:, :, None] + torch.einsum('bkm,qm->bkq', delta, priorities)
+    global_pass = payoff + delta.min(-1).values + epsilon >= 0
+    baseline = scores.masked_fill(~global_pass[:, :, None], -torch.inf).max(1).values
+    baseline = torch.where(torch.isfinite(baseline), baseline, torch.zeros_like(baseline))
+    # Only candidates that could pass at this query and improve the global choice.
+    viable = (~global_pass[:, :, None]) & (scores + epsilon >= 0) & (scores > baseline[:, None, :] + 1e-6)
+    active = viable.any(1)
+    margins = payoff + worst_case(delta, caps[:, None, :]) + epsilon
+    candidate_error = torch.relu(-margins)[:, :, None].expand_as(scores)
+    best_error = candidate_error.masked_fill(~viable, torch.inf).min(1).values
+    best_error = torch.where(active, best_error, torch.zeros_like(best_error))
+    inclusion_error = torch.relu(priorities[None, :, :] - caps[:, None, :]).amax(-1)
+    count = active.sum(-1)
+    per_context = ((best_error + priority_weight * inclusion_error) * active).sum(-1) / count.clamp_min(1)
+    fit = per_context[count > 0].mean() if (count > 0).any() else caps.sum() * 0
+    anchor = (1-caps).square().mean()
+    loss = fit + regularization * anchor
+    with torch.no_grad():
+        inside = (priorities[None, :, :] <= caps[:, None, :] + 1e-9).all(-1)
+        available = global_pass[:, :, None] | ((margins >= 0)[:, :, None] & inside[:, None, :])
+        selected = scores.masked_fill(~available, -torch.inf).max(1).values
+        selected = torch.where(torch.isfinite(selected), selected, torch.zeros_like(selected))
+        gain = selected-baseline
+    return loss, {'reuse_loss': float(fit.detach()), 'anchor_loss': float(anchor.detach()),
+        'potential_improvement_query_rate': float(active.float().mean()),
+        'priority_coverage': float(inside.float().mean()),
+        'improved_query_rate': float((gain > 1e-6).float().mean()),
+        'reuse_gain': float(gain.mean())}
+
+
 def grouped_split(contexts, seed):
     """Keep repeated rounded observations in one partition; retain all outcomes."""
     groups = {}
@@ -88,6 +133,9 @@ def grouped_split(contexts, seed):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--loss-mode', choices=['margin', 'priority-reuse'], default='margin')
+    p.add_argument('--priority-file', help='JSON array of predefined simplex priority rows')
+    p.add_argument('--priority-weight', type=float, default=1.)
     p.add_argument('--data-dir', required=True)
     p.add_argument('--scales-file', help='Optional JSON divisors for motives; identity if omitted')
     p.add_argument('--baseline-candidate-id', required=True)
@@ -103,6 +151,10 @@ def main():
     args = p.parse_args()
     if not np.isfinite([args.epsilon, args.regularization, args.learning_rate, args.payoff_scale]).all() or min(args.epsilon,args.regularization) < 0 or args.learning_rate <= 0 or args.epochs < 1 or args.payoff_scale <= 0 or args.seed < 0:
         p.error('Invalid training settings')
+    if args.loss_mode == 'priority-reuse' and (not args.priority_file or args.eligibility != 'feasible'):
+        p.error('priority-reuse requires --priority-file and --eligibility feasible')
+    if args.loss_mode == 'margin' and args.priority_file:
+        p.error('--priority-file requires --loss-mode priority-reuse')
     out = Path(args.output_dir)
     if out.exists():
         raise FileExistsError(out)
@@ -175,14 +227,22 @@ def main():
     x = torch.tensor(np.stack(contexts))
     d = torch.tensor(np.stack(deltas), dtype=torch.float32)
     r = torch.tensor(np.stack(payoffs), dtype=torch.float32)
+    priorities = None
+    if args.priority_file:
+        priorities = torch.tensor(json.loads(Path(args.priority_file).read_text()), dtype=torch.float32)
     splits = grouped_split(contexts, args.seed)
     optimizer = torch.optim.Adam(model.support_head.parameters(), lr=args.learning_rate)
-    def evaluate(ids):
-        caps = model.forward_inference(x[ids])[1]
+    def loss_for(caps, ids):
+        if priorities is not None:
+            return priority_reuse_loss(caps, d[ids], r[ids], priorities, args.epsilon, args.regularization, args.priority_weight)
         return margin_loss(caps, d[ids], r[ids], args.epsilon, args.regularization, args.eligibility)
+    def evaluate(ids):
+        return loss_for(model.forward_inference(x[ids])[1], ids)
+    def rank(loss, metrics):
+        return (metrics['reuse_gain'], -float(loss)) if priorities is not None else (-float(loss),)
     with torch.no_grad():
-        best, _ = evaluate(splits['validation'])
-        best = float(best)
+        initial, initial_metrics = evaluate(splits['validation'])
+        best_rank = rank(initial, initial_metrics)
     best_state = copy.deepcopy(model.state_dict())
     best_epoch = 0
     history = []
@@ -198,23 +258,27 @@ def main():
             val, metrics = evaluate(splits['validation'])
         if not torch.isfinite(val):
             raise ValueError('Nonfinite validation loss')
-        history.append({'epoch': epoch, 'train_loss': float(loss.detach()), 'validation_loss': float(val)})
-        if float(val) < best:
-            best, best_epoch = float(val), epoch
+        history.append({'epoch': epoch, 'train_loss': float(loss.detach()), 'validation_loss': float(val),
+                        **({'validation_reuse': metrics} if priorities is not None else {})})
+        if rank(val, metrics) > best_rank:
+            best_rank, best_epoch = rank(val, metrics), epoch
             best_state = copy.deepcopy(model.state_dict())
         if epoch == 1 or epoch % 50 == 0:
             print(history[-1], flush=True)
     model.load_state_dict(best_state)
     with torch.no_grad():
         test_loss, test_metrics = evaluate(splits['test'])
-        full_loss, full_metrics = margin_loss(torch.ones(len(splits['test']),objective_count), d[splits['test']], r[splits['test']], args.epsilon,args.regularization,args.eligibility)
-    report = {'dataset_contract': dataset_contract, 'settings': vars(args), 'best_epoch': best_epoch, 'test_loss': float(test_loss),
+        full_loss, full_metrics = loss_for(torch.ones(len(splits['test']),objective_count), splits['test'])
+    report = {'priorities': priorities.tolist() if priorities is not None else None,
+              'priority_sha256': hashlib.sha256(Path(args.priority_file).read_bytes()).hexdigest() if priorities is not None else None,
+              'selection_rule': 'validation reuse gain, then lower loss' if priorities is not None else 'validation loss',
+              'dataset_contract': dataset_contract, 'settings': vars(args), 'best_epoch': best_epoch, 'test_loss': float(test_loss),
               'test': test_metrics, 'full_simplex_loss': float(full_loss), 'full_simplex': full_metrics,
               'history': history, 'sources': sources, 'splits': {k:v.tolist() for k,v in splits.items()},
               'base_sha256': hashlib.sha256(Path(args.base_checkpoint).read_bytes()).hexdigest(),
               'scales_sha256': hashlib.sha256(Path(args.scales_file).read_bytes()).hexdigest() if args.scales_file else None,
               'scope': 'Head-only development split; base model may have seen these contexts. Fresh end-to-end evaluation required.',
-              'method': 'Explicit baseline, separate payoff, configured eligibility; equal context weighting; hinge loss plus full-simplex squared-distance anchor. Adaptation, not exact draft replication.'}
+              'method': ('Priority inclusion plus exact-region margin for an improving candidate; full-simplex anchor. No absolute safety constraint.' if priorities is not None else 'Explicit baseline, separate payoff, configured eligibility; equal context weighting; hinge loss plus full-simplex squared-distance anchor. Adaptation, not exact draft replication.')}
     out.mkdir(parents=True)
     saved = {'model_state_dict': model.state_dict(), 'support_training': report}
     # The auxiliary head is frozen, so preserve its output interpretation too.

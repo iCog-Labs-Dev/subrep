@@ -233,3 +233,45 @@ success, cost, effort, smoothness and joint admitted/goal/episode-budget outcome
 These exact-start empirical certificates are not statistical safety guarantees.
 Deterministic re-execution is not an independent replicate. This is a support
 comparison, not the complete baseline/uncertainty study for publication.
+
+## Optional priority-aware support improvement
+
+The original margin loss can admit skills only inside regions that no requested
+priority visits. `generator.train_mdn_margin_support --loss-mode priority-reuse`
+adds an opt-in alternative. It uses a declared JSON array of simplex priorities
+(`configs/safety_four_objective_priorities.json` contains the existing balanced
+and four 80%-emphasis profiles). It never reads comparison/evaluation outcomes.
+
+For each training context and priority, it finds candidates that could pass at
+that priority and score better than the current full-simplex selection. The loss
+combines priority containment with the smallest exact-region margin shortfall
+among those candidates, plus the existing full-simplex anchor. Global certificates
+remain available. Validation chooses the largest empirical scalarized reuse gain,
+then the lower loss. Only support-head parameters change; epsilon, gate formulas,
+policy checkpoints and objective scales remain fixed. This is an implementation
+choice, not a claim of implementing a paper-prescribed loss.
+
+The logs record potential improvement, priority coverage, improved-query rate,
+and reuse gain. Zero achieved gain is possible even if some pointwise opportunity
+exists: one context-dependent capped region may not represent all useful regions.
+Positive scalarized gain does not imply lower absolute cost or more goals; those
+must be evaluated separately. Grouped head validation is still development-only
+because the representation has seen this collection.
+
+Start from the previous support checkpoint and save into a new output directory.
+Use the original raw candidate sets, frozen scale JSON, and its task divisor as
+`--payoff-scale`. Example additional training options:
+
+```bash
+--loss-mode priority-reuse \
+--priority-file configs/safety_four_objective_priorities.json \
+--priority-weight 1 --eligibility feasible --epsilon 0.2 --regularization 0.1
+```
+
+Then run `demo.compare_four_objective_support` with the original `--run-dir` and
+`--support-checkpoint PATH_TO_NEW_SUPPORT/support.pth`. Use new evaluation seeds
+(e.g. 650000 if unused), retain the same fixed-priority profiles, and compare
+actual selections/outcomes with full-simplex and fixed-region baselines. Earlier
+comparison contexts are now development evidence and should not serve as the
+final evaluation of this changed method. Do not widen a certified region after
+certification or bypass a failed gate merely to increase reuse.

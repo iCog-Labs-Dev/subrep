@@ -130,6 +130,7 @@ def summarize(contexts, cost_limit):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--support-checkpoint', help='Optional newly trained support checkpoint; keep original run data and policies')
     p.add_argument('--run-dir',required=True)
     p.add_argument('--output',required=True)
     p.add_argument('--contexts',type=int,default=100)
@@ -151,7 +152,7 @@ def main():
     scales=np.asarray(scale_data['divisors'])
     if scale_data['objective_names']!=OBJECTIVES or scales.shape!=(4,) or not np.isfinite(scales).all() or np.any(scales<=0):
         raise ValueError('Invalid scale schema')
-    checkpoint=source/'support/support.pth'
+    checkpoint=Path(args.support_checkpoint).resolve() if args.support_checkpoint else source/'support/support.pth'
     payload=torch.load(checkpoint,map_location='cpu',weights_only=False)
     training=payload['support_training']
     if training.get('scales_sha256') != hashlib.sha256((source/'scales.json').read_bytes()).hexdigest():
