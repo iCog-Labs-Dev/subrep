@@ -574,6 +574,16 @@ def test_prompt_requires_disclosure_only_for_synthetic_evidence():
     assert "say in the explanation that the evidence is synthetic" in synthetic
 
 
+def test_prompt_states_how_weights_deltas_and_objective_order_are_described():
+    # Live answers swapped weights, gave one skill's deltas to both skills, and read
+    # objective_order as a priority.
+    instructions = _instructions(build_recommendation_prompt(_request()))
+
+    assert "Give each weight only to its own objective" in instructions
+    assert "each objective delta only to its own skill and objective, with its sign" in instructions
+    assert "priority comes from objective_weights alone" in instructions
+
+
 def test_prompt_instructions_avoid_text_that_omega_rewrites():
     # Omega replaces apostrophes before its model reads the prompt.
     for request in (_request(), _request_with_excluded_skill(), _synthetic_request()):
