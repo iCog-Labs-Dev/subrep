@@ -7,6 +7,7 @@ import pytest
 from integration.omegaclaw.contracts import (
     EXCLUSION_REASONS,
     EXCLUSION_STAGES,
+    AdvisoryConcern,
     ObjectiveWeight,
     RecommendationRequest,
     RiskBudget,
@@ -211,3 +212,8 @@ def test_an_empty_section_can_be_cited_in_an_abstention():
 )
 def test_paths_that_do_not_exist_are_still_rejected(reference):
     assert reference not in _request().valid_evidence_refs()
+
+
+def test_advisory_evidence_refs_given_as_a_string_are_rejected_as_not_an_array():
+    with pytest.raises(ValueError, match="evidence_refs must be an array"):
+        AdvisoryConcern("SMALL_SCORE_GAP", "The gap is small.", "subrep_decision.score_gap")

@@ -578,6 +578,9 @@ class AdvisoryConcern:
             )
         object.__setattr__(self, "code", code)
         object.__setattr__(self, "message", _non_empty(self.message, "advisory concern message"))
+        # A string would be read one character at a time, giving a misleading error.
+        if not isinstance(self.evidence_refs, (list, tuple)):
+            raise ValueError("advisory concern evidence_refs must be an array")
         refs = tuple(_non_empty(item, "advisory evidence reference") for item in self.evidence_refs)
         if not refs:
             raise ValueError("advisory concerns require at least one evidence reference")

@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from .claims import explanation_findings
+from .claims import claim_findings, explanation_findings
 from .contracts import (
     FACTUAL_FINDING,
     FORMAT_FINDING,
@@ -185,28 +185,36 @@ def _advisory_concern_findings(
     concern: AdvisoryConcern,
     valid_refs: set[str],
 ) -> list[Finding]:
+    """Every problem with one concern, so a correction prompt can name them all."""
+
+    findings: list[Finding] = []
     unknown_refs = set(concern.evidence_refs).difference(valid_refs)
     if unknown_refs:
-        return [
+        findings.append(
             Finding(
                 "UNKNOWN_EVIDENCE_REF",
                 FORMAT_FINDING,
                 f"advisory concern contains unknown evidence_refs: {sorted(unknown_refs)}",
             )
-        ]
-    decision = request.subrep_decision
-    if decision.abstain:
-        return [
+        )
+    if request.subrep_decision.abstain:
+        findings.append(
             Finding(
                 "ADVISORY_NOT_ALLOWED",
                 FORMAT_FINDING,
                 "advisory concerns are not allowed for an abstaining decision",
             )
-        ]
+        )
+        return findings
     problem = _unsupported_concern(request, concern)
-    if problem is None:
-        return []
-    return [Finding("UNSUPPORTED_ADVISORY_CONCERN", FACTUAL_FINDING, problem)]
+    if problem is not None:
+        findings.append(Finding("UNSUPPORTED_ADVISORY_CONCERN", FACTUAL_FINDING, problem))
+    # The message is shown with the explanation, so its claims are checked the same way.
+    findings.extend(
+        Finding(finding.code, finding.category, f"advisory concern {concern.code}: {finding.message}")
+        for finding in claim_findings(request, concern.message)
+    )
+    return findings
 
 
 def _unsupported_concern(

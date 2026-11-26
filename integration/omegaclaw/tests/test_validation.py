@@ -89,6 +89,54 @@ def test_every_problem_is_reported_not_only_the_first():
     }
 
 
+MARGIN_REF = "audit_only_certificate_evidence.skills.safe_skill.certificate_admission_margin"
+
+
+def _margin_concern(message: str) -> list[dict]:
+    return [{"code": "LOW_CERTIFICATE_MARGIN", "message": message, "evidence_refs": [MARGIN_REF]}]
+
+
+@pytest.mark.parametrize(
+    ("request_factory", "message", "expected"),
+    [
+        pytest.param(_request, "safe_skill has a certificate margin of 1.2.", {}, id="correct-message"),
+        pytest.param(
+            _request,
+            "safe_skill was deployed, and its certificate margin of 0.9 is low.",
+            {"EXECUTION_CLAIM": FACTUAL_FINDING, "UNSUPPORTED_NUMBER": FACTUAL_FINDING},
+            id="execution-and-invented-number",
+        ),
+        pytest.param(
+            _request_with_excluded_skill,
+            "Unlike excluded_skill, which failed certification, safe_skill has a margin of 1.2.",
+            {"WRONG_EXCLUSION_STAGE": FACTUAL_FINDING},
+            id="operator-exclusion-called-a-certification-failure",
+        ),
+    ],
+)
+def test_advisory_concern_messages_are_fact_checked(request_factory, message, expected):
+    assessment = assess_raw_response(request_factory(), _response(advisory_concerns=_margin_concern(message)))
+
+    assert _codes(assessment) == expected
+    assert all(finding.message.startswith("advisory concern LOW_CERTIFICATE_MARGIN: ") for finding in assessment.findings)
+
+
+def test_every_problem_with_an_advisory_concern_is_reported():
+    concern = {
+        "code": "NEGATIVE_OBJECTIVE_TRADEOFF",
+        "message": "safe_skill was executed.",
+        "evidence_refs": ["not.a.path"],
+    }
+
+    assessment = assess_raw_response(_request(), _response(advisory_concerns=[concern]))
+
+    assert _codes(assessment) == {
+        "UNKNOWN_EVIDENCE_REF": FORMAT_FINDING,
+        "UNSUPPORTED_ADVISORY_CONCERN": FACTUAL_FINDING,
+        "EXECUTION_CLAIM": FACTUAL_FINDING,
+    }
+
+
 def test_wrong_decision_echo_is_factual():
     request = _request()
     response = OmegaRecommendationResponse.from_dict(
