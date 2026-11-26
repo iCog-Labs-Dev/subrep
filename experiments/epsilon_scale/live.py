@@ -64,7 +64,7 @@ def main(out_path: Path) -> None:
         cvar_samples=1000,
         coefficients=BudgetCoefficients(a1_securing=a1),
     )
-    pipeline = demo.build_pipeline(seed=1, use_cvar=False, cvar_samples=1000)
+    pipeline = demo.build_pipeline(seed=1, gates="pds", cvar_samples=1000)
     controller = MetaMoController(governor, pipeline, seed=1, epsilon_scale=scale)
     print(f"a1_securing = {a1}  unit = {scale.unit}", flush=True)
 

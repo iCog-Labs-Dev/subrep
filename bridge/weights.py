@@ -192,6 +192,32 @@ def w_meta(
     return _softmax(scores, temperature)
 
 
+# Matches the tolerance goal decomposition uses for the same test
+# (decomposition/verifier.py, `_SIMPLEX_TOLERANCE`).
+SUPPORT_REGION_TOLERANCE = 1e-6
+
+
+def inside_support_region(
+    weights: Sequence[float] | np.ndarray,
+    support_values: Sequence[float] | np.ndarray,
+    tol: float = SUPPORT_REGION_TOLERANCE,
+) -> bool:
+    """Whether `weights` lie in the MDN's support region {w : w_i <= s_i for every i}.
+
+    The same rule goal decomposition applies when it refuses priorities whose
+    weights exceed the MDN's region (decomposition/verifier.py, `Priorities`),
+    restated here so the bridge does not import goal decomposition. Exact,
+    deterministic and dimension-generic: no sampling, no fixed objective count.
+    """
+    w = np.asarray(weights, dtype=np.float64).reshape(-1)
+    s = np.asarray(support_values, dtype=np.float64).reshape(-1)
+    if w.size != s.size:
+        raise ValueError(f"weights length {w.size} does not match support_values length {s.size}")
+    if not (np.all(np.isfinite(w)) and np.all(np.isfinite(s))):
+        raise ValueError("weights and support_values must be finite")
+    return bool(np.all(w <= s + tol))
+
+
 def describe(weights: np.ndarray) -> str:
     """Human-readable weight breakdown, for logs and demo output."""
     w = np.asarray(weights, dtype=np.float64).reshape(-1)

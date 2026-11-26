@@ -406,3 +406,78 @@ def test_a_measured_risk_is_the_last_field():
     outcome = SkillOutcome(0.0, np.zeros(M), True, None, 0.4)
     assert outcome.effort == pytest.approx(0.4)
     assert outcome.risk is None
+
+
+# --------------------------------------------------------------------------
+# Priorities change the selection, never full-simplex PDS admission.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("m", [2, 3, 6])
+def test_priorities_do_not_change_full_simplex_pds_admission(m):
+    """PDS over the full simplex admits on delta_r + min(delta_n), which has no w in it."""
+    from generator.mdn import MotiveDecompositionNetwork
+    from utils.mdn_contracts import CandidateSkillRecord
+    from utils.mdn_runtime_pipeline import (
+        RuntimeCertificationPipeline,
+        RuntimePipelineConfig,
+    )
+    from utils.weight_set_store import WeightSetStore
+
+    rng = np.random.default_rng(m)
+    records = [
+        CandidateSkillRecord(
+            skill_id=f"skill_{i:02d}",
+            delta_r=float(rng.normal()),
+            delta_n=tuple(float(v) for v in rng.normal(size=m)),
+            is_certified=False,
+            gate_type="PDS",
+        )
+        for i in range(40)
+    ]
+
+    def verdicts(weights: np.ndarray) -> List[bool]:
+        sig = GovernorSignal(weights=weights, pds_epsilon=0.3, cvar_tail_level=0.1)
+        pipeline = RuntimeCertificationPipeline(
+            model=MotiveDecompositionNetwork(input_dim=4, num_objectives=m),
+            weight_store=WeightSetStore(num_objectives=m),
+            config=RuntimePipelineConfig(gate_type="PDS", train_support_after_certify=False),
+        )
+        controller = MetaMoController(FakeGovernor([sig]), pipeline, seed=1)
+        certified = controller.certify(
+            context=np.zeros(4), candidate_skills=records, baseline_stats={}, signal=sig
+        )
+        return [bool(r.is_certified) for r in certified]
+
+    first_heavy = np.full(m, 0.1 / (m - 1))
+    first_heavy[0] = 0.9
+    other = rng.dirichlet(np.ones(m))
+    first, second = verdicts(first_heavy), verdicts(other)
+    assert first == second
+    assert 0 < sum(first) < len(first)  # both verdicts occur, so the check has teeth
+
+
+def test_the_switch_weight_matches_the_selector():
+    """With w = (s, 1 - s), the pick flips exactly where the two score lines cross."""
+    safety_lover = _Rec("safety_lover", 10.0, (50.0, -20.0), True)
+    fuel_saver = _Rec("fuel_saver", 10.0, (10.0, 0.0), True)
+    # score(s) = (delta_r + dFuel) + s * (dSafety - dFuel); the lines cross at s*.
+    s_star = -(
+        (safety_lover.delta_r + safety_lover.delta_n[1]) - (fuel_saver.delta_r + fuel_saver.delta_n[1])
+    ) / (
+        (safety_lover.delta_n[0] - safety_lover.delta_n[1]) - (fuel_saver.delta_n[0] - fuel_saver.delta_n[1])
+    )
+    assert s_star == pytest.approx(1.0 / 3.0)
+
+    controller = MetaMoController(FakeGovernor([signal()]), RecordingPipeline(), seed=1)
+
+    def pick(safety_weight: float) -> Optional[str]:
+        sig = GovernorSignal(
+            weights=np.array([safety_weight, 1.0 - safety_weight]),
+            pds_epsilon=0.1,
+            cvar_tail_level=0.1,
+        )
+        return controller.select([safety_lover, fuel_saver], sig)[0]
+
+    assert pick(s_star - 0.01) == "fuel_saver"
+    assert pick(s_star + 0.01) == "safety_lover"

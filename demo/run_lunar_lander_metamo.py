@@ -11,6 +11,8 @@ Run:
     python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo
     python demo/run_lunar_lander_metamo.py --steps 16 --json-out runs/run.json
     python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on
+    python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on \
+        --mdn models/lunar_mdn.pth --gates cvar
 
 What to watch:
   * `secur` / `thresh` against `eps` / `alpha`: both budgets tighten as caution
@@ -23,6 +25,15 @@ What to watch:
   * With `--risk task`, `risk` is the stimulus risk MetaMo received: the flown
     episode's own danger (env/lunar_lander_rollout.py, `task_risk_of`), plus
     the rejection penalty for an abstention.
+  * With `--governor fixed`, the weights, eps and alpha stay constant: by
+    default MetaMo's own starting signal, held. The fixed governor has no
+    modulators and does not appraise outcomes, so the modulator columns read
+    `n/a`, and with `--risk task` the recorded feedback is null.
+  * With `--mdn PATH` or a CVaR gate (`--gates cvar` or `pds-or-cvar`), every
+    step also reports PDS and CVaR separately: `pds` and `cvar` count the
+    candidates each gate alone admits, and `in` says whether MetaMo's weights
+    lie inside the MDN's support region {w : w_i <= s_i}. Only `--gates`
+    decides admission; the other verdicts are computed beside it.
 
 Current behaviour the summary measures rather than assumes:
   * MetaMo's caution modulators follow the outcomes rather than pinning at 1.0,
@@ -55,10 +66,13 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from bridge._loader import find_metamo_root  # noqa: E402
-from bridge.budget import BudgetCoefficients  # noqa: E402
+from bridge.budget import MODULATOR_NEUTRAL, BudgetCoefficients  # noqa: E402
 from bridge.controller import MetaMoController  # noqa: E402
 from bridge.epsilon_scale import EpsilonScale  # noqa: E402
-from bridge.protocol import SkillOutcome  # noqa: E402
+from bridge.governor import FakeGovernor  # noqa: E402
+from bridge.protocol import GovernorSignal, SkillOutcome  # noqa: E402
+from bridge.weights import inside_support_region  # noqa: E402
+from certification.cvar_test import CVaRGate  # noqa: E402
 from certification.pds_test import PDSGate  # noqa: E402
 from data_collector.collect_candidate_sets import (  # noqa: E402
     CandidatePolicy,
@@ -66,8 +80,11 @@ from data_collector.collect_candidate_sets import (  # noqa: E402
     _random_policy,
 )
 from env.lunar_lander_metamo import (  # noqa: E402
+    LUNAR_LANDER_INITIAL_GOALS,
+    LUNAR_LANDER_MODULATOR_GAIN,
     LUNAR_LANDER_OBJECTIVES,
     lunar_lander_epsilon_scale,
+    lunar_lander_weights,
     make_lunar_lander_governor,
 )
 from env.lunar_lander_rollout import (  # noqa: E402
@@ -77,7 +94,9 @@ from env.lunar_lander_rollout import (  # noqa: E402
     evaluate_candidates,
     execute_candidate,
 )
+from env.lunar_domain import LUNAR_LANDER  # noqa: E402
 from env.lunar_lander_wrapper import SubRepEnv  # noqa: E402
+from decomposition.mdn_priorities import MdnPriorities  # noqa: E402
 from generator.mdn import MotiveDecompositionNetwork  # noqa: E402
 from utils.mdn_runtime_pipeline import (  # noqa: E402
     RuntimeCertificationPipeline,
@@ -92,6 +111,24 @@ OBS_DIM = 8
 SAFETY = 0
 SATURATION_LEVEL = 0.95
 EPSILON_MAX = BudgetCoefficients().epsilon_max
+FIXED_NOTE = "constant signal; outcomes reach the governor but do not change it"
+# --gates value -> the configuration's name in the output and JSON.
+GATES = {"pds": "PDS", "cvar": "CVaR", "pds-or-cvar": "PDS + CVaR (OR)"}
+
+
+def starting_signal() -> GovernorSignal:
+    """MetaMo's signal before any outcome: the initial goals, every modulator neutral.
+
+    The fixed governor's default, so `--governor fixed` means "MetaMo frozen at
+    its starting point". Computed from the LunarLander mapping, without MetaMo.
+    """
+    coefficients = BudgetCoefficients()
+    modulators = np.full(LUNAR_LANDER_MODULATOR_GAIN.shape[1], MODULATOR_NEUTRAL)
+    return GovernorSignal(
+        weights=lunar_lander_weights(LUNAR_LANDER_INITIAL_GOALS, modulators),
+        pds_epsilon=coefficients.epsilon_0,
+        cvar_tail_level=coefficients.alpha_0,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -130,27 +167,65 @@ def build_candidates(env: SubRepEnv, kind: str) -> Tuple[CandidatePolicy, ...]:
     return candidates
 
 
-def build_pipeline(*, seed: int, use_cvar: bool, cvar_samples: int) -> RuntimeCertificationPipeline:
-    """A fresh, seeded pipeline around an untrained MDN.
+def load_mdn(path: Path) -> MotiveDecompositionNetwork:
+    """A trained MDN checkpoint for the LunarLander objectives, in eval mode.
 
-    The W_x store stays empty (no support training after certification), so
-    the PDS gate decides with the full simplex, Δr + min Δn. That is what the
-    summary's eps-sensitivity check recomputes. Each candidate's verdict,
-    including the CVaR gate's when it is on, is read from the controller's
+    The checkpoint names the objectives as goal decomposition does
+    (env/lunar_domain.py), in the same Safety, Fuel order as the demo.
+    """
+    model = MdnPriorities.load(path, LUNAR_LANDER.objectives).model
+    if model.input_dim != OBS_DIM:
+        raise ValueError(
+            f"the checkpoint expects {model.input_dim} inputs, the observation has {OBS_DIM}"
+        )
+    return model
+
+
+def mdn_metrics(path: Path) -> Dict[str, float]:
+    """The training and held-out metrics a checkpoint stores, if any."""
+    import torch
+
+    checkpoint = torch.load(Path(path), map_location="cpu", weights_only=False)
+    return {k: float(v) for k, v in dict(checkpoint.get("metrics") or {}).items()}
+
+
+def build_pipeline(
+    *,
+    seed: int,
+    gates: str = "pds",
+    cvar_samples: int,
+    mdn_path: Optional[Path] = None,
+) -> RuntimeCertificationPipeline:
+    """A fresh, seeded pipeline around an untrained MDN, or the one at `mdn_path`.
+
+    `gates`: `pds` (PDS only), `cvar` (CVaR only) or `pds-or-cvar` (admitted by
+    either). Both CVaR settings use the pipeline's `use_cvar` route, with
+    `require_cds_or_cvar` off for `cvar`, so the CVaR verdict alone decides. The
+    pipeline's own `gate_type="CVAR"` is not used: it cannot return an admitted
+    record, because a candidate record's gate type must be CDS or PDS
+    (utils/mdn_contracts.py). The W_x store stays empty (no
+    support training after certification), so the PDS gate decides with the
+    full simplex, Δr + min Δn. That is what the summary's eps-sensitivity check
+    recomputes. Each candidate's verdict is read from the controller's
     `last_records`.
     """
     import torch
 
+    if gates not in GATES:
+        raise ValueError(f"gates must be one of {sorted(GATES)}, got {gates!r}")
     torch.manual_seed(seed)
-    model = MotiveDecompositionNetwork(input_dim=OBS_DIM, num_objectives=NUM_OBJECTIVES)
-    model.eval()
+    if mdn_path is None:
+        model = MotiveDecompositionNetwork(input_dim=OBS_DIM, num_objectives=NUM_OBJECTIVES)
+        model.eval()
+    else:
+        model = load_mdn(mdn_path)
     return RuntimeCertificationPipeline(
         model=model,
         weight_store=WeightSetStore(num_objectives=NUM_OBJECTIVES),
         config=RuntimePipelineConfig(
             gate_type="PDS",
-            use_cvar=use_cvar,
-            require_cds_or_cvar=True,
+            use_cvar=gates != "pds",
+            require_cds_or_cvar=gates != "cvar",
             cvar_samples=cvar_samples,
             train_support_after_certify=False,
         ),
@@ -188,24 +263,115 @@ def pds_margin(delta_r: float, delta_n: Sequence[float]) -> float:
     return float(delta_r) + float(np.min(np.asarray(delta_n, dtype=np.float64)))
 
 
+def pds_admits(
+    candidate: Dict[str, Any],
+    epsilon: float,
+    scale: Optional[EpsilonScale] = None,
+) -> bool:
+    """Whether the PDS gate alone admits `candidate` at `epsilon`.
+
+    With an epsilon scale, the same rule the controller applies: a candidate
+    marked `task_failure` is rejected, and the tolerance is epsilon * unit.
+    """
+    tolerance = epsilon if scale is None else scale.tolerance(epsilon)
+    return not candidate.get("task_failure", False) and PDSGate(epsilon=tolerance).admit(
+        candidate["delta_r"], np.asarray(candidate["delta_n"], dtype=np.float64)
+    )
+
+
 def pds_admitted_count(
     candidates: Sequence[Dict[str, Any]],
     epsilon: float,
     scale: Optional[EpsilonScale] = None,
 ) -> int:
-    """How many candidates the PDS gate alone admits at `epsilon`.
+    """How many candidates the PDS gate alone admits at `epsilon`."""
+    return sum(1 for c in candidates if pds_admits(c, epsilon, scale))
 
-    With an epsilon scale, the same rule the controller applies: candidates
-    marked `task_failure` are rejected, and the tolerance is epsilon * unit.
+
+def mdn_view(model: MotiveDecompositionNetwork, context: Sequence[float]) -> Dict[str, Any]:
+    """The MDN at this context: Dirichlet mean and concentration, and support values."""
+    import torch
+
+    with torch.no_grad():
+        concentration, support = model.forward_inference(
+            torch.as_tensor(np.asarray(context, dtype=np.float32))
+        )
+    alpha = concentration.numpy().astype(np.float64)
+    return {
+        "mean": [float(v) for v in alpha / alpha.sum()],
+        "concentration": [float(v) for v in alpha],
+        "concentration_sum": float(alpha.sum()),
+        "support": [float(v) for v in support.numpy()],
+    }
+
+
+def cvar_values(
+    candidates: Sequence[Dict[str, Any]],
+    concentration: Sequence[float],
+    tail_level: float,
+    n_samples: int,
+    seed: int,
+) -> List[float]:
+    """Every candidate's CVaR at this tail level, beside the decision, not on it.
+
+    Each evaluation runs in a forked torch RNG seeded with `seed`, so every
+    candidate is judged on the same weight samples, the result does not depend
+    on the order of the candidates, and the controller's RNG stream is left as
+    it was. The pipeline's own CVaR draws depend on that order, so a decision
+    and this report can differ for a candidate whose CVaR lies within sampling
+    noise of 0; the summary counts such disagreements.
     """
-    tolerance = epsilon if scale is None else scale.tolerance(epsilon)
-    gate = PDSGate(epsilon=tolerance)
-    return sum(
-        1
-        for c in candidates
-        if not c.get("task_failure", False)
-        and gate.admit(c["delta_r"], np.asarray(c["delta_n"], dtype=np.float64))
-    )
+    import torch
+
+    gate = CVaRGate(confidence=tail_level, n_samples=n_samples)
+    alpha = np.asarray(concentration, dtype=np.float64)
+    values = []
+    for c in candidates:
+        with torch.random.fork_rng():
+            torch.manual_seed(seed)
+            values.append(
+                gate.get_cvar(c["delta_r"], np.asarray(c["delta_n"], dtype=np.float64), alpha)
+            )
+    return values
+
+
+def report_gates(
+    step: Dict[str, Any],
+    model: MotiveDecompositionNetwork,
+    context: Sequence[float],
+    gates: str,
+    scale: Optional[EpsilonScale],
+    n_samples: int,
+    seed: int,
+) -> None:
+    """Add the MDN, the region check and each gate's verdict to `step`.
+
+    The configured `gates` decided `admitted`; PDS and CVaR are evaluated here
+    on their own, and OR and AND are formed from those two. The task-failure
+    guard rejects first in every configuration, as in the controller.
+    """
+    view = mdn_view(model, context)
+    signal = step["signal"]
+    values = cvar_values(step["candidates"], view["concentration"], signal["alpha"], n_samples, seed)
+    counts = {"pds": 0, "cvar": 0, "pds_or_cvar": 0, "pds_and_cvar": 0}
+    disagreements = 0
+    for c, value in zip(step["candidates"], values):
+        c["pds_admitted"] = pds_admits(c, signal["epsilon"], scale)
+        c["cvar_value"] = float(value)
+        c["cvar_admitted"] = not c.get("task_failure", False) and value >= 0.0
+        verdicts = {
+            "pds": c["pds_admitted"],
+            "cvar": c["cvar_admitted"],
+            "pds_or_cvar": c["pds_admitted"] or c["cvar_admitted"],
+            "pds_and_cvar": c["pds_admitted"] and c["cvar_admitted"],
+        }
+        for name, admitted in verdicts.items():
+            counts[name] += admitted
+        disagreements += verdicts[gates.replace("-", "_")] != c["admitted"]
+    step["mdn"] = view
+    step["w_t_inside_mdn_region"] = inside_support_region(signal["weights"], view["support"])
+    step["gate_counts"] = counts
+    step["verdict_disagreements"] = disagreements
 
 
 def episode_result(info: Dict[str, Any]) -> str:
@@ -236,19 +402,25 @@ def summarise(
     """Measured diagnostics over the run.
 
     With an epsilon scale, also the number of task-failure rejections and the
-    PDS tolerance range.
+    PDS tolerance range. Without modulators (the fixed governor), the Securing
+    range and saturation step are None.
     """
     eps = [s["signal"]["epsilon"] for s in steps]
     alpha = [s["signal"]["alpha"] for s in steps]
-    securing = [s["modulators"]["securing"] for s in steps]
+    securing = [s["modulators"]["securing"] for s in steps if s["modulators"]]
     saturated_at = next(
-        (s["step"] for s in steps if s["modulators"]["securing"] >= SATURATION_LEVEL),
+        (
+            s["step"]
+            for s in steps
+            if s["modulators"] and s["modulators"]["securing"] >= SATURATION_LEVEL
+        ),
         None,
     )
     summary = {
         "epsilon_range": [min(eps), max(eps)],
         "alpha_range": [min(alpha), max(alpha)],
-        "securing_range": [min(securing), max(securing)],
+        # None when the governor has no modulators (`--governor fixed`).
+        "securing_range": [min(securing), max(securing)] if securing else None,
         "first_weights": steps[0]["signal"]["weights"],
         "last_weights": steps[-1]["signal"]["weights"],
         "admitted_total": sum(s["admitted_count"] for s in steps),
@@ -263,6 +435,12 @@ def summarise(
         tolerance = [s["pds_tolerance"] for s in steps]
         summary["pds_tolerance_range"] = [min(tolerance), max(tolerance)]
         summary["task_failures_total"] = sum(s["task_failures"] for s in steps)
+    if "mdn" in steps[0]:
+        summary["inside_mdn_region_steps"] = sum(1 for s in steps if s["w_t_inside_mdn_region"])
+        summary["gate_admitted_totals"] = {
+            name: sum(s["gate_counts"][name] for s in steps) for name in steps[0]["gate_counts"]
+        }
+        summary["verdict_disagreements"] = sum(s["verdict_disagreements"] for s in steps)
     return summary
 
 
@@ -306,19 +484,103 @@ def parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         "the baseline, as before",
     )
     parser.add_argument(
+        "--governor",
+        choices=("metamo", "fixed"),
+        default="metamo",
+        help="metamo: MetaMo sets the weights, eps and alpha every step; fixed: they "
+        "stay constant (--weights, --epsilon, --alpha; by default MetaMo's starting signal)",
+    )
+    parser.add_argument(
+        "--weights",
+        default=None,
+        help="fixed governor only: the constant weights, as Safety,Fuel on the simplex",
+    )
+    parser.add_argument("--epsilon", type=float, default=None,
+                        help="fixed governor only: the constant PDS budget eps")
+    parser.add_argument("--alpha", type=float, default=None,
+                        help="fixed governor only: the constant CVaR tail level alpha")
+    parser.add_argument(
         "--no-selection",
         choices=("noop", "stop"),
         default="noop",
         help="when nothing is admitted: fly the noop baseline, or fly nothing",
     )
-    parser.add_argument("--cvar", action="store_true", help="also apply the CVaR gate (OR semantics)")
+    parser.add_argument(
+        "--gates",
+        choices=tuple(GATES),
+        default=None,
+        help="which gates decide admission: pds (default), cvar, or pds-or-cvar "
+        "(admitted by either)",
+    )
+    parser.add_argument("--cvar", action="store_true", help="the same as --gates pds-or-cvar")
+    parser.add_argument(
+        "--mdn",
+        type=Path,
+        default=None,
+        help="a trained MDN checkpoint (for example models/lunar_mdn.pth); default: an "
+        "untrained, seeded network",
+    )
     parser.add_argument("--cvar-samples", type=int, default=1000)
     parser.add_argument("--verbose", action="store_true", help="print every candidate's verdict")
     parser.add_argument("--json-out", type=Path, default=None, help="save the run as JSON")
     args = parser.parse_args(argv)
     if args.steps < 1:
         parser.error("--steps must be >= 1")
+    if args.cvar:
+        if args.gates not in (None, "pds-or-cvar"):
+            parser.error(f"--cvar is --gates pds-or-cvar; it cannot be combined with --gates {args.gates}")
+        args.gates = "pds-or-cvar"
+    elif args.gates is None:
+        args.gates = "pds"
+    if (args.gates != "pds" or args.mdn is not None) and args.cvar_samples < 10:
+        parser.error("--cvar-samples must be >= 10 when CVaR is used")
+    if args.mdn is not None and not args.mdn.is_file():
+        parser.error(f"--mdn: no checkpoint at {args.mdn}")
+    if args.mdn is not None:
+        try:
+            load_mdn(args.mdn)
+            mdn_metrics(args.mdn)
+        except Exception as error:
+            parser.error(f"--mdn: cannot load {args.mdn}: {error}")
+    args.fixed_signal = None
+    fixed_options = [
+        name for name, value in
+        (("--weights", args.weights), ("--epsilon", args.epsilon), ("--alpha", args.alpha))
+        if value is not None
+    ]
+    if args.governor != "fixed":
+        if fixed_options:
+            parser.error(f"{', '.join(fixed_options)} needs --governor fixed")
+        return args
+    start = starting_signal()
+    try:
+        weights = (
+            start.weights if args.weights is None
+            else [float(v) for v in args.weights.split(",")]
+        )
+        if len(weights) != NUM_OBJECTIVES:
+            raise ValueError(
+                f"--weights needs {NUM_OBJECTIVES} values "
+                f"({','.join(LUNAR_LANDER_OBJECTIVES)}), got {len(weights)}"
+            )
+        args.fixed_signal = GovernorSignal(
+            weights=np.asarray(weights, dtype=np.float64),
+            pds_epsilon=start.pds_epsilon if args.epsilon is None else args.epsilon,
+            cvar_tail_level=start.cvar_tail_level if args.alpha is None else args.alpha,
+        )
+    except ValueError as error:
+        parser.error(str(error))
     return args
+
+
+def _modulators_text(modulators: Optional[Dict[str, float]]) -> str:
+    """The Securing, Threshold and Approach columns of a row, or n/a without modulators."""
+    if not modulators:
+        return f"{'n/a':>6} {'n/a':>6} {'n/a':>6}"
+    return (
+        f"{modulators['securing']:>6.3f} "
+        f"{modulators['threshold']:>6.3f} {modulators['approach']:>6.3f}"
+    )
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -344,14 +606,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         first = evaluate_candidates(env, candidates, seed=seeds[0])
         payoff_scale, motive_scale = appraisal_scales(first[1])
 
-        governor = make_lunar_lander_governor(
-            payoff_scale=payoff_scale,
-            motive_scale=motive_scale,
-            cvar_samples=args.cvar_samples,
-        )
+        fixed = args.governor == "fixed"
+        if fixed:
+            governor = FakeGovernor([args.fixed_signal])
+        else:
+            governor = make_lunar_lander_governor(
+                payoff_scale=payoff_scale,
+                motive_scale=motive_scale,
+                cvar_samples=args.cvar_samples,
+            )
         pipeline = build_pipeline(
-            seed=args.seed, use_cvar=args.cvar, cvar_samples=args.cvar_samples
+            seed=args.seed, gates=args.gates, cvar_samples=args.cvar_samples, mdn_path=args.mdn
         )
+        # Reporting PDS and CVaR apart, and the MDN, only when an MDN is given
+        # or CVaR is in use, so a PDS-only run's output and JSON are as before.
+        reporting = args.mdn is not None or args.gates != "pds"
         scale = lunar_lander_epsilon_scale() if args.epsilon_scale == "on" else None
         controller = MetaMoController(governor, pipeline, seed=args.seed, epsilon_scale=scale)
 
@@ -361,7 +630,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "candidates": kind,
             "candidate_ids": [c.skill_id for c in candidates if c.skill_id != NOOP_BASELINE.skill_id],
             "no_selection": args.no_selection,
-            "gates": "PDS + CVaR (OR)" if args.cvar else "PDS",
+            "gates": GATES[args.gates],
             "cvar_samples": args.cvar_samples,
             "metamo_commit": metamo_commit(),
             "payoff_scale": payoff_scale,
@@ -374,6 +643,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         task_risk = args.risk == "task"
         if task_risk:
             config["risk"] = "task"
+        if reporting:
+            config["mdn"] = {
+                "checkpoint": "untrained" if args.mdn is None else str(args.mdn),
+                "metrics": None if args.mdn is None else mdn_metrics(args.mdn),
+            }
+        # Likewise only for the fixed governor.
+        if fixed:
+            config["governor"] = {
+                "kind": "fixed",
+                "weights": [float(w) for w in args.fixed_signal.weights],
+                "epsilon": args.fixed_signal.pds_epsilon,
+                "alpha": args.fixed_signal.cvar_tail_level,
+                "note": FIXED_NOTE,
+            }
 
         print("=" * 100)
         print("MetaMo -> SubRep, MO-LunarLander (2 objectives: Safety, Fuel)")
@@ -383,14 +666,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"gates: {config['gates']}   nothing admitted: {args.no_selection}   "
               f"MetaMo commit: {config['metamo_commit']}")
         print(f"appraisal scales: payoff={payoff_scale:.3f}  motive={motive_scale:.3f}")
-        if task_risk:
+        if fixed:
+            print(f"governor: fixed ({_weights_text(args.fixed_signal.weights)}  "
+                  f"eps={args.fixed_signal.pds_epsilon:g}  "
+                  f"alpha={args.fixed_signal.cvar_tail_level:g}); {FIXED_NOTE}")
+        if task_risk and fixed:
+            print("risk fed back: the flown episode's task danger (crash, landing or neither); "
+                  "the fixed governor does not appraise it, so the `risk` column is n/a")
+        elif task_risk:
             print("risk fed back: the flown episode's task danger (crash, landing or neither); "
                   "the `risk` column is the stimulus risk MetaMo received")
         if scale is not None:
             print(f"epsilon scale: PDS tolerates eps * {scale.unit:g}; candidates with "
                   f"own payoff < {scale.payoff_floor:g} fail the task and are rejected first")
-        if not args.cvar:
+        if args.gates == "pds":
             print("alpha is reported but unused: no gate reads it without --cvar")
+        if reporting:
+            print(f"mdn: {config['mdn']['checkpoint']}; PDS and CVaR are also reported apart "
+                  "(`pds`, `cvar`), and `in` says whether the weights lie inside the MDN's "
+                  "support region")
 
         header = (
             f"{'step':>4} {'seed':>4} {'secur':>6} {'thresh':>6} {'appr':>6} "
@@ -398,7 +692,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             + (f" {'tol':>6}" if scale is not None else "")
             + f" {'alpha':>6} {'Safety':>6} {'Fuel':>6} {'adm':>5}"
             + (f" {'fail':>4}" if scale is not None else "")
-            + (f" {'pds':>4}" if args.cvar else "")
+            + (f" {'pds':>4} {'cvar':>4} {'in':>3}" if reporting else "")
             + f"  {'selected':<22} {'result':<8} {'d_r':>8} {'min d_n':>9}"
             + (f" {'risk':>5}" if task_risk else "")
         )
@@ -474,7 +768,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "epsilon": float(record.pds_epsilon),
                     "alpha": float(record.cvar_tail_level),
                 },
-                "modulators": {k: float(v) for k, v in record.modulators.items()},
+                "modulators": (
+                    None if fixed else {k: float(v) for k, v in record.modulators.items()}
+                ),
                 "candidate_count": record.candidate_count,
                 "admitted_count": record.admitted_count,
                 "pds_only_admitted": pds_admitted_count(
@@ -491,7 +787,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             if scale is not None:
                 step["pds_tolerance"] = float(record.pds_tolerance)
                 step["task_failures"] = int(record.task_failures)
-            if task_risk:
+            if task_risk and fixed:
+                # The fixed governor does not appraise outcomes, so there is no
+                # stimulus to record; the flown outcome is in the flown_* fields.
+                step["feedback"] = None
+            elif task_risk:
                 stimulus = governor.last_stimulus
                 step["feedback"] = {
                     "admitted": selected is not None,
@@ -500,6 +800,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "conduciveness": float(stimulus.conduciveness),
                     "effort": float(stimulus.effort),
                 }
+            if reporting:
+                report_gates(
+                    step,
+                    pipeline.model,
+                    baseline_stats["info"]["start_obs"],
+                    args.gates,
+                    scale,
+                    args.cvar_samples,
+                    seed,
+                )
             steps.append(step)
 
             if selected is not None:
@@ -508,21 +818,26 @@ def main(argv: Optional[List[str]] = None) -> int:
                 shown = "STOP"
             else:
                 shown = "-"
-            mods = step["modulators"]
             weights = step["signal"]["weights"]
             print(
-                f"{step['step']:>4} {seed:>4} {mods['securing']:>6.3f} "
-                f"{mods['threshold']:>6.3f} {mods['approach']:>6.3f} "
+                f"{step['step']:>4} {seed:>4} {_modulators_text(step['modulators'])} "
                 f"{step['signal']['epsilon']:>7.4f}"
                 + (f" {step['pds_tolerance']:>6.1f}" if scale is not None else "")
                 + f" {step['signal']['alpha']:>6.3f} "
                 f"{weights[SAFETY]:>6.3f} {weights[1]:>6.3f} "
                 f"{record.admitted_count:>2}/{record.candidate_count:<2}"
                 + (f" {step['task_failures']:>4}" if scale is not None else "")
-                + (f" {step['pds_only_admitted']:>4}" if args.cvar else "")
+                + (
+                    f" {step['gate_counts']['pds']:>4} {step['gate_counts']['cvar']:>4} "
+                    f"{'yes' if step['w_t_inside_mdn_region'] else 'no':>3}"
+                    if reporting else ""
+                )
                 + f"  {shown:<22} {flown['result']:<8} "
                 f"{flown['delta_r']:>+8.1f} {min(flown['delta_n']):>+9.1f}"
-                + (f" {step['feedback']['risk']:>5.2f}" if task_risk else "")
+                + (
+                    (f" {'n/a':>5}" if fixed else f" {step['feedback']['risk']:>5.2f}")
+                    if task_risk else ""
+                )
             )
             if args.verbose:
                 for c in step_candidates:
@@ -536,13 +851,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                         f"{'':>11}{c['skill_id']:<24} d_r={c['delta_r']:>+7.1f}  "
                         f"d_n=[{', '.join(f'{v:+.1f}' for v in c['delta_n'])}]  "
                         f"margin={c['pds_margin']:>+8.1f}  "
-                        f"{verdict}"
+                        + (f"cvar={c['cvar_value']:>+8.1f}  " if reporting else "")
+                        + f"{verdict}"
                     )
     finally:
         env.close()
 
     summary = summarise(steps, scale)
-    final_modulators = governor.modulator_summary()
+    final_modulators = None if fixed else governor.modulator_summary()
 
     print("-" * len(header))
     print(f"eps   range: [{summary['epsilon_range'][0]:.4f}, {summary['epsilon_range'][1]:.4f}]   "
@@ -554,18 +870,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("selections: " + ", ".join(f"{k}={v}" for k, v in summary["selections"].items()))
     print("flown results: " + ", ".join(f"{k}={v}" for k, v in summary["results"].items()))
     saturated = summary["securing_saturated_at_step"]
-    print(
-        f"caution: securing at decision time ranged "
-        f"[{summary['securing_range'][0]:.3f}, {summary['securing_range'][1]:.3f}]; "
-        + (f"first step with securing >= {SATURATION_LEVEL}: {saturated}"
-           if saturated is not None
-           else f"securing >= {SATURATION_LEVEL}: not reached")
-        + f"; after the last step: {final_modulators['securing']:.3f}"
-    )
+    if fixed:
+        print("caution: not modelled; the fixed governor has no modulators")
+    else:
+        print(
+            f"caution: securing at decision time ranged "
+            f"[{summary['securing_range'][0]:.3f}, {summary['securing_range'][1]:.3f}]; "
+            + (f"first step with securing >= {SATURATION_LEVEL}: {saturated}"
+               if saturated is not None
+               else f"securing >= {SATURATION_LEVEL}: not reached")
+            + f"; after the last step: {final_modulators['securing']:.3f}"
+        )
     if scale is not None:
         low, high = summary["pds_tolerance_range"]
         print(f"pds tolerance range: [{low:.1f}, {high:.1f}]   task failures rejected "
               f"before PDS: {summary['task_failures_total']}/{summary['scored_total']}")
+    if reporting:
+        totals = summary["gate_admitted_totals"]
+        print(f"gates apart: PDS {totals['pds']}, CVaR {totals['cvar']}, "
+              f"PDS or CVaR {totals['pds_or_cvar']}, PDS and CVaR {totals['pds_and_cvar']} "
+              f"of {summary['scored_total']}; admission decided by {GATES[args.gates]}; "
+              f"report and decision disagree on {summary['verdict_disagreements']}")
+        print(f"weights inside the MDN's support region on "
+              f"{summary['inside_mdn_region_steps']}/{args.steps} steps")
     sensitive = summary["eps_sensitive_steps"]
     if sensitive:
         print(f"eps sensitivity: eps in [0, {EPSILON_MAX}] changes the PDS admissions "
@@ -575,7 +902,10 @@ def main(argv: Optional[List[str]] = None) -> int:
               "admission in this run")
 
     if args.json_out is not None:
-        summary["final_modulators"] = {k: float(v) for k, v in final_modulators.items()}
+        summary["final_modulators"] = (
+            None if final_modulators is None
+            else {k: float(v) for k, v in final_modulators.items()}
+        )
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(
             json.dumps({"config": config, "steps": steps, "summary": summary}, indent=2),
