@@ -217,3 +217,9 @@ def test_paths_that_do_not_exist_are_still_rejected(reference):
 def test_advisory_evidence_refs_given_as_a_string_are_rejected_as_not_an_array():
     with pytest.raises(ValueError, match="evidence_refs must be an array"):
         AdvisoryConcern("SMALL_SCORE_GAP", "The gap is small.", "subrep_decision.score_gap")
+
+
+def test_bracket_indexes_in_advisory_evidence_refs_are_stored_dotted():
+    concern = AdvisoryConcern("SMALL_SCORE_GAP", "The gap is small.", ["exclusions[0].stage", "a[10].b[2]"])
+
+    assert concern.evidence_refs == ("exclusions.0.stage", "a.10.b.2")

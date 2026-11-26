@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from math import isclose, isfinite
@@ -96,6 +97,16 @@ EXCLUSION_REASONS: Mapping[str, ExclusionReason] = MappingProxyType(
     }
 )
 EXCLUSION_STAGES = frozenset(reason.stage for reason in EXCLUSION_REASONS.values())
+
+
+def canonical_evidence_ref(reference: str) -> str:
+    """Write an evidence path in dotted form: "exclusions[0].stage" is "exclusions.0.stage".
+
+    Models often index lists with brackets. Both forms name the same field, so the
+    bracket form is accepted and stored dotted; a path that does not exist is still rejected.
+    """
+
+    return re.sub(r"\[(\d+)\]", r".\1", reference)
 
 
 def _non_empty(value: str, field_name: str) -> str:
@@ -581,7 +592,10 @@ class AdvisoryConcern:
         # A string would be read one character at a time, giving a misleading error.
         if not isinstance(self.evidence_refs, (list, tuple)):
             raise ValueError("advisory concern evidence_refs must be an array")
-        refs = tuple(_non_empty(item, "advisory evidence reference") for item in self.evidence_refs)
+        refs = tuple(
+            canonical_evidence_ref(_non_empty(item, "advisory evidence reference"))
+            for item in self.evidence_refs
+        )
         if not refs:
             raise ValueError("advisory concerns require at least one evidence reference")
         if len(refs) != len(set(refs)):
@@ -671,7 +685,10 @@ class OmegaRecommendationResponse:
                 _non_empty(self.selected_skill_id, "selected_skill_id"),
             )
 
-        refs = tuple(_non_empty(item, "evidence_refs item") for item in self.evidence_refs)
+        refs = tuple(
+            canonical_evidence_ref(_non_empty(item, "evidence_refs item"))
+            for item in self.evidence_refs
+        )
         if not refs:
             raise ValueError("evidence_refs must not be empty")
         if len(refs) != len(set(refs)):

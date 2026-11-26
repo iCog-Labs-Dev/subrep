@@ -137,6 +137,31 @@ def test_every_problem_with_an_advisory_concern_is_reported():
     }
 
 
+@pytest.mark.parametrize(
+    ("reference", "stored", "expected"),
+    [
+        pytest.param("exclusions[0].stage", "exclusions.0.stage", {}, id="bracket-index"),
+        pytest.param("exclusions.0.stage", "exclusions.0.stage", {}, id="dotted-index"),
+        pytest.param(
+            "exclusions[3].stage",
+            "exclusions.3.stage",
+            {"UNKNOWN_EVIDENCE_REF": FORMAT_FINDING},
+            id="bracket-index-that-does-not-exist",
+        ),
+    ],
+)
+def test_bracket_and_dotted_indexes_name_the_same_evidence_path(reference, stored, expected):
+    raw = _response(
+        explanation="safe_skill was selected; the operator excluded excluded_skill.",
+        evidence_refs=["subrep_decision.selected_score", reference],
+    )
+
+    assessment = assess_raw_response(_request_with_excluded_skill(), raw)
+
+    assert _codes(assessment) == expected
+    assert stored in OmegaRecommendationResponse.from_dict(json.loads(raw)).evidence_refs
+
+
 def test_wrong_decision_echo_is_factual():
     request = _request()
     response = OmegaRecommendationResponse.from_dict(
