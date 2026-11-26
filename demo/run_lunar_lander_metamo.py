@@ -173,7 +173,12 @@ def load_mdn(path: Path) -> MotiveDecompositionNetwork:
     The checkpoint names the objectives as goal decomposition does
     (env/lunar_domain.py), in the same Safety, Fuel order as the demo.
     """
-    return MdnPriorities.load(path, LUNAR_LANDER.objectives).model
+    model = MdnPriorities.load(path, LUNAR_LANDER.objectives).model
+    if model.input_dim != OBS_DIM:
+        raise ValueError(
+            f"the checkpoint expects {model.input_dim} inputs, the observation has {OBS_DIM}"
+        )
+    return model
 
 
 def mdn_metrics(path: Path) -> Dict[str, float]:
@@ -527,8 +532,16 @@ def parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         args.gates = "pds-or-cvar"
     elif args.gates is None:
         args.gates = "pds"
+    if (args.gates != "pds" or args.mdn is not None) and args.cvar_samples < 10:
+        parser.error("--cvar-samples must be >= 10 when CVaR is used")
     if args.mdn is not None and not args.mdn.is_file():
         parser.error(f"--mdn: no checkpoint at {args.mdn}")
+    if args.mdn is not None:
+        try:
+            load_mdn(args.mdn)
+            mdn_metrics(args.mdn)
+        except Exception as error:
+            parser.error(f"--mdn: cannot load {args.mdn}: {error}")
     args.fixed_signal = None
     fixed_options = [
         name for name, value in

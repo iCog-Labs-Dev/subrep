@@ -512,3 +512,23 @@ def test_conflicting_gate_options_are_a_usage_error(extra):
     with pytest.raises(SystemExit) as raised:
         lunar_demo.main([*extra, "--candidates", "ci", "--steps", "1"])
     assert raised.value.code == 2
+
+
+def test_an_unreadable_mdn_checkpoint_is_a_usage_error(tmp_path, capsys):
+    text_file = tmp_path / "not_a_checkpoint.md"
+    text_file.write_text("# not a checkpoint\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as raised:
+        lunar_demo.main(["--mdn", str(text_file), "--candidates", "ci", "--steps", "1"])
+    assert raised.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"--mdn: cannot load {text_file}" in captured.err
+
+
+def test_too_few_cvar_samples_is_a_usage_error(capsys):
+    with pytest.raises(SystemExit) as raised:
+        lunar_demo.main(["--gates", "cvar", "--cvar-samples", "5", "--candidates", "ci", "--steps", "1"])
+    assert raised.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--cvar-samples must be >= 10 when CVaR is used" in captured.err
