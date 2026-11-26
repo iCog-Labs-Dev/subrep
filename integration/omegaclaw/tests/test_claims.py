@@ -206,9 +206,30 @@ WRONG_EXPLANATIONS = [
         id="synthetic-described-as-measured",
     ),
     pytest.param(
+        f"{RANKING} The synthetic label aside, the evidence is not synthetic but real.",
+        {"SYNTHETIC_PRESENTED_AS_REAL"},
+        id="synthetic-denied",
+    ),
+    pytest.param(
+        f"{RANKING} The synthetic label is a formality; the evidence is real.",
+        {"SYNTHETIC_PRESENTED_AS_REAL"},
+        id="evidence-called-real",
+    ),
+    pytest.param(
         "skill_safety was selected with a score of 0.82, ahead of skill_efficiency at 0.28.",
         {"SYNTHETIC_NOT_DISCLOSED"},
         id="synthetic-not-disclosed",
+    ),
+    # A negation of another verb does not cover the reason that follows it.
+    pytest.param(
+        f"{RANKING} operator_pick was not ranked because it failed certification.",
+        {"WRONG_EXCLUSION_STAGE"},
+        id="negated-ranking-then-certification-failure",
+    ),
+    pytest.param(
+        f"{RANKING} operator_pick was never admitted after it failed the CDS gate.",
+        {"WRONG_EXCLUSION_STAGE"},
+        id="negated-admission-then-gate-failure",
     ),
 ]
 
@@ -367,6 +388,21 @@ SIGNED_SCORES = [
 @pytest.mark.parametrize(("explanation", "expected"), SIGNED_SCORES)
 def test_score_signs_are_checked_in_both_directions(explanation, expected):
     assert _codes(explanation, _signed_request()) == expected
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [
+        pytest.param("skill_safety was selected over the runner-up score of 0.28.", set(), id="runner-up-score"),
+        pytest.param(
+            "skill_safety was selected over the runner-up score of 0.82.",
+            {"SCORE_MISMATCH"},
+            id="selected-score-given-to-the-runner-up",
+        ),
+    ],
+)
+def test_a_score_after_runner_up_wording_belongs_to_the_runner_up(sentence, expected):
+    assert _codes(f"{RANKING} {sentence}") == expected
 
 
 SIGNED_NUMBERS = [
@@ -623,6 +659,16 @@ ROLE_WORDING_THAT_NAMES_NO_SKILL = [
     ),
     pytest.param(f"{RANKING} No other skill was selected or recommended.", id="nothing-else-selected"),
     pytest.param(f"{RANKING} The selected_skill_id is the field SubRep fills.", id="field-named-in-prose"),
+    # A verb, noun or adverb where an ID could stand is not a skill name.
+    pytest.param(f"{RANKING} The runner-up trails by 0.54.", id="runner-up-then-verb"),
+    pytest.param(f"{RANKING} The runner-up shows a safety delta of -0.1.", id="runner-up-shows"),
+    pytest.param(f"{RANKING} skill_efficiency holds runner-up status.", id="runner-up-status"),
+    pytest.param(
+        "Using synthetic evidence, skill_safety was selected primarily because its score of 0.82 "
+        "is the highest, ahead of skill_efficiency at 0.28.",
+        id="selected-then-adverb",
+    ),
+    pytest.param(f"{RANKING} skill_safety was chosen solely on its final selection score.", id="chosen-solely"),
 ]
 
 
@@ -770,6 +816,21 @@ DELTA_WORDING = [
         id="swapped-deltas",
     ),
     pytest.param("skill_efficiency shows a safety delta of +0.8.", {"DELTA_MISMATCH"}, id="wrong-signed-delta"),
+    # A delta stated as a value keeps its sign; direction words state the sign in words.
+    pytest.param("skill_safety has an efficiency delta of 0.1.", {"DELTA_MISMATCH"}, id="unsigned-value-of-a-negative-delta"),
+    pytest.param("skill_safety shows objective_deltas safety 0.8 and efficiency 0.1.", {"DELTA_MISMATCH"}, id="unsigned-value-in-a-delta-list"),
+    pytest.param("skill_safety's efficiency decreased by 0.1.", set(), id="decrease-states-the-sign"),
+    pytest.param("skill_safety's efficiency delta increased by 0.1.", {"DELTA_MISMATCH"}, id="increase-for-a-negative-delta"),
+    pytest.param("skill_safety gains 0.8 on safety and loses 0.1 on efficiency.", set(), id="gain-and-loss"),
+    pytest.param("skill_safety gains 0.8 on safety and 0.1 on efficiency.", {"DELTA_MISMATCH"}, id="gain-for-a-negative-delta"),
+    pytest.param("skill_safety has a drop of 0.1 in efficiency.", set(), id="drop-of"),
+    pytest.param("skill_safety has an efficiency delta of –0.1.", set(), id="en-dash-minus-sign"),
+    pytest.param(
+        "skill_safety's objective deltas give weighted contributions of 0.64 for safety and -0.02 "
+        "for efficiency.",
+        set(),
+        id="weighted-contributions-are-not-deltas",
+    ),
 ]
 
 

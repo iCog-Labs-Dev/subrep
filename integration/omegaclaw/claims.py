@@ -50,6 +50,9 @@ _GUARD_WORDS = frozenset(
     }
 )
 _GUARD_WINDOW = 4
+# A reason word after a negation starts a new claim: in "not ranked because it failed
+# certification" the "not" covers "ranked" only, while "not because it failed" denies the reason.
+_REASON_WORDS = frozenset({"because", "since", "therefore", "hence", "thus", "after", "which", "who"})
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?;])\s+")
 _CLAUSE_BREAK = re.compile(
     r"\s*[,:\u2013\u2014]\s+|\s+(?:and|but|while|whereas|although|though)\s+"
@@ -193,8 +196,14 @@ _NOT_A_SKILL_ID = frozenset(
     through throughout toward towards upon
     runner runner-up second-best best top first second third last highest lowest
     highest-scoring top-scoring lower-scoring higher-scoring next sole single final
-    eligible null
+    eligible null status role rank ranking spot title standing
     """.split()
+)
+# After "the runner-up" a verb can stand where a name could ("the runner-up trails by
+# 0.54", "the runner-up shows a delta"); a name is not followed by these words.
+_NOT_AFTER_A_NAME = (
+    r"(?!\s+(?:by|a|an|the|its|their|this|that|these|those|on|in|of|to|from|over|behind|"
+    r"for|than|as)\b)"
 )
 _ROLE_CLAIMS = (
     ("selected", _NAME + r"\s+(?:was|is|has\s+been|got|gets|will\s+be|remains)\s+(?:the\s+)?"
@@ -209,7 +218,7 @@ _ROLE_CLAIMS = (
      r"(?:admitted\s+)?" + _RUNNER_UP),
     ("runner-up", rf"\b{_RUNNER_UP}(?:\s+skill)?(?:\s+id)?\s+(?:is|was)\s+(?:the\s+)?(?:skill\s+)?"
      + _NAME),
-    ("runner-up", rf"\b{_RUNNER_UP}(?:\s+skill)?\s+" + _NAME),
+    ("runner-up", rf"\b{_RUNNER_UP}(?:\s+skill)?\s+" + _NAME + _NOT_AFTER_A_NAME),
 )
 _ROLE_CLAIM_PATTERNS = tuple((role, re.compile(pattern)) for role, pattern in _ROLE_CLAIMS)
 _SNAKE_CASE_NAME = r"(?<![\w-])(?P<name>[a-z][a-z0-9-]*_[a-z0-9_-]*[a-z0-9])(?![\w-])"
@@ -239,6 +248,15 @@ _PERCENT = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*%")
 # "weights" and "deltas" also arrive as field names: objective_weights, objective_deltas.
 _WEIGHT_WORD = re.compile(r"(?:\b|(?<=_))weights?\b")
 _DELTA_WORD = re.compile(r"(?:\b|(?<=_))deltas?\b")
+# A change written as a direction and a size: "efficiency fell by 0.1" is a delta of -0.1.
+_DECLINE_WORD = (
+    r"(?:decreas\w*|declin\w*|drop\w*|fall\w*|fell|lower\w*|reduc\w*|lose|loses|losing|lost|"
+    r"loss(?:es)?|worsen\w*|costs?|costing|penali[sz]\w*)"
+)
+_GAIN_WORD = r"(?:increas\w*|rises?|rising|rose|gain\w*|improv\w*|rais\w*|boost\w*)"
+_DIRECTION = re.compile(rf"\b(?:(?P<decline>{_DECLINE_WORD})|(?P<gain>{_GAIN_WORD}))\b")
+# A weight times a delta is a contribution to the score, not a delta.
+_CONTRIBUTION_WORD = re.compile(r"\bweighted\b|\bcontribut\w*|\bproducts?\b|\btimes\b|×")
 
 _EXECUTION_GENERIC = tuple(
     re.compile(pattern)
@@ -267,6 +285,10 @@ _REAL_EVIDENCE = tuple(
         r"\bempirically\b",
         r"\bin\s+(?:practice|deployment|production|the\s+real\s+world|the\s+field)\b",
         r"\b(?:was|were)\s+(?:observed|measured)\b",
+        # "The evidence is real", "it is not synthetic", "non-synthetic data".
+        r"\b(?:is|are|was|were)\s+real\b",
+        r"\b(?:is|are|was|were)(?:\s+not|n't)\s+synthetic\b",
+        r"\bnon-synthetic\b",
     )
 )
 # Ways a correct abstention is worded: "SubRep abstained", "an abstention",
@@ -302,11 +324,27 @@ _UNKNOWN_SKILL_ROLES = (
 
 
 def explanation_findings(request: RecommendationRequest, explanation: str) -> list[Finding]:
-    """Return a factual finding for every wrong claim the checks recognise."""
+    """Return a factual finding for every wrong claim the checks recognise.
+
+    An explanation must also name the decision and, for synthetic evidence, say so.
+    """
 
     text = _normalise(explanation)
     findings: list[Finding] = []
     findings.extend(_decision_named(request, text))
+    findings.extend(_synthetic_not_disclosed(request, text))
+    findings.extend(_claim_findings(request, text))
+    return findings
+
+
+def claim_findings(request: RecommendationRequest, text: str) -> list[Finding]:
+    """Wrong claims in other response text, such as an advisory concern message."""
+
+    return _claim_findings(request, _normalise(text))
+
+
+def _claim_findings(request: RecommendationRequest, text: str) -> list[Finding]:
+    findings: list[Finding] = []
     findings.extend(_role_claims(request, text))
     findings.extend(_unknown_skill_claims(request, text))
     findings.extend(_decision_field_claims(request, text))
@@ -325,6 +363,8 @@ def _finding(code: str, message: str) -> Finding:
 
 
 def _normalise(text: str) -> str:
+    # An en or em dash right before a number is a minus sign ("\u20130.1").
+    text = re.sub(r"[\u2013\u2014](?=\.?\d)", "-", text)
     return " ".join(text.replace("\u2019", "'").replace("\u2212", "-").lower().split())
 
 
@@ -342,7 +382,11 @@ def _guarded(clause: str, start: int) -> bool:
     """True when a claim starting at ``start`` is negated or hypothetical."""
 
     words = re.findall(r"[a-z_']+", clause[:start])[-_GUARD_WINDOW:]
-    return any(word in _GUARD_WORDS or word.endswith("n't") for word in words)
+    return any(
+        (word in _GUARD_WORDS or word.endswith("n't"))
+        and not _REASON_WORDS.intersection(words[index + 2 :])
+        for index, word in enumerate(words)
+    )
 
 
 def _asserted(pattern: re.Pattern[str], clause: str) -> Iterable[re.Match[str]]:
@@ -431,11 +475,14 @@ def _role_claims(request: RecommendationRequest, text: str) -> list[Finding]:
 def _could_be_skill_id(name: str, request: RecommendationRequest) -> bool:
     """False for ordinary words and request field names found where an ID could stand."""
 
+    if name in {skill_id.lower() for skill_id in _skill_ids(request)}:
+        return True
     if name in _NOT_A_SKILL_ID or name.isdigit():
         return False
-    return name in {skill_id.lower() for skill_id in _skill_ids(request)} or (
-        name not in _request_field_names(request)
-    )
+    # Adverbs stand where an ID could: "selected primarily because", "chosen solely on".
+    if len(name) > 3 and name.endswith("ly") and not re.search(r"[_\d-]", name):
+        return False
+    return name not in _request_field_names(request)
 
 
 def _request_field_names(request: RecommendationRequest) -> set[str]:
@@ -611,6 +658,7 @@ def _subject(mentions: list[list[tuple[int, str]]], index: int, position: int) -
 def _score_claims(request: RecommendationRequest, text: str) -> list[Finding]:
     scores = {skill.skill_id: skill.score for skill in request.admitted_skills}
     ids = _skill_ids(request)
+    runner_up = request.subrep_decision.runner_up_skill_id
     wrong: dict[str, set[str]] = {}
     for sentence in _SENTENCE_BREAK.split(text):
         for clause in _clauses(sentence):
@@ -621,8 +669,18 @@ def _score_claims(request: RecommendationRequest, text: str) -> list[Finding]:
             mentions = _mentions(clause, ids)
             for match in _SCORE_WORD.finditer(clause):
                 owner = [skill_id for start, skill_id in mentions if start < match.start()]
-                if owner and match.start() - _last_mention_end(clause, owner[-1], match.start()) <= 80:
-                    claimed.append((owner[-1], match["number"]))
+                if not owner:
+                    continue
+                owner_end = _last_mention_end(clause, owner[-1], match.start())
+                if match.start() - owner_end > 80:
+                    continue
+                # "skill_safety was selected over the runner-up score of 0.28": the words
+                # between give the score to the runner-up, not to the skill named before.
+                if re.search(rf"{_RUNNER_UP}|runner_up", clause[owner_end : match.start()]):
+                    if runner_up is not None and runner_up != owner[-1]:
+                        claimed.append((runner_up, match["number"]))
+                    continue
+                claimed.append((owner[-1], match["number"]))
             for skill_id, number in claimed:
                 if skill_id not in scores:
                     wrong.setdefault(skill_id, set()).add(number)
@@ -688,10 +746,12 @@ def _weight_claims(request: RecommendationRequest, text: str) -> list[Finding]:
 
 
 def _delta_claims(request: RecommendationRequest, text: str) -> list[Finding]:
-    """Check that each objective delta is given to its own skill and objective.
+    """Check that each objective delta is given to its own skill and objective, with its sign.
 
     A live answer wrote "both skills show objective_deltas of 0.8 for safety and 0.2 for
-    efficiency"; each number is in the request, but no skill has those deltas.
+    efficiency"; each number is in the request, but no skill has those deltas. A delta
+    stated as a value keeps its sign, so "an efficiency delta of 0.1" is wrong for -0.1,
+    while "efficiency decreased by 0.1" states the same -0.1 in words.
     """
 
     deltas = {
@@ -704,10 +764,12 @@ def _delta_claims(request: RecommendationRequest, text: str) -> list[Finding]:
         re.escape(item.objective_id.lower())
         for item in sorted(request.objective_weights, key=lambda item: -len(item.objective_id))
     )
+    direction = rf"(?:{_DECLINE_WORD}|{_GAIN_WORD})"
     pairs = re.compile(
         rf"(?<![\w.])(?P<objective>{names})(?![\w-])\s*(?:objective\s+)?(?P<delta_word>deltas?\s*)?"
-        rf"(?:of\s+|=|:)?\s*{_NUMBER}"
-        rf"|(?<![\w.])(?P<number_first>[-+]?(?:\d+\.\d+|\.\d+))\s+(?:for|on|in)\s+(?P<objective_after>{names})(?![\w-])"
+        rf"(?:(?P<verb>{direction})\s+)?(?:by\s+|of\s+|=|:)?\s*{_NUMBER}"
+        rf"|(?<![\w.])(?P<number_first>[-+]?(?:\d+\.\d+|\.\d+))\s+(?:{direction}\s+)?(?:for|on|in)\s+"
+        rf"(?P<objective_after>{names})(?![\w-])"
     )
     owners = re.compile(
         "|".join(_skill_pattern(skill_id) for skill_id in deltas)
@@ -716,27 +778,38 @@ def _delta_claims(request: RecommendationRequest, text: str) -> list[Finding]:
     wrong: dict[tuple[str, str], set[str]] = {}
     for sentence in _SENTENCE_BREAK.split(text):
         delta_word = _DELTA_WORD.search(sentence)
+        previous_end = 0
         for match in pairs.finditer(sentence):
             objective = match["objective"] or match["objective_after"]
             number = match["number"] or match["number_first"]
-            own_word = bool(match["delta_word"])
-            # A pair is a delta claim when it says "delta" itself, or follows the word
-            # "delta" in its sentence with no "weight" in between.
+            own_word = bool(match["delta_word"] or match["verb"])
+            # A pair is a delta claim when it says "delta" or a change itself, or follows
+            # the word "delta" in its sentence with no "weight" in between.
             after_delta = (
                 delta_word is not None
                 and delta_word.end() <= match.start()
                 and not _WEIGHT_WORD.search(sentence[delta_word.end() : match.start()])
             )
-            if not (own_word or after_delta):
-                continue
             owner = None
             for found in owners.finditer(sentence[: match.start()]):
-                owner = found.group(0)
+                owner = found
+            # Direction words count from the previous pair, so each change has its own.
+            wording = sentence[max(previous_end, owner.end() if owner else 0) : match.end()]
+            previous_end = match.end()
             if owner is None:
                 continue
-            claimed_by = list(deltas) if owner not in deltas else [owner]
+            # "gains 0.8 on safety and 0.1 on efficiency" states two changes with one verb.
+            own_word = own_word or bool(
+                match["number_first"] and _DIRECTION.search(sentence[owner.end() : match.end()])
+            )
+            if not (own_word or after_delta):
+                continue
+            if _CONTRIBUTION_WORD.search(sentence[owner.end() : match.start()]):
+                continue
+            stated = _stated_delta(number, wording)
+            claimed_by = list(deltas) if owner.group(0) not in deltas else [owner.group(0)]
             for skill_id in claimed_by:
-                if not _matches_number(number, deltas[skill_id][objective]):
+                if abs(stated - deltas[skill_id][objective]) > _tolerance(number):
                     wrong.setdefault((skill_id, objective), set()).add(number)
     return [
         _finding(
@@ -746,6 +819,18 @@ def _delta_claims(request: RecommendationRequest, text: str) -> list[Finding]:
         )
         for (skill_id, objective), numbers in sorted(wrong.items())
     ]
+
+
+def _stated_delta(number: str, wording: str) -> float:
+    """The delta a number states: its own sign, else the direction words around it."""
+
+    value = float(number)
+    if number[0] in "+-":
+        return value
+    found = None
+    for found in _DIRECTION.finditer(wording):
+        pass
+    return -value if found is not None and found["decline"] else value
 
 
 def _last_mention_end(clause: str, skill_id: str, before: int) -> int:
@@ -902,17 +987,16 @@ def _spread_negation(text: str) -> str:
     return _NEGATED_LIST.sub(spread, text)
 
 
+def _synthetic_not_disclosed(request: RecommendationRequest, text: str) -> list[Finding]:
+    if request.evidence_label != "SYNTHETIC" or "synthetic" in text:
+        return []
+    return [_finding("SYNTHETIC_NOT_DISCLOSED", "explanation must say that the evidence is synthetic")]
+
+
 def _evidence_label_claims(request: RecommendationRequest, text: str) -> list[Finding]:
     if request.evidence_label != "SYNTHETIC":
         return []
     findings = []
-    if "synthetic" not in text:
-        findings.append(
-            _finding(
-                "SYNTHETIC_NOT_DISCLOSED",
-                "explanation must say that the evidence is synthetic",
-            )
-        )
     claims = sorted(
         {
             match.group(0)
