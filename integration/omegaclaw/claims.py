@@ -771,9 +771,11 @@ def _delta_claims(request: RecommendationRequest, text: str) -> list[Finding]:
         rf"|(?<![\w.])(?P<number_first>[-+]?(?:\d+\.\d+|\.\d+))\s+(?:{direction}\s+)?(?:for|on|in)\s+"
         rf"(?P<objective_after>{names})(?![\w-])"
     )
-    owners = re.compile(
-        "|".join(_skill_pattern(skill_id) for skill_id in deltas)
-        + r"|\b(?:both|each|all)\s+(?:admitted\s+)?skills?\b"
+    skill_names = "|".join(_skill_pattern(skill_id) for skill_id in deltas)
+    owners = re.compile(skill_names + r"|\b(?:both|each|all)\s+(?:admitted\s+)?skills?\b")
+    # A live answer named the skill after the number: "safety delta -0.1 for skill_efficiency".
+    named_after = re.compile(
+        rf"\s*,?\s*(?:for|of|from)\s+(?:the\s+)?(?:skill\s+)?(?P<skill>{skill_names})"
     )
     wrong: dict[tuple[str, str], set[str]] = {}
     for sentence in _SENTENCE_BREAK.split(text):
@@ -790,24 +792,31 @@ def _delta_claims(request: RecommendationRequest, text: str) -> list[Finding]:
                 and delta_word.end() <= match.start()
                 and not _WEIGHT_WORD.search(sentence[delta_word.end() : match.start()])
             )
-            owner = None
-            for found in owners.finditer(sentence[: match.start()]):
-                owner = found
+            # The owner is the skill named right after the pair, else the last one before it.
+            after = named_after.match(sentence, match.end())
+            if after is not None:
+                owner, scope_start = after["skill"], previous_end
+            else:
+                found = None
+                for found in owners.finditer(sentence[: match.start()]):
+                    pass
+                owner = found.group(0) if found else None
+                scope_start = found.end() if found else previous_end
             # Direction words count from the previous pair, so each change has its own.
-            wording = sentence[max(previous_end, owner.end() if owner else 0) : match.end()]
-            previous_end = match.end()
+            wording = sentence[max(previous_end, scope_start) : match.end()]
+            previous_end = after.end() if after is not None else match.end()
             if owner is None:
                 continue
             # "gains 0.8 on safety and 0.1 on efficiency" states two changes with one verb.
             own_word = own_word or bool(
-                match["number_first"] and _DIRECTION.search(sentence[owner.end() : match.end()])
+                match["number_first"] and _DIRECTION.search(sentence[scope_start : match.end()])
             )
             if not (own_word or after_delta):
                 continue
-            if _CONTRIBUTION_WORD.search(sentence[owner.end() : match.start()]):
+            if _CONTRIBUTION_WORD.search(sentence[scope_start : match.start()]):
                 continue
             stated = _stated_delta(number, wording)
-            claimed_by = list(deltas) if owner.group(0) not in deltas else [owner.group(0)]
+            claimed_by = list(deltas) if owner not in deltas else [owner]
             for skill_id in claimed_by:
                 if abs(stated - deltas[skill_id][objective]) > _tolerance(number):
                     wrong.setdefault((skill_id, objective), set()).add(number)

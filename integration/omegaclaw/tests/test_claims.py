@@ -825,6 +825,14 @@ DELTA_WORDING = [
     pytest.param("skill_safety gains 0.8 on safety and 0.1 on efficiency.", {"DELTA_MISMATCH"}, id="gain-for-a-negative-delta"),
     pytest.param("skill_safety has a drop of 0.1 in efficiency.", set(), id="drop-of"),
     pytest.param("skill_safety has an efficiency delta of –0.1.", set(), id="en-dash-minus-sign"),
+    # The skill can be named after the number it owns.
+    pytest.param(
+        "Each skill gives up the other objective (safety delta -0.1 for skill_efficiency, "
+        "efficiency delta -0.1 for skill_safety).",
+        set(),
+        id="skill-named-after-its-delta",
+    ),
+    pytest.param("A safety delta of 0.8 for skill_efficiency.", {"DELTA_MISMATCH"}, id="wrong-delta-named-after"),
     pytest.param(
         "skill_safety's objective deltas give weighted contributions of 0.64 for safety and -0.02 "
         "for efficiency.",
@@ -845,3 +853,21 @@ def test_each_delta_must_belong_to_its_skill_and_objective(sentence, expected):
 )
 def test_weights_written_as_a_field_name_are_checked(weights, expected):
     assert _codes(f"{RANKING} It matches objective_weights {weights}.") == expected
+
+
+# From the live check after the prompt change: a correct answer that names each skill
+# after its delta was flagged, because the delta was given to the skill named before it.
+LIVE_SKILL_NAMED_AFTER_ITS_DELTA = (
+    "Per the final SubRep decision, skill_efficiency is selected at selected_score "
+    "0.9100000000000001 under selection_rule MAX_FINAL_SELECTION_SCORE with tie_breaker "
+    "LEXICOGRAPHIC_SKILL_ID; the only admitted runner-up named by that decision is skill_safety at "
+    "runner_up_score 0.19, a score_gap of 0.7200000000000002. This aligns with objective_weights "
+    "(efficiency 0.9, safety 0.1): skill_efficiency shows an efficiency objective delta of 0.8, "
+    "skill_safety a safety objective delta of 0.8, and both have delta_r of 0.2, so each admitted "
+    "skill gives up the other objective (safety delta -0.1 for skill_efficiency, efficiency delta "
+    "-0.1 for skill_safety). All supplied evidence is SYNTHETIC, and nothing has been executed."
+)
+
+
+def test_live_answer_naming_each_skill_after_its_delta_passes():
+    assert _codes(LIVE_SKILL_NAMED_AFTER_ITS_DELTA, _scenario_request("risk_budget_exclusion")) == set()
