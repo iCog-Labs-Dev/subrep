@@ -1,6 +1,7 @@
 
 """Tests for offline candidate-filter metrics and split-safe evaluation."""
 
+import json
 import numpy as np
 from numpy.random import gamma
 import pytest
@@ -376,3 +377,85 @@ def test_offline_filter_uses_configured_motive_weights(monkeypatch):
     assert safety_selection == [POLICY_NAMES[-1]]
     assert fuel_selection == [POLICY_NAMES[0]]
     assert safety_selection != fuel_selection
+
+
+def test_offline_filter_requires_an_explicit_weight_source():
+    with pytest.raises(SystemExit) as exc_info:
+        evaluator.main([])
+
+    assert exc_info.value.code == 2
+
+
+def test_offline_filter_accepts_explicit_equal_weights(tmp_path, monkeypatch):
+    manifest = {
+        "dataset_signature": "dataset-A",
+        "split_signature": "split-A",
+        "rollout_provenance": {
+            "checkpoint_sha256": "a" * 64,
+            "gamma": 0.99,
+            "max_steps": -1,
+        },
+    }
+    captured = {}
+
+    monkeypatch.setattr(evaluator, "load_records", lambda data_dir: [])
+    monkeypatch.setattr(
+        evaluator,
+        "load_manifest",
+        lambda rows, path: manifest,
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "partition",
+        lambda rows, saved_manifest: {"test": []},
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "group_contexts",
+        lambda rows, complete: {},
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "load_model",
+        lambda path, expected_manifest: (object(), True),
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "load_motive_weights",
+        lambda *args, **kwargs: pytest.fail(
+            "Equal-weight mode must not load a ranking config"
+        ),
+    )
+    monkeypatch.setattr(
+        "generator.evaluate_generator_report.compute_idle_baseline_stats",
+        lambda **kwargs: {
+            "baseline_payoff": 0.0,
+            "baseline_motives": [0.0, 0.0],
+        },
+    )
+
+    def capture_evaluation(
+        groups,
+        model,
+        baseline_stats,
+        k,
+        seed,
+        motive_weights,
+    ):
+        captured["motive_weights"] = motive_weights
+        return {}
+
+    monkeypatch.setattr(evaluator, "evaluate_filter", capture_evaluation)
+
+    output_dir = tmp_path / "reports"
+    evaluator.main([
+        "--output-dir", str(output_dir),
+        "--equal-weights",
+    ])
+
+    report = json.loads(
+        (output_dir / "filter_metrics.json").read_text(encoding="utf-8")
+    )
+    assert captured["motive_weights"] == (0.5, 0.5)
+    assert report["ranking"]["weight_source"] == "equal_weights"
+    assert report["ranking"]["ranking_config"] is None

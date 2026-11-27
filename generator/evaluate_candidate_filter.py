@@ -129,10 +129,16 @@ def main(argv=None):
     )
     parser.add_argument("--baseline-episodes", type=int, default=20)
     parser.add_argument("--k", type=int, default=3)
-    parser.add_argument(
+    weight_source = parser.add_mutually_exclusive_group(required=True)
+    weight_source.add_argument(
     "--ranking-config",
-    default="reports/multi_policy/motive_weights.json",
-    help="Validation-tuned motive weights shared with live filtering",)
+    help="Load fixed validation-tuned Safety/Fuel weights from this file",
+    )
+    weight_source.add_argument(
+        "--equal-weights",
+        action="store_true",
+        help="Use explicit equal Safety/Fuel weights (0.5, 0.5)",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", default="reports/multi_policy")
     args = parser.parse_args(argv)
@@ -154,9 +160,13 @@ def main(argv=None):
         raise ValueError("Filter requires policy-conditioned model")
     rollout_settings = manifest["rollout_provenance"]
     max_steps = rollout_settings["max_steps"]
-    motive_weights = load_motive_weights(
-    args.ranking_config,
-    expected_split_signature=manifest["split_signature"],)
+    if args.equal_weights:
+        motive_weights = (0.5, 0.5)
+    else:
+        motive_weights = load_motive_weights(
+            args.ranking_config,
+            expected_split_signature=manifest["split_signature"],
+        )
     from generator.evaluate_generator_report import compute_idle_baseline_stats
 
     baseline_stats = compute_idle_baseline_stats(
@@ -189,7 +199,14 @@ def main(argv=None):
             "safety": float(motive_weights[0]),
             "fuel": float(motive_weights[1]),
         },
-        "ranking_config": str(args.ranking_config),
+        "weight_source": (
+            "equal_weights" if args.equal_weights else "ranking_config"
+        ),
+        "ranking_config": (
+            str(args.ranking_config)
+            if args.ranking_config is not None
+            else None
+        ),
       },
     }
 

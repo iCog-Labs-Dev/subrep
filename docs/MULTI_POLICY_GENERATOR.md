@@ -73,25 +73,45 @@ python -m generator.tune_motive_weights --data-dir data/raw_mixed --fixed-top-k 
 
 This optional experiment loads only the saved validation contexts and the policy-conditioned checkpoint. It searches a predefined Safety/Fuel simplex grid and selects one fixed pair of weights that maximizes certification recall at a fixed top-3 execution budget. The weights do not vary by context and are not provided by the MDN. Ties are broken by validation precision, then weights closest to equal, then lower Safety weight. It does not tune the generator or inspect test outcomes.
 
-Output: `reports/multi_policy/motive_weights.json`. This file stores all evaluated combinations and the selected weights. Offline and live filtering use this configuration when it exists; if it is absent, they use equal Safety/Fuel weights (0.5, 0.5). Run this command only when you want to perform the experiment or update its configuration.
+Output: `reports/multi_policy/motive_weights.json`. This file stores all evaluated combinations and the selected weights. Offline and live filtering can use this configuration or explicitly select equal weights with `--equal-weights`. Run tuning only when you want to perform the experiment or update its configuration.
 
 ## 6. Evaluate candidate filtering offline
+
+Choose exactly one weight source:
+
+**Validation-tuned weights**
 
 ```bash
 python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 20 --ranking-config reports/multi_policy/motive_weights.json
 ```
 
-Uses complete **held-out** contexts with previously measured outcomes for all nine policies. Compares neural top-K, random top-K, fixed-order top-K (same execution budget), and all candidates (full budget). The ranking weights are loaded from the validation-tuned configuration; the test split is not used to choose them. `--k 3` selects three of nine candidates per context. 
+**Equal Safety/Fuel weights (0.5, 0.5)**
 
-Outputs: `reports/multi_policy/filter_metrics.json` (detailed metrics) and `reports/multi_policy/results_summary.md` (comparison table). The reported execution savings are **counterfactual**: collecting the offline benchmark still executed all nine candidates. Certifiable means passing **either** CDS or PDS checks on measured outcomes. Missed-certifiable rate counts certifiable candidates excluded by the filter. 
+```bash
+python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 20 --equal-weights
+```
+
+Supplying neither option or both options is an argument error; there is no silent fallback. A missing ranking-config file or a config tuned for a different split also causes an error. Offline evaluation uses complete **held-out** contexts with previously measured outcomes for all nine policies. It compares neural top-K, random top-K, fixed-order top-K (same execution budget), and all candidates (full budget). The test split is not used to choose validation-tuned weights. `--k 3` selects three of nine candidates per context.
+
+Outputs: `reports/multi_policy/filter_metrics.json` (detailed metrics) and `reports/multi_policy/results_summary.md` (comparison table). The reported execution savings are **counterfactual**: collecting the offline benchmark still executed all nine candidates. Certifiable means passing **either** CDS or PDS checks on measured outcomes. Missed-certifiable rate counts certifiable candidates excluded by the filter.
 
 ## 7. Run the live candidate filter
+
+Choose exactly one weight source:
+
+**Validation-tuned weights**
 
 ```bash
 python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 20 --ranking-config reports/multi_policy/motive_weights.json
 ```
 
-Loads the validation-tuned ranking configuration when available (otherwise uses equal Safety/Fuel weights), predicts the nine policies at each starting context, executes only the top three candidates, and applies existing CDS or PDS checks to each measured rollout. With ten contexts and top-K of three, this executes **30 selected candidates** instead of 90, plus 20 separate idle-baseline episodes. `--contexts` sets the number of starting contexts; `--top-k` sets candidates executed per context. The script reports measured admission outcomes; it does not store certificates in the skill library or implement library-controlled reuse.
+**Equal Safety/Fuel weights (0.5, 0.5)**
+
+```bash
+python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 20 --equal-weights
+```
+
+Supplying neither option or both options is an argument error; there is no silent fallback. A missing ranking-config file or a config tuned for a different split also causes an error. In config mode, the live filter verifies that the config's split matches the model checkpoint using `data/mixed_split_manifest.json` (override with `--split-manifest`). It then predicts the nine policies at each starting context, executes only the top three candidates, and applies existing CDS or PDS checks to each measured rollout. With ten contexts and top-K of three, this executes **30 selected candidates** instead of 90, plus 20 separate idle-baseline episodes. `--contexts` sets the number of starting contexts; `--top-k` sets candidates executed per context. The script reports measured admission outcomes; it does not store certificates in the skill library or implement library-controlled reuse.
 
 Output: `reports/multi_policy/live_filter.json` (override with `--output`). This is an opt-in experimental runtime.
 

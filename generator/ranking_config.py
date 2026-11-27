@@ -21,17 +21,14 @@ def validate_motive_weights(weights):
 
     return float(values[0]), float(values[1])
 
-def load_motive_weights(path,expected_split_signature=None,):
-    """Load frozen validation-tuned weights or use documented defaults.
-
-    Tuning is optional for running the filter. If no configuration exists,
-    equal Safety/Fuel weights are used. If a configuration exists, it must
-    be valid and match the expected validation split.
-    """
+def load_motive_weights(path, expected_split_signature=None):
+    """Load frozen validation-tuned weights and validate their split identity."""
     config_path = Path(path)
 
     if not config_path.is_file():
-        return 0.5, 0.5
+        raise FileNotFoundError(
+            f"Ranking configuration not found: {config_path}"
+        )
 
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))

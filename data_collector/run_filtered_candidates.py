@@ -140,7 +140,14 @@ def save_report(results: list[dict], calculator: ImprovementCalculator,
              "safety": float(args.motive_weights[0]),
              "fuel": float(args.motive_weights[1]),
            },
-           "ranking_config": str(args.ranking_config),
+           "weight_source": (
+               "equal_weights" if args.equal_weights else "ranking_config"
+           ),
+           "ranking_config": (
+               str(args.ranking_config)
+               if args.ranking_config is not None
+               else None
+           ),
         },
     }
     output = Path(args.output)
@@ -169,13 +176,21 @@ def main(argv=None):
     parser.add_argument("--contexts", type=int, default=10)
     parser.add_argument("--seed", type=int, default=9000)
     parser.add_argument("--top-k", type=int, default=3)
-    parser.add_argument(
+    weight_source = parser.add_mutually_exclusive_group(required=True)
+    weight_source.add_argument(
     "--ranking-config",
-    default="reports/multi_policy/motive_weights.json",
-    help=(
-        "Optional fixed validation-tuned Safety/Fuel weights; if the file "
-        "is missing, equal weights (0.5, 0.5) are used"
-    ),)
+    help="Load fixed validation-tuned Safety/Fuel weights from this file",
+    )
+    weight_source.add_argument(
+        "--equal-weights",
+        action="store_true",
+        help="Use explicit equal Safety/Fuel weights (0.5, 0.5)",
+    )
+    parser.add_argument(
+        "--split-manifest",
+        default="data/mixed_split_manifest.json",
+        help="Training split manifest used to validate the ranking config",
+    )
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--output", default="reports/multi_policy/live_filter.json")
@@ -195,12 +210,27 @@ def main(argv=None):
     runtime_provenance = build_rollout_provenance(
         args.pilot_checkpoint, args.gamma, args.max_steps
     )
+    training_manifest = None
+    if args.ranking_config is not None:
+        training_manifest = json.loads(
+            Path(args.split_manifest).read_text(encoding="utf-8")
+        )
+        if not isinstance(training_manifest, dict):
+            raise ValueError("Training split manifest must contain a JSON object")
     model, conditioned = load_model(
-        args.model_path, expected_rollout_provenance=runtime_provenance
+        args.model_path,
+        expected_manifest=training_manifest,
+        expected_rollout_provenance=runtime_provenance,
     )
     if not conditioned:
         raise ValueError("A policy-conditioned checkpoint is required")
-    args.motive_weights = load_motive_weights( args.ranking_config)
+    if args.equal_weights:
+        args.motive_weights = (0.5, 0.5)
+    else:
+        args.motive_weights = load_motive_weights(
+            args.ranking_config,
+            expected_split_signature=training_manifest["split_signature"],
+        )
     print(
     f"Ranking weights: Safety={args.motive_weights[0]:.3f}, "
     f"Fuel={args.motive_weights[1]:.3f}",
