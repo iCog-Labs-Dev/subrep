@@ -327,13 +327,6 @@ def run_multi_policy_report(args):
         args.observation_baseline_path,
         expected_manifest=manifest,
    )
-    baseline_stats = compute_idle_baseline_stats(
-       episodes=args.baseline_episodes,
-       seed=args.baseline_seed,
-       gamma=rollout_settings["gamma"],
-       max_steps=None if max_steps == -1 else max_steps,
-    )
-
     if not conditioned or baseline_conditioned:
         raise ValueError(
             "Expected conditioned model and observation-only baseline checkpoints"
