@@ -1,8 +1,10 @@
 """Focused tests for new policy-conditioned generator and strict raw_mixed pipeline."""
+import json
 import numpy as np
 import pytest
 import torch
 
+from generator import multi_policy_pipeline as pipeline
 from generator.skill_generator import PolicyConditionedSkillGenerator
 from generator.policy_registry import POLICY_NAMES, policy_index
 from generator.multi_policy_data import (
@@ -133,6 +135,67 @@ def test_training_evaluation_and_checkpoint(tmp_path):
     )
     assert "fuel_mae" in report["multi_policy"]["per_policy"][POLICY_NAMES[0]]
     assert "per_policy_training_mean" in report
+
+
+def test_evaluate_command_writes_prediction_report_provenance(
+    tmp_path,
+    monkeypatch,
+):
+    manifest = {
+        "dataset_signature": "dataset-a",
+        "split_signature": "split-a",
+    }
+    parts = {"test": [], "train": []}
+    monkeypatch.setattr(pipeline, "prepare", lambda args: (parts, manifest))
+    monkeypatch.setattr(
+        pipeline,
+        "load_model",
+        lambda path, expected_manifest: object(),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "evaluate",
+        lambda *args: {
+            name: {"overall": {"payoff_mae": 0.1}}
+            for name in (
+                "multi_policy",
+                "observation_only",
+                "per_policy_training_mean",
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "generator.evaluate_generator_report.code_revision_metadata",
+        lambda: {
+            "code_commit": "test-commit",
+            "working_tree_dirty": False,
+        },
+    )
+
+    pipeline.main([
+        "evaluate",
+        "--model-path", "conditioned.pt",
+        "--baseline-path", "observation-only.pt",
+        "--output-dir", str(tmp_path),
+    ])
+
+    report = json.loads(
+        (tmp_path / "prediction_metrics.json").read_text(encoding="utf-8")
+    )
+    metadata = report["run_metadata"]
+    assert metadata["dataset_signature"] == "dataset-a"
+    assert metadata["split_signature"] == "split-a"
+    assert metadata["model_paths"] == {
+        "multi_policy": "conditioned.pt",
+        "observation_only": "observation-only.pt",
+    }
+    assert metadata["comparison_baseline"] == (
+        "per_policy_training_mean computed from training records"
+    )
+    assert metadata["model_constraints"]["multi_policy_model"][
+        "noop_fuel_prediction"
+    ]["source"] == "forced_by_policy_constraint_not_learned"
+    assert metadata["code_commit"] == "test-commit"
 
 
 def test_filter_never_certifies_predictions():

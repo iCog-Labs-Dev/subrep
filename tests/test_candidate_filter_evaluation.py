@@ -397,6 +397,10 @@ def test_offline_filter_accepts_explicit_equal_weights(tmp_path, monkeypatch):
         },
     }
     captured = {}
+    code_metadata = {
+        "code_commit": "test-commit",
+        "working_tree_dirty": True,
+    }
 
     monkeypatch.setattr(evaluator, "load_records", lambda data_dir: [])
     monkeypatch.setattr(
@@ -426,12 +430,22 @@ def test_offline_filter_accepts_explicit_equal_weights(tmp_path, monkeypatch):
             "Equal-weight mode must not load a ranking config"
         ),
     )
-    monkeypatch.setattr(
-        "generator.evaluate_generator_report.compute_idle_baseline_stats",
-        lambda **kwargs: {
+    baseline_settings = {}
+
+    def fake_baseline(**kwargs):
+        baseline_settings.update(kwargs)
+        return {
             "baseline_payoff": 0.0,
             "baseline_motives": [0.0, 0.0],
-        },
+        }
+
+    monkeypatch.setattr(
+        "generator.evaluate_generator_report.compute_idle_baseline_stats",
+        fake_baseline,
+    )
+    monkeypatch.setattr(
+        "generator.evaluate_generator_report.code_revision_metadata",
+        lambda: code_metadata,
     )
 
     def capture_evaluation(
@@ -443,7 +457,23 @@ def test_offline_filter_accepts_explicit_equal_weights(tmp_path, monkeypatch):
         motive_weights,
     ):
         captured["motive_weights"] = motive_weights
-        return {}
+        return {
+            name: {
+                "genuinely_certifiable": 1,
+                "certifiable_found": 1,
+                "executed": 1,
+                "execution_savings_fraction": 0.0,
+                "missed_certifiable_fraction": 0.0,
+                "cds_admission_rate": 1.0,
+                "pds_admission_rate": 1.0,
+            }
+            for name in (
+                "neural_top_k",
+                "random_same_budget",
+                "fixed_order_same_budget",
+                "all_candidates_full_budget",
+            )
+        }
 
     monkeypatch.setattr(evaluator, "evaluate_filter", capture_evaluation)
 
@@ -456,6 +486,32 @@ def test_offline_filter_accepts_explicit_equal_weights(tmp_path, monkeypatch):
     report = json.loads(
         (output_dir / "filter_metrics.json").read_text(encoding="utf-8")
     )
+    summary = (output_dir / "results_summary.md").read_text(encoding="utf-8")
     assert captured["motive_weights"] == (0.5, 0.5)
     assert report["ranking"]["weight_source"] == "equal_weights"
     assert report["ranking"]["ranking_config"] is None
+    assert report["run_metadata"]["dataset_signature"] == "dataset-A"
+    assert report["run_metadata"]["split_signature"] == "split-A"
+    assert report["run_metadata"]["top_k"] == 3
+    assert report["run_metadata"]["weight_source"] == "equal_weights"
+    assert report["run_metadata"]["baseline_settings"] == {
+        "source": "measured_idle_execution",
+        "episodes": 20,
+        "seed": 42,
+        "gamma": 0.99,
+        "max_steps": None,
+    }
+    assert baseline_settings == {
+        "episodes": 20,
+        "seed": 42,
+        "gamma": 0.99,
+        "max_steps": None,
+    }
+    assert report["run_metadata"]["model_constraints"][
+        "noop_fuel_prediction"
+    ]["source"] == "forced_by_policy_constraint_not_learned"
+    assert report["run_metadata"]["code_commit"] == "test-commit"
+    assert "neural top-K found 1/1" in summary
+    assert "fixed order found 1/1" in summary
+    assert "random found 1/1" in summary
+    assert "Full-budget evaluation found 1/1" in summary

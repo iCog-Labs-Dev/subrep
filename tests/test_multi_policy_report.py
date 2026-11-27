@@ -160,12 +160,12 @@ def test_cli_report_reuses_manifest_and_only_test_contexts(tmp_path, monkeypatch
         )
     )
 
-    manifest = tmp_path / "split.json"
+    manifest_path = tmp_path / "split.json"
     out = tmp_path / "report.json"
 
     args = SimpleNamespace(
         data_dir=str(raw),
-        split_manifest=str(manifest),
+        split_manifest=str(manifest_path),
         seed=42,
         model_path=str(model_path),
         observation_baseline_path=str(baseline_path),
@@ -188,11 +188,32 @@ def test_cli_report_reuses_manifest_and_only_test_contexts(tmp_path, monkeypatch
         "generator.evaluate_generator_report.compute_idle_baseline_stats",
        fake_baseline,
     )
+    monkeypatch.setattr(
+        "generator.evaluate_generator_report.code_revision_metadata",
+        lambda: {
+            "code_commit": "test-commit",
+            "working_tree_dirty": False,
+        },
+    )
 
     result = run_multi_policy_report(args)
 
     assert out.exists()
-    assert json.loads(out.read_text())["n_contexts"] == result["n_contexts"]
+    saved_report = json.loads(out.read_text())
+    assert saved_report["n_contexts"] == result["n_contexts"]
+    assert result["run_metadata"]["dataset_signature"] == manifest["dataset_signature"]
+    assert result["run_metadata"]["split_signature"] == manifest["split_signature"]
+    assert result["run_metadata"]["baseline_settings"] == {
+        "source": "measured_idle_execution",
+        "episodes": 1,
+        "seed": 42,
+        "gamma": 0.8,
+        "max_steps": 2,
+    }
+    assert result["run_metadata"]["model_constraints"][
+        "noop_fuel_prediction"
+    ]["source"] == "forced_by_policy_constraint_not_learned"
+    assert saved_report["run_metadata"]["code_commit"] == "test-commit"
     assert result["n_contexts"] < 16
     assert result["n_contexts"] > 0
 

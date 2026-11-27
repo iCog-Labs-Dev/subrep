@@ -103,6 +103,8 @@ def evaluate_contexts(model, env, candidates, calculator, args) -> list[dict]:
 def save_report(results: list[dict], calculator: ImprovementCalculator,
                 args, elapsed: float) -> None:
     """Save measured filtering outcomes and print the execution summary."""
+    from generator.evaluate_generator_report import code_revision_metadata
+
     outcomes = [outcome for context in results for outcome in context["outcomes"]]
     executed = len(outcomes)
     possible = args.contexts * len(POLICY_NAMES)
@@ -129,6 +131,37 @@ def save_report(results: list[dict], calculator: ImprovementCalculator,
         "cds_or_pds_admitted": certifiable_count,
         "jointly_certifiable_found": joint_count,
         "elapsed_seconds": round(elapsed, 2),
+        "run_metadata": {
+            "dataset_signature": args.dataset_signature,
+            "split_signature": args.split_signature,
+            "weight_source": (
+                "equal_weights"
+                if args.equal_weights
+                else "validation_tuned_fixed_weights"
+            ),
+            "top_k": args.top_k,
+            "baseline_settings": {
+                "source": "measured_idle_execution",
+                "episodes": args.baseline_episodes,
+                "seed": args.seed,
+                "gamma": args.gamma,
+                "max_steps": args.max_steps,
+            },
+            "model_constraints": {
+                "noop_fuel_prediction": {
+                    "value": 0.0,
+                    "source": "forced_by_policy_constraint_not_learned",
+                },
+            },
+            "limitations": [
+                (
+                    "Live filtering does not compare random or fixed-order "
+                    "selection on the same contexts; use the offline report "
+                    "for those comparisons."
+                ),
+            ],
+            **code_revision_metadata(),
+        },
         "results": results,
         "ranking": {
             "formula": (
@@ -140,8 +173,11 @@ def save_report(results: list[dict], calculator: ImprovementCalculator,
              "safety": float(args.motive_weights[0]),
              "fuel": float(args.motive_weights[1]),
            },
+           "top_k": args.top_k,
            "weight_source": (
-               "equal_weights" if args.equal_weights else "ranking_config"
+               "equal_weights"
+               if args.equal_weights
+               else "validation_tuned_fixed_weights"
            ),
            "ranking_config": (
                str(args.ranking_config)
@@ -210,13 +246,11 @@ def main(argv=None):
     runtime_provenance = build_rollout_provenance(
         args.pilot_checkpoint, args.gamma, args.max_steps
     )
-    training_manifest = None
-    if args.ranking_config is not None:
-        training_manifest = json.loads(
-            Path(args.split_manifest).read_text(encoding="utf-8")
-        )
-        if not isinstance(training_manifest, dict):
-            raise ValueError("Training split manifest must contain a JSON object")
+    training_manifest = json.loads(
+        Path(args.split_manifest).read_text(encoding="utf-8")
+    )
+    if not isinstance(training_manifest, dict):
+        raise ValueError("Training split manifest must contain a JSON object")
     model, conditioned = load_model(
         args.model_path,
         expected_manifest=training_manifest,
@@ -224,6 +258,8 @@ def main(argv=None):
     )
     if not conditioned:
         raise ValueError("A policy-conditioned checkpoint is required")
+    args.dataset_signature = training_manifest["dataset_signature"]
+    args.split_signature = training_manifest["split_signature"]
     if args.equal_weights:
         args.motive_weights = (0.5, 0.5)
     else:

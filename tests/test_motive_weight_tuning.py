@@ -1,6 +1,7 @@
 
 """Validation-only motive-weight tuning tests."""
 
+import json
 import numpy as np
 import pytest
 from generator import tune_motive_weights as tuner
@@ -188,15 +189,24 @@ def test_main_uses_dataset_rollout_settings_for_baseline(
         fake_baseline,
     )
     monkeypatch.setattr(
+        "generator.evaluate_generator_report.code_revision_metadata",
+        lambda: {
+            "code_commit": "test-commit",
+            "working_tree_dirty": False,
+        },
+    )
+    monkeypatch.setattr(
         tuner,
         "tune_weights",
         lambda *args, **kwargs: {
             "motive_weights": {"safety": 0.5, "fuel": 0.5},
             "validation_metrics": {"recall": 0.0, "precision": 0.0},
+            "fixed_top_k": kwargs["fixed_top_k"],
         },
     )
 
-    tuner.main(["--output", str(tmp_path / "weights.json")])
+    output = tmp_path / "weights.json"
+    tuner.main(["--output", str(output)])
 
     assert captured == {
         "episodes": 20,
@@ -204,3 +214,18 @@ def test_main_uses_dataset_rollout_settings_for_baseline(
         "gamma": 0.8,
         "max_steps": 2,
     }
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["weight_source"] == "validation_tuned_fixed_weights"
+    assert report["fixed_top_k"] == 3
+    assert report["dataset_signature"] == "dataset-signature"
+    assert report["split_signature"] == "split-signature"
+    assert report["baseline_settings"] == {
+        "episodes": 20,
+        "seed": 42,
+        "gamma": 0.8,
+        "max_steps": 2,
+    }
+    assert report["model_constraints"]["noop_fuel_prediction"][
+        "source"
+    ] == "forced_by_policy_constraint_not_learned"
+    assert report["code_commit"] == "test-commit"

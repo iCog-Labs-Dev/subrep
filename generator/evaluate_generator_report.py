@@ -10,6 +10,7 @@ import glob
 import json
 import os
 from pathlib import Path
+import subprocess
 from typing import Any
 
 import numpy as np
@@ -20,6 +21,29 @@ from baseline.improvement_calculator import ImprovementCalculator
 from certification.cds_test import CDSGate
 from certification.pds_test import PDSGate
 from generator.skill_generator import SkillGenerator
+
+
+def code_revision_metadata() -> dict[str, str | bool]:
+    """Return the report-generating commit and whether the worktree is dirty."""
+    repository = Path(__file__).resolve().parents[1]
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return {
+        "code_commit": commit,
+        "working_tree_dirty": bool(status.strip()),
+    }
 
 
 def compute_idle_baseline_stats(episodes: int = 20, seed: int = 42, gamma: float = 0.99, max_steps: int | None = None) -> dict[str, Any]:
@@ -352,6 +376,24 @@ def run_multi_policy_report(args):
     report["observation_baseline_path"] = str(
         args.observation_baseline_path
     )
+    report["run_metadata"] = {
+        "dataset_signature": manifest["dataset_signature"],
+        "split_signature": manifest["split_signature"],
+        "baseline_settings": {
+            "source": "measured_idle_execution",
+            "episodes": args.baseline_episodes,
+            "seed": args.baseline_seed,
+            "gamma": rollout_settings["gamma"],
+            "max_steps": None if max_steps == -1 else max_steps,
+        },
+        "model_constraints": {
+            "noop_fuel_prediction": {
+                "value": 0.0,
+                "source": "forced_by_policy_constraint_not_learned",
+            },
+        },
+        **code_revision_metadata(),
+    }
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)

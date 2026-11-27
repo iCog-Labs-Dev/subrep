@@ -98,7 +98,18 @@ def test_live_filter_rejects_ranking_config_from_another_split(
     assert captured["expected_manifest"] == manifest
 
 
-def test_live_filter_accepts_explicit_equal_weights(monkeypatch):
+def test_live_filter_accepts_explicit_equal_weights(tmp_path, monkeypatch):
+    manifest = {
+        "dataset_signature": "dataset-a",
+        "split_signature": "split-a",
+        "rollout_provenance": {
+            "checkpoint_sha256": "a" * 64,
+            "gamma": 0.99,
+            "max_steps": -1,
+        },
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     captured = {}
     monkeypatch.setattr(
         live,
@@ -140,7 +151,60 @@ def test_live_filter_accepts_explicit_equal_weights(monkeypatch):
     monkeypatch.setattr(live, "evaluate_contexts", fake_evaluate_contexts)
     monkeypatch.setattr(live, "save_report", lambda *args: None)
 
-    live.main(["--equal-weights"])
+    live.main([
+        "--equal-weights",
+        "--split-manifest",
+        str(manifest_path),
+    ])
 
     assert captured["motive_weights"] == (0.5, 0.5)
-    assert captured["expected_manifest"] is None
+    assert captured["expected_manifest"] == manifest
+
+
+def test_live_report_records_filter_and_run_provenance(tmp_path, monkeypatch):
+    output = tmp_path / "live_filter.json"
+    monkeypatch.setattr(
+        "generator.evaluate_generator_report.code_revision_metadata",
+        lambda: {
+            "code_commit": "test-commit",
+            "working_tree_dirty": False,
+        },
+    )
+    args = SimpleNamespace(
+        contexts=2,
+        top_k=1,
+        baseline_episodes=3,
+        seed=17,
+        gamma=0.8,
+        max_steps=25,
+        dataset_signature="dataset-a",
+        split_signature="split-a",
+        equal_weights=True,
+        motive_weights=(0.5, 0.5),
+        ranking_config=None,
+        output=str(output),
+    )
+    calculator = SimpleNamespace(
+        baseline_payoff=1.0,
+        baseline_motives=np.array([0.2, -0.3]),
+    )
+
+    live.save_report([], calculator, args, elapsed=1.25)
+
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["ranking"]["weight_source"] == "equal_weights"
+    assert report["ranking"]["top_k"] == 1
+    assert report["run_metadata"]["dataset_signature"] == "dataset-a"
+    assert report["run_metadata"]["split_signature"] == "split-a"
+    assert report["run_metadata"]["baseline_settings"] == {
+        "source": "measured_idle_execution",
+        "episodes": 3,
+        "seed": 17,
+        "gamma": 0.8,
+        "max_steps": 25,
+    }
+    assert report["run_metadata"]["model_constraints"][
+        "noop_fuel_prediction"
+    ]["value"] == 0.0
+    assert report["run_metadata"]["code_commit"] == "test-commit"
+    assert report["run_metadata"]["limitations"]

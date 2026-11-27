@@ -420,8 +420,33 @@ def main(argv=None):
             ),
         }
         result = evaluate(parts["test"], parts["train"], models)
+        from generator.evaluate_generator_report import code_revision_metadata
+
+        report = {
+            **result,
+            "run_metadata": {
+                "dataset_signature": manifest["dataset_signature"],
+                "split_signature": manifest["split_signature"],
+                "model_paths": {
+                    "multi_policy": str(args.model_path),
+                    "observation_only": str(args.baseline_path),
+                },
+                "comparison_baseline": (
+                    "per_policy_training_mean computed from training records"
+                ),
+                "model_constraints": {
+                    "multi_policy_model": {
+                        "noop_fuel_prediction": {
+                            "value": 0.0,
+                            "source": "forced_by_policy_constraint_not_learned",
+                        },
+                    },
+                },
+                **code_revision_metadata(),
+            },
+        }
         (out / "prediction_metrics.json").write_text(
-            json.dumps(result, indent=2)
+            json.dumps(report, indent=2)
         )
         print(json.dumps({key: value["overall"] for key, value in result.items()}, indent=2))
         print(f"  Saved -> {out / 'prediction_metrics.json'}")

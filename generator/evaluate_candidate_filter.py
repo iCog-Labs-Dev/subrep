@@ -167,7 +167,10 @@ def main(argv=None):
             args.ranking_config,
             expected_split_signature=manifest["split_signature"],
         )
-    from generator.evaluate_generator_report import compute_idle_baseline_stats
+    from generator.evaluate_generator_report import (
+        code_revision_metadata,
+        compute_idle_baseline_stats,
+    )
 
     baseline_stats = compute_idle_baseline_stats(
         episodes=args.baseline_episodes,
@@ -187,8 +190,41 @@ def main(argv=None):
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    code_metadata = code_revision_metadata()
+    baseline_settings = {
+        "source": "measured_idle_execution",
+        "episodes": args.baseline_episodes,
+        "seed": args.seed,
+        "gamma": rollout_settings["gamma"],
+        "max_steps": None if max_steps == -1 else max_steps,
+    }
+    run_metadata = {
+        "dataset_signature": manifest["dataset_signature"],
+        "split_signature": manifest["split_signature"],
+        "weight_source": (
+            "equal_weights"
+            if args.equal_weights
+            else "validation_tuned_fixed_weights"
+        ),
+        "top_k": args.k,
+        "motive_weights": {
+            "safety": float(motive_weights[0]),
+            "fuel": float(motive_weights[1]),
+        },
+        "baseline_settings": baseline_settings,
+        "model_constraints": {
+            "noop_fuel_prediction": {
+                "value": 0.0,
+                "source": "forced_by_policy_constraint_not_learned",
+            },
+        },
+        "model_path": str(args.model_path),
+        "split_manifest": str(args.split_manifest),
+        **code_metadata,
+    }
     report = {
       **result,
+      "run_metadata": run_metadata,
       "ranking": {
          "formula": (
             "predicted_delta_payoff "
@@ -199,8 +235,11 @@ def main(argv=None):
             "safety": float(motive_weights[0]),
             "fuel": float(motive_weights[1]),
         },
+         "top_k": args.k,
         "weight_source": (
-            "equal_weights" if args.equal_weights else "ranking_config"
+            "equal_weights"
+            if args.equal_weights
+            else "validation_tuned_fixed_weights"
         ),
         "ranking_config": (
             str(args.ranking_config)
@@ -214,8 +253,30 @@ def main(argv=None):
     json.dumps(report, indent=2))
 
 
+    max_steps_description = (
+        "unlimited"
+        if baseline_settings["max_steps"] is None
+        else str(baseline_settings["max_steps"])
+    )
     lines = [
         "# Multi-policy candidate filter — offline held-out evaluation",
+        "",
+        "## Run metadata",
+        f"- Weight source: {run_metadata['weight_source']}",
+        f"- Safety/Fuel weights: {motive_weights[0]:.3f}/{motive_weights[1]:.3f}",
+        f"- Top-K: {args.k}",
+        (
+            f"- Baseline: {args.baseline_episodes} idle episodes; "
+            f"seed={args.seed}, gamma={rollout_settings['gamma']}, "
+            f"max_steps={max_steps_description}"
+        ),
+        f"- Dataset signature: `{manifest['dataset_signature']}`",
+        f"- Split signature: `{manifest['split_signature']}`",
+        (
+            f"- Code commit: `{code_metadata['code_commit']}` "
+            f"(worktree dirty: {code_metadata['working_tree_dirty']})"
+        ),
+        "- `noop` Fuel prediction is forced to 0; it is not learned.",
         "",
         "All outcomes below were measured during complete candidate-set collection.",
         "Execution savings are **simulated**, not savings achieved while collecting the benchmark.",
@@ -239,6 +300,39 @@ def main(argv=None):
             f"| {result_row['cds_admission_rate']:.1%} "
             f"| {result_row['pds_admission_rate']:.1%} |"
         )
+
+    neural = result["neural_top_k"]
+    fixed_order = result["fixed_order_same_budget"]
+    random_baseline = result["random_same_budget"]
+    full_budget = result["all_candidates_full_budget"]
+    certifiable_total = neural["genuinely_certifiable"]
+    lines.extend([
+        "",
+        "## Interpretation and limitations",
+        (
+            f"On the held-out test contexts, neural top-K found "
+            f"{neural['certifiable_found']}/{certifiable_total} certifiable "
+            f"candidates; fixed order found "
+            f"{fixed_order['certifiable_found']}/{certifiable_total}, and "
+            f"random found {random_baseline['certifiable_found']}/{certifiable_total}."
+        ),
+    ])
+    if neural["certifiable_found"] < fixed_order["certifiable_found"]:
+        lines.append(
+            "At the same execution budget, neural ranking did not beat fixed order."
+        )
+    lines.extend([
+        (
+            f"Full-budget evaluation found "
+            f"{full_budget['certifiable_found']}/{certifiable_total} while "
+            f"executing all candidates; filtered runs execute fewer candidates "
+            f"and can therefore miss certifiable ones."
+        ),
+        (
+            "Validation tuning and held-out test certification totals use "
+            "different contexts, so their counts are not expected to match."
+        ),
+    ])
 
     (out / "results_summary.md").write_text(
         "\n".join(lines) + "\n"

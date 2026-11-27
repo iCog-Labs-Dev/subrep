@@ -173,6 +173,7 @@ def main(argv=None):
         )
 
     from generator.evaluate_generator_report import (
+        code_revision_metadata,
         compute_idle_baseline_stats,
     )
 
@@ -199,6 +200,20 @@ def main(argv=None):
         "baseline_episodes": args.baseline_episodes,
         "baseline_seed": args.seed,
         "model_path": str(args.model_path),
+        "weight_source": "validation_tuned_fixed_weights",
+        "baseline_settings": {
+            "episodes": args.baseline_episodes,
+            "seed": args.seed,
+            "gamma": rollout_provenance["gamma"],
+            "max_steps": None if max_steps == -1 else max_steps,
+        },
+        "model_constraints": {
+            "noop_fuel_prediction": {
+                "value": 0.0,
+                "source": "forced_by_policy_constraint_not_learned",
+            },
+        },
+        **code_revision_metadata(),
     })
 
     output = Path(args.output)
