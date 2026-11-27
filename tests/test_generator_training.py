@@ -140,3 +140,25 @@ def test_loss_plot_is_generated(temp_workspace):
     plot_file = os.path.join(temp_workspace, "plots", "generator_training.png")
     assert os.path.exists(plot_file), "Loss plot was not generated."
     assert os.path.getsize(plot_file) > 0, "Plot file is empty."
+
+
+def test_multi_policy_training_uses_policy_labels_and_keeps_baseline_observation_only():
+    from generator.multi_policy_pipeline import fit, predict
+    from generator.policy_registry import POLICY_NAMES
+    rows = []
+    for seed in range(12):
+        obs = np.full(8, seed / 100, dtype=np.float32)
+        for pid, name in enumerate(POLICY_NAMES):
+            rows.append(dict(context_id=f'seed:{seed}', policy=name, policy_id=pid,
+                             obs=obs.copy(), payoff=float(pid),
+                             motives=np.array([pid / 10, -pid], dtype=np.float32)))
+    train = [r for r in rows if int(r['context_id'].split(':')[1]) < 9]
+    val = [r for r in rows if int(r['context_id'].split(':')[1]) >= 9]
+    conditioned, info = fit(train, val, conditioned=True, epochs=2, seed=42)
+    baseline, _ = fit(train, val, conditioned=False, epochs=2, seed=42)
+    assert np.isfinite(info['best_validation_loss'])
+    assert predict(conditioned, val, True).shape == (len(val), 3)
+    assert predict(baseline, val, False).shape == (len(val), 3)
+    # The baseline must give identical predictions to identical observations.
+    baseline_predictions = predict(baseline, val[:len(POLICY_NAMES)], False)
+    np.testing.assert_allclose(baseline_predictions, np.repeat(baseline_predictions[:1], len(baseline_predictions), axis=0), atol=1e-6)

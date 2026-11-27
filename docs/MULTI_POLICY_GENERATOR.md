@@ -1,0 +1,132 @@
+# Multi-policy SkillGenerator: commands and outputs
+
+## Scope
+
+`PolicyConditionedSkillGenerator(obs, policy_id)` predicts rollout payoff and two motives (Safety and Fuel) for the nine existing candidate policies. The legacy `SkillGenerator(obs)` and existing single-policy/MDN workflows remain available and unchanged. Predictions are used only to select candidates; actual certification always uses measured payoff and motives and admits a candidate when either CDS or PDS passes. The corrected fuel mapping and existing certification implementations are not modified.
+
+All commands below run **from the repository root**. Each command is one line and works in Windows PowerShell. Install `requirements.txt` and provide the trained pilot checkpoint `models/pilot_ppo.pt` before collecting or running live policies. Use a fresh `data/raw_mixed` directory; do not mix records from older collections with different outcome definitions.
+
+## 1. Collect nine-policy data
+
+```bash
+python -m data_collector.collect_mixed_generator_data --episodes 1000 --save-dir data/raw_mixed --seed 42
+```
+
+Executes all nine registered policies from each of 200 shared starting contexts and saves one measured rollout per policy. **1000 contexts produce 9000 `.npz` records**, provided collection completes successfully. `--episodes` counts starting contexts, not total policy executions. `--seed` controls reproducible starting contexts; `--save-dir` controls the output folder. `--pilot-checkpoint` can override the default `models/pilot_ppo.pt`. Output: `data/raw_mixed/*.npz`. Complete context/policy coverage is required for the comparison and offline filter.
+
+## 2. Train both comparison models
+
+```bash
+python -m generator.multi_policy_pipeline train --data-dir data/raw_mixed --epochs 50
+```
+
+Creates/reuses the context-disjoint train/validation/test split and trains **two** models on the same training records: the policy-conditioned model (`obs + policy_id`) and the observation-only baseline (`obs` without policy ID). Validation loss selects the best weights; held-out test outcomes are not used for training. Training progress prints every five epochs, at the first and last epoch, and when early stopping occurs.
+
+Outputs:
+
+- `models/multi_policy_generator.pt` — conditioned model checkpoint (`--model-path`).
+- `models/observation_only_baseline.pt` — observation-only checkpoint (`--baseline-path`); this is **not** the idle-policy baseline.
+- `data/mixed_split_manifest.json` — reusable context-level train/validation/test assignment (`--split-manifest`).
+ The direct entry point is equivalent to `python -m generator.train_generator --multi-policy --data-dir data/raw_mixed --epochs 50`.
+
+## 3. Evaluate prediction accuracy
+
+```bash
+python -m generator.multi_policy_pipeline evaluate --data-dir data/raw_mixed
+```
+
+Loads both saved checkpoints and the same split manifest. Evaluates only held-out test contexts. Compares **three** methods: `multi_policy`, `observation_only`, and `per_policy_training_mean`. The last predicts the mean measured payoff/Safety/Fuel **separately for each policy**, computed from training records only. Overall and per-policy MAE and MSE are reported for payoff, Safety, and Fuel. Lower is better.
+
+Output: `reports/multi_policy/prediction_metrics.json` (set folder with `--output-dir`). The printed JSON contains overall metrics; open the saved report for the per-policy breakdown and its dataset/split identity, policy-conditioned model constraint, and code revision.
+
+## 4. Compare training dataset sizes
+
+```bash
+python -m generator.multi_policy_pipeline sizes --data-dir data/raw_mixed --sizes 100 300 500 --epochs 50
+```
+
+Trains a fresh policy-conditioned model for each requested number of **complete training contexts**, not individual rollout files. Each context contains nine policy records. The validation/test contexts remain fixed across sizes. Each size is evaluated against its own per-policy training means; this is an exploratory sample-efficiency comparison, not permission to tune using the test set. The requested sizes must not exceed the available training contexts.
+
+Output: `reports/multi_policy/dataset_size_metrics.json` (training size, record count, validation statistics, and held-out metrics). Equivalent wrapper:
+
+```bash
+python -m generator.compare_dataset_sizes --multi-policy --data-dir data/raw_mixed --sizes 100 300 500 --epochs 50
+```
+
+## 5. Generate the held-out multi-policy evaluation report
+
+```bash
+python -m generator.evaluate_generator_report --multi-policy --data-dir data/raw_mixed
+```
+
+Loads the trained checkpoints and saved split, then evaluates measured candidate outcomes on held-out contexts against an idle baseline. The report summarizes per-policy CDS and PDS certification results and records dataset/split identity, idle-baseline settings, the forced `noop` Fuel constraint, and code revision. It is saved to `reports/multi_policy/generator_evaluation_report.json` by default. Override the output path with `--output`:
+
+
+The policy-conditioned model standardises payoff, Safety, and Fuel targets using the training split's mean and standard deviation. Training loss is calculated in standardised space, while predictions are converted back to their original units before being returned. This prevents targets with larger numerical scales from dominating the loss. The observation-only baseline retains its existing training procedure. The `noop` policy's Fuel prediction is forced to zero by a structural policy constraint; it is not learned and does not change certification decisions.
+
+
+## 6. Optional experiment: tune fixed motive weights
+
+```bash
+python -m generator.tune_motive_weights --data-dir data/raw_mixed --fixed-top-k 3 --grid-step 0.1
+```
+
+This optional experiment loads only the saved validation contexts and the policy-conditioned checkpoint. It searches a predefined Safety/Fuel simplex grid and selects one fixed pair of weights that maximizes certification recall at a fixed top-3 execution budget. The weights do not vary by context and are not provided by the MDN. Ties are broken by validation precision, then weights closest to equal, then lower Safety weight. It does not tune the generator or inspect test outcomes.
+
+Output: `reports/multi_policy/motive_weights.json`. This file stores all evaluated combinations, selected weights, validation split identity, baseline settings, the forced `noop` Fuel constraint, and the code commit/worktree state. Offline and live filtering can use this configuration or explicitly select equal weights with `--equal-weights`. Run tuning only when you want to perform the experiment or update its configuration.
+
+## 6. Evaluate candidate filtering offline
+
+Choose exactly one weight source:
+
+**Validation-tuned weights**
+
+```bash
+python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 20 --ranking-config reports/multi_policy/motive_weights.json
+```
+
+**Equal Safety/Fuel weights (0.5, 0.5)**
+
+```bash
+python -m generator.evaluate_candidate_filter --data-dir data/raw_mixed --k 3 --baseline-episodes 20 --equal-weights
+```
+
+Supplying neither option or both options is an argument error; there is no silent fallback. A missing ranking-config file or a config tuned for a different split also causes an error. Offline evaluation uses complete **held-out** contexts with previously measured outcomes for all nine policies. It compares neural top-K, random top-K, fixed-order top-K (same execution budget), and all candidates (full budget). The test split is not used to choose validation-tuned weights. `--k 3` selects three of nine candidates per context.
+
+Outputs: `reports/multi_policy/filter_metrics.json` (detailed metrics and run provenance) and `reports/multi_policy/results_summary.md` (comparison table, run metadata, and interpretation against simple baselines). The reports identify the weight source, top-K, idle-baseline settings, dataset/split, code commit, and forced `noop` Fuel constraint. The reported execution savings are **counterfactual**: collecting the offline benchmark still executed all nine candidates. Certifiable means passing **either** CDS or PDS checks on measured outcomes. Missed-certifiable rate counts certifiable candidates excluded by the filter.
+
+## 7. Run the live candidate filter
+
+Choose exactly one weight source:
+
+**Validation-tuned weights**
+
+```bash
+python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 20 --ranking-config reports/multi_policy/motive_weights.json
+```
+
+**Equal Safety/Fuel weights (0.5, 0.5)**
+
+```bash
+python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 20 --equal-weights
+```
+
+Supplying neither option or both options is an argument error; there is no silent fallback. A missing ranking-config file or a config tuned for a different split also causes an error. The live filter loads `data/mixed_split_manifest.json` (override with `--split-manifest`) in either weight mode to verify the checkpoint's dataset/split identity; config mode additionally checks the ranking config's split. It then predicts the nine policies at each starting context, executes only the top three candidates, and applies existing CDS or PDS checks to each measured rollout. With the example's 20 contexts and top-K of three, this executes **60 selected candidates** instead of 180, plus 20 separate idle-baseline episodes. `--contexts` sets the number of starting contexts; `--top-k` sets candidates executed per context. The JSON report records the selected weight source, baseline settings, dataset/split, code commit, and forced `noop` Fuel constraint. The script reports measured admission outcomes; it does not store certificates in the skill library or implement library-controlled reuse.
+
+Output: `reports/multi_policy/live_filter.json` (override with `--output`). This is an opt-in experimental runtime.
+
+## Direct pipeline command reference
+
+`generator.multi_policy_pipeline` accepts exactly one positional command: `train`, `evaluate`, or `sizes`. Put the command **before** options:
+
+| Command | Required preparation | Main output |
+|---|---|---|
+| `train` | Complete `data/raw_mixed` records | Two `.pt` checkpoints and context split manifest |
+| `evaluate` | Completed `train` and saved checkpoints | `prediction_metrics.json` |
+| `sizes` | Complete records and saved split | `dataset_size_metrics.json` |
+
+## Tests
+
+```bash
+python -m pytest -q tests/test_multi_policy_generator.py tests/test_policy_registry.py tests/test_mixed_generator_data.py tests/test_candidate_filter.py tests/test_candidate_filter_evaluation.py tests/test_multi_policy_report.py
+```

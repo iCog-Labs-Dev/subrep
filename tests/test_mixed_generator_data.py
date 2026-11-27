@@ -74,6 +74,12 @@ def test_mixed_collector_creates_valid_npz_records(mixed_data_dir):
         assert "motives" in data
         assert "skill_id" in data
         assert "terminated" in data
+        assert "checkpoint_sha256" in data
+        assert "gamma" in data
+        assert "max_steps" in data
+        assert len(str(data["checkpoint_sha256"].item())) == 64
+        assert float(data["gamma"].item()) == pytest.approx(0.99)
+        assert int(data["max_steps"].item()) == -1
         
         assert data["obs"].shape == (8,)
         assert data["motives"].shape == (2,)
@@ -149,3 +155,24 @@ def test_train_generator_loads_mixed_records(mixed_data_dir):
     assert obs.shape == (8,)
     assert payoff.shape == (1,)
     assert motives.shape == (2,)
+
+
+def test_multi_policy_raw_mixed_loader_requires_fresh_context_metadata(tmp_path):
+    from generator.multi_policy_data import load_records
+    from generator.policy_registry import POLICY_NAMES
+    data_dir = tmp_path / 'raw_mixed'
+    data_dir.mkdir()
+    name = POLICY_NAMES[0]
+    path = data_dir / 'sample.npz'
+    np.savez(path, obs=np.zeros(8, dtype=np.float32), payoff=1.,
+             motives=np.array([0., -1.], dtype=np.float32), skill_id=name)
+    with pytest.raises(ValueError, match='context_seed'):
+        load_records(str(data_dir))
+    np.savez(path, obs=np.zeros(8, dtype=np.float32), payoff=1.,
+             motives=np.array([0., -1.], dtype=np.float32), skill_id=name,
+             context_seed=42, checkpoint_sha256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", gamma=0.99,
+             max_steps=-1)
+    rows = load_records(str(data_dir))
+    assert rows[0]['context_id'] == 'seed:42'
+    assert rows[0]['policy_id'] == 0
+    assert rows[0]['motives'][1] == -1.  # Preserve measured fuel sign.

@@ -22,11 +22,12 @@ class IdlePolicy:
         """Return the deterministic do-nothing action."""
         return self.idle_action
 
-    def run_baseline_episodes(self, num_episodes: int = 50, seed: int = 42) -> Dict[str, Any]:
+    def run_baseline_episodes(self, num_episodes: int = 50, seed: int = 42, max_steps: int | None = None) -> Dict[str, Any]:
         """Run baseline episodes and aggregate discounted payoff/motive statistics."""
         if num_episodes <= 0:
             raise ValueError("num_episodes must be positive")
-
+        if max_steps is not None and max_steps <= 0:
+            raise ValueError("max_steps must be positive")
         episode_payoffs: List[float] = []
         episode_motives: List[np.ndarray] = []
 
@@ -35,11 +36,15 @@ class IdlePolicy:
             discount = 1.0
             total_payoff = 0.0
             motive_deltas = None
-
+            steps = 0
             while True:
+                if max_steps is not None and steps >= max_steps:
+                    break
+
                 action = self.get_action(obs)
                 obs, reward_vec, terminated, truncated, _ = self.env.step(action)
                 reward_vec = np.asarray(reward_vec, dtype=np.float32)
+                steps += 1
 
                 if reward_vec.ndim != 1:
                     raise ValueError(f"reward vector must be 1D, got shape {reward_vec.shape}")
@@ -74,6 +79,7 @@ class IdlePolicy:
             "num_episodes": int(num_episodes),
             "seed": int(seed),
             "gamma": float(self.gamma),
+            "max_steps": max_steps,
             "idle_action": int(self.idle_action),
         }
 
