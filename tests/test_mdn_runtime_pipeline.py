@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import torch
 
 from certification.certificate_schema import Certificate
 from generator.mdn import MotiveDecompositionNetwork
@@ -274,6 +275,82 @@ def test_runtime_result_to_certificate_kwargs_rejects_unsupported_gate_type():
             episode_length=100,
             version="test",
         )
+
+
+@pytest.mark.parametrize("gate_type", ["CVAR", "cvar"])
+def test_the_cvar_gate_type_is_refused_when_the_config_is_created(gate_type):
+    """CVaR is an extra gate (use_cvar), not a gate type records can carry."""
+    with pytest.raises(ValueError, match="use_cvar"):
+        RuntimePipelineConfig(gate_type=gate_type)
+
+
+@pytest.mark.parametrize("gate_type", ["XYZ", "", " PDS "])
+def test_an_unknown_gate_type_is_refused_when_the_config_is_created(gate_type):
+    with pytest.raises(ValueError, match="gate_type must be 'CDS' or 'PDS'"):
+        RuntimePipelineConfig(gate_type=gate_type)
+
+
+def test_a_config_changed_to_cvar_is_refused_by_the_pipeline():
+    config = RuntimePipelineConfig(gate_type="PDS")
+    config.gate_type = "CVAR"
+    with pytest.raises(ValueError, match="use_cvar"):
+        RuntimeCertificationPipeline(
+            model=MotiveDecompositionNetwork(input_dim=8, num_objectives=2),
+            weight_store=WeightSetStore(num_objectives=2),
+            config=config,
+        )
+
+
+@pytest.mark.parametrize("gate_type", ["CDS", "PDS", "pds"])
+def test_gate_type_is_checked_ignoring_case(gate_type):
+    """Accepted values are stored as given, as before."""
+    assert RuntimePipelineConfig(gate_type=gate_type).gate_type == gate_type
+
+
+def test_cvar_alone_decides_through_use_cvar(monkeypatch):
+    """The supported CVaR route: the CVaR verdict decides, the record says PDS."""
+    pipeline = RuntimeCertificationPipeline(
+        model=MotiveDecompositionNetwork(input_dim=8, num_objectives=2),
+        weight_store=WeightSetStore(num_objectives=2),
+        config=RuntimePipelineConfig(
+            gate_type="PDS",
+            use_cvar=True,
+            require_cds_or_cvar=False,
+            train_support_after_certify=False,
+        ),
+    )
+    # MDN weights concentrated on the first objective: w is about (0.99, 0.01).
+    monkeypatch.setattr(
+        pipeline.model,
+        "forward_inference",
+        lambda context: (torch.tensor([100.0, 1.0]), torch.tensor([1.0, 1.0])),
+    )
+    torch.manual_seed(0)
+
+    # PDS rejects (margin -0.5 at eps 0); CVaR admits (about +0.96).
+    cvar_only = CandidateSkillRecord(
+        skill_id="cvar_only", delta_r=0.0, delta_n=(1.0, -0.5),
+        is_certified=False, gate_type="PDS", epsilon=0.0,
+    )
+    # PDS admits (margin +0.1 at eps 0.6); CVaR rejects (about -0.47).
+    pds_only = CandidateSkillRecord(
+        skill_id="pds_only", delta_r=0.0, delta_n=(-0.5, 1.0),
+        is_certified=False, gate_type="PDS", epsilon=0.6,
+    )
+    admitted, rejected = pipeline.certify_candidate_skills(
+        context=np.array([0.1] * 8, dtype=np.float32),
+        candidate_skills=[cvar_only, pds_only],
+        baseline_stats=_baseline_stats(),
+        weights_used=UNIFORM,
+    )
+
+    assert admitted.skill_id == "cvar_only"
+    assert admitted.is_certified is True
+    assert admitted.gate_type == "PDS"
+    # On this route the margin is the base gate's, so it can be negative.
+    assert admitted.admission_margin == pytest.approx(-0.5)
+    assert rejected.skill_id == "pds_only"
+    assert rejected.is_certified is False
 
 
 def test_runtime_pipeline_get_support_values():

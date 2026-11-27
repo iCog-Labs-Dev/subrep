@@ -703,12 +703,13 @@ python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilo
     --mdn models/lunar_mdn.pth --gates cvar --risk task
 ```
 
-**The pipeline's own CVaR gate type is not used.** `RuntimeCertificationPipeline`
-with `gate_type="CVAR"` cannot return an admitted record: a candidate record's
-gate type must be CDS or PDS (`utils/mdn_contracts.py`), so the first CVaR
-admission raises. `--gates cvar` uses the pipeline's `use_cvar` route with
-`require_cds_or_cvar` off instead, where the CVaR verdict alone decides; the
-record then carries the gate type PDS.
+**CVaR runs through `use_cvar`.** The runtime pipeline accepts only CDS or PDS as
+its gate type, because records and certificates carry those two only, and it
+refuses `gate_type="CVAR"` when its config is created. `--gates cvar` keeps
+`gate_type="PDS"` and sets `use_cvar=True` with `require_cds_or_cvar` off, so
+the CVaR verdict alone decides. The admitted record then carries the gate type
+PDS, and its admission margin is the PDS margin, which is negative when CVaR
+admits a skill PDS would reject.
 
 ---
 

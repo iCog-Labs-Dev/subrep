@@ -95,8 +95,32 @@ def certification_result_to_certificate_kwargs(
     }
 
 
+# The gate types a runtime result can carry: records and certificates accept
+# CDS or PDS only (utils/mdn_contracts.py, certification/certificate_schema.py).
+# CVaR is an additional gate, switched on with `use_cvar`.
+_PIPELINE_GATE_TYPES = ("CDS", "PDS")
+
+
+def _check_gate_type(gate_type: object) -> None:
+    """Refuse a gate type the pipeline cannot certify with."""
+    if not isinstance(gate_type, str) or gate_type.upper() not in _PIPELINE_GATE_TYPES:
+        raise ValueError(
+            f"gate_type must be 'CDS' or 'PDS', got {gate_type!r}. Records and "
+            "certificates carry CDS or PDS only. To certify with CVaR, keep "
+            "gate_type 'CDS' or 'PDS' and set use_cvar=True; with "
+            "require_cds_or_cvar=False the CVaR verdict alone decides."
+        )
+
+
 @dataclass
 class RuntimePipelineConfig:
+    """Runtime certification settings.
+
+    `gate_type` is the base gate, CDS or PDS. `use_cvar` adds the CVaR gate:
+    with `require_cds_or_cvar` the base gate or CVaR admits; without it, CVaR
+    alone decides. Either way the result carries the base gate type.
+    """
+
     gate_type: str = "CDS"
     cvar_confidence: float = 0.1
     cvar_samples: int = 1000
@@ -105,6 +129,9 @@ class RuntimePipelineConfig:
     require_cds_or_cvar: bool = True
     train_support_after_certify: bool = True
     store_path: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _check_gate_type(self.gate_type)
 
 
 class RuntimeCertificationPipeline:
@@ -132,6 +159,8 @@ class RuntimeCertificationPipeline:
         self.weight_store = weight_store
         self.support_trainer = support_trainer
         self.config = config or RuntimePipelineConfig()
+        # The config is mutable; check what it holds now, not only what it was built with.
+        _check_gate_type(self.config.gate_type)
         self._certified_skills: dict[tuple[tuple[float, ...], str], CertificationResult] = {}
         # The W_x region each stored result was gated against, snapshotted at
         # certification time. A budget recheck must judge the same claim over
@@ -415,7 +444,7 @@ class RuntimeCertificationPipeline:
 
     def _uses_cvar(self) -> bool:
         """Whether the CVaR tail level can affect this pipeline's verdicts."""
-        return self.config.gate_type.upper() == "CVAR" or bool(self.config.use_cvar)
+        return bool(self.config.use_cvar)
 
     def _budgets_changed(
         self,
@@ -547,17 +576,10 @@ class RuntimeCertificationPipeline:
         elif gate_type == "PDS":
             gate = PDSGate(epsilon=self.config.pds_epsilon if epsilon is None else float(epsilon))
             result = gate.admit(delta_r, delta_n, weight_set=weight_set)
-        elif gate_type == "CVAR":
-            with __import__("torch").no_grad():
-                context_tensor = __import__("torch").tensor(context, dtype=__import__("torch").float32, device=self.model.device if hasattr(self.model, "device") else "cpu")
-                alpha, _ = self.model.forward_inference(context_tensor)
-            alpha_np = alpha.detach().cpu().numpy()
-            gate = CVaRGate(confidence=effective_confidence, n_samples=self.config.cvar_samples)
-            result = gate.admit(delta_r, delta_n, mdn_alpha=alpha_np)
         else:
             raise ValueError(f"Unknown gate_type: {gate_type}")
 
-        if self.config.use_cvar and gate_type != "CVAR":
+        if self.config.use_cvar:
             with __import__("torch").no_grad():
                 context_tensor = __import__("torch").tensor(context, dtype=__import__("torch").float32, device=self.model.device if hasattr(self.model, "device") else "cpu")
                 alpha, _ = self.model.forward_inference(context_tensor)
@@ -577,8 +599,7 @@ class RuntimeCertificationPipeline:
         weight_set: Optional[WeightSet],
     ) -> dict[str, object]:
         """Return certificate audit fields for the active certification region."""
-        gate_type = self.config.gate_type.upper()
-        uses_mdn_distribution = gate_type == "CVAR" or bool(self.config.use_cvar)
+        uses_mdn_distribution = bool(self.config.use_cvar)
         uses_contextual_weight_set = weight_set is not None and not weight_set.is_empty()
 
         if not uses_mdn_distribution and not uses_contextual_weight_set:
@@ -638,19 +659,6 @@ class RuntimeCertificationPipeline:
                 delta_n,
                 weight_set=weight_set,
             )
-        if gate_type == "CVAR":
-            with __import__("torch").no_grad():
-                context_tensor = __import__("torch").tensor(
-                    context,
-                    dtype=__import__("torch").float32,
-                    device=self.model.device if hasattr(self.model, "device") else "cpu",
-                )
-                alpha, _ = self.model.forward_inference(context_tensor)
-            alpha_np = alpha.detach().cpu().numpy()
-            return CVaRGate(
-                confidence=self._effective_cvar_confidence(cvar_confidence),
-                n_samples=self.config.cvar_samples,
-            ).get_cvar(delta_r, delta_n, mdn_alpha=alpha_np)
 
         raise ValueError(f"Unknown gate_type: {gate_type}")
 

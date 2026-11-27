@@ -201,10 +201,9 @@ def build_pipeline(
     `gates`: `pds` (PDS only), `cvar` (CVaR only) or `pds-or-cvar` (admitted by
     either). Both CVaR settings use the pipeline's `use_cvar` route, with
     `require_cds_or_cvar` off for `cvar`, so the CVaR verdict alone decides. The
-    pipeline's own `gate_type="CVAR"` is not used: it cannot return an admitted
-    record, because a candidate record's gate type must be CDS or PDS
-    (utils/mdn_contracts.py). The W_x store stays empty (no
-    support training after certification), so the PDS gate decides with the
+    pipeline accepts only CDS or PDS as its gate type (records and certificates
+    carry those two), so the admitted record is labelled PDS. The W_x store
+    stays empty (no support training after certification), so the PDS gate decides with the
     full simplex, Δr + min Δn. That is what the summary's eps-sensitivity check
     recomputes. Each candidate's verdict is read from the controller's
     `last_records`.
