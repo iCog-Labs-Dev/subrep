@@ -169,8 +169,8 @@ def _simulated_omega_client(url: str, token: str) -> None:
             "abstain": decision["abstain"],
             "selection_basis": SELECTION_BASIS,
             "explanation": (
-                f"{decision['selected_skill_id']} was selected by SubRep with score "
-                f"{decision['selected_score']:.3f}."
+                f"Using synthetic evidence, {decision['selected_skill_id']} was selected "
+                f"by SubRep with score {decision['selected_score']:.3f}."
             ),
             "evidence_refs": [
                 "subrep_decision.selected_score",

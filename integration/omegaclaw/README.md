@@ -36,7 +36,8 @@ Omega has no selection authority. SubRep deterministically computes the largest
 `final_selection_score`, using lexical skill ID order for exact ties, before the
 request leaves the process. Omega must echo `subrep_decision.selected_skill_id` and
 `subrep_decision.abstain` exactly. Unknown evidence references, changed decisions,
-unsupported modes, malformed JSON, and mismatched request IDs are rejected.
+unsupported modes, malformed JSON, and mismatched request IDs are rejected, and so
+are explanations whose claims contradict the request (see [Validation](#validation)).
 
 ## Package Structure
 
@@ -45,12 +46,16 @@ unsupported modes, malformed JSON, and mismatched request IDs are rejected.
 | `contracts.py` | Versioned request, response, risk, evidence, and outcome contracts |
 | `service.py` | Calls SubRep admissibility and applies local risk/exclusion filters |
 | `adapter.py` | Builds the prompt, parses output, validates it, and records failures |
+| `validation.py` | Format checks on a response, and the factual checks on it and its advisory concerns |
+| `claims.py` | Factual checks: compares what an explanation claims with the request |
 | `websocket_gateway.py` | Private server for Omega's existing WebSocket client channel |
 | `audit.py` | Append-only JSONL storage of complete inputs and outcomes |
-| `scenarios.py` | Four predefined acceptance scenarios using synthetic evidence |
+| `scenarios.py` | Eight predefined acceptance scenarios using synthetic evidence |
 | `synthetic_backend.py` | Deterministic non-LLM backend used only for tests and review |
 | `demo.py` | Reproducible synthetic and live demo entry point |
-| `tests/` | Contract, adapter, scenario, and WebSocket flow tests |
+| `live_trials.sh` | Repeated live trials, each with a fresh Omega memory |
+| `compare_runs.py` | Compares run reports and writes the review sheet for a person |
+| `tests/` | Contract, claims, validation, adapter, scenario, demo, and WebSocket flow tests |
 
 ## Data Contract
 
@@ -85,11 +90,43 @@ Omega must return one JSON object containing:
 
 For a selection, `evidence_refs` must include `subrep_decision.selected_score` and,
 when present, `subrep_decision.runner_up_score`. For abstention, it must include
-`subrep_decision.reason_code`. Every reference must resolve to a leaf in the exact
-request snapshot. Optional advisory concerns are non-binding, restricted to the
-codes defined in `contracts.py`, and must cite evidence relevant to that specific
-concern. One invalid response may be retried; all attempts remain in the audit
-record.
+`subrep_decision.reason_code`. Every reference must resolve to a path in the exact
+request snapshot: a value, or a section that holds values, such as `objective_order`.
+List items use dotted indexes (`exclusions.0.stage`); the bracket form
+`exclusions[0].stage` is accepted and stored dotted. Optional advisory concerns are
+non-binding, restricted to the codes defined in `contracts.py`, and must cite
+evidence relevant to that specific concern. The explanation is at most 1,500
+characters (`MAX_EXPLANATION_CHARS`). One invalid response may be retried; all
+attempts remain in the audit record.
+
+## Validation
+
+Every response is checked before it is accepted, and each problem is recorded as a
+finding with a category:
+
+- **Format findings** concern the response itself: valid JSON, the exact schema, the
+  request ID, the length limit, and citations that exist in the request.
+- **Factual findings** come from comparing what the response says with the request.
+  The explanation and every advisory-concern message are checked. The checks flag:
+  - a decision echo that differs from SubRep's decision;
+  - a skill called selected or runner-up that SubRep did not select or rank second,
+    including a name that is not in the request;
+  - an excluded skill described by the wrong stage, such as an operator exclusion
+    called a certification failure;
+  - scores, weights, or objective deltas given to the wrong skill or objective, or
+    with the wrong sign ("decreased by 0.1" states a delta of -0.1);
+  - numbers that are not in the request;
+  - claims that a skill was executed, run, or deployed;
+  - synthetic evidence that is presented as real, or not disclosed.
+- An advisory concern must also cite the evidence that supports its code.
+
+A rejected response gets one correction prompt that quotes its findings. The factual
+checks match known kinds of wrong statements, one clause at a time, and ignore
+negated or hypothetical ones ("not a certification failure", "would have selected").
+A paraphrase they do not recognise passes, so a response without findings has no
+errors detected by the checks; it is not proven accurate. A person reviews live
+responses with the review sheet described under
+[Repeated Live Trials](#repeated-live-trials).
 
 ## Install
 
@@ -103,7 +140,7 @@ The integration adds `websockets` for compatibility with Omega's `WSChannel`.
 
 ## Reproducible Synthetic Demo
 
-This command runs all four predefined scenarios without an LLM and writes the
+This command runs all eight predefined scenarios without an LLM and writes the
 complete audit trail. Every input is labeled `SYNTHETIC`.
 
 ```powershell
@@ -114,12 +151,16 @@ python -m integration.omegaclaw.demo --backend synthetic `
 
 Expected decisions:
 
-| Scenario | Expected result |
-|---|---|
-| Clear preferred skill | `skill_safety` |
-| Changed task priorities | `skill_efficiency` |
-| Excluded preferred skill | `skill_safety` |
-| No admissible options | Abstain |
+| Scenario | What it tests | Expected result |
+|---|---|---|
+| `clear_preferred_skill` | Safety is dominant | `skill_safety` |
+| `changed_task_priorities` | Efficiency becomes dominant | `skill_efficiency` |
+| `excluded_skill` | The preferred skill is excluded by the operator | `skill_safety` |
+| `no_admissible_options` | The only candidate failed certification | Abstain |
+| `risk_budget_exclusion` | A PDS skill exceeds the zero-epsilon risk budget | `skill_efficiency` |
+| `runtime_inadmissible` | A skill is not runtime admissible for the current weights | `skill_efficiency` |
+| `mixed_exclusions` | One request excludes a skill at every stage | `skill_safety` |
+| `abstention_mixed_reasons` | Every option is excluded, for different reasons | Abstain |
 
 ## Live Demo With Omega
 
@@ -139,8 +180,16 @@ docker build -t omega:local .
 $env:SUBREP_OMEGA_TOKEN = "replace-with-a-dedicated-random-token"
 python -m integration.omegaclaw.demo --backend live `
   --host 0.0.0.0 --port 8765 --path /agent `
-  --audit-path data/omegaclaw/live_demo.jsonl
+  --provider ASICloud --model minimax/minimax-m3 `
+  --omega-image singularitynet/omega:latest `
+  --audit-path data/omegaclaw/live_demo.jsonl `
+  --report-path data/omegaclaw/live_demo_report.json
 ```
+
+   A live run must name the provider, model, and Omega image, so every report shows
+   what was tested; the demo refuses to start without them. Give the image digest
+   (`docker image inspect --format '{{index .RepoDigests 0}}' <image>`) for an exact
+   record.
 
 3. In Bash or WSL, start Omega with its WebSocket channel and the same token.
    The verified workspace run used ASICloud:
@@ -189,6 +238,38 @@ provider calls:
 
 ```bash
 docker rm -f omega omega-subrep-live 2>/dev/null || true
+```
+
+## Repeated Live Trials
+
+`live_trials.sh` runs every scenario against the published Omega image, starting
+each trial on a new, empty memory volume. Omega replays its saved history into every
+model call, so trials that share a memory are not independent. Run it from the
+SubRep root with Docker running:
+
+```bash
+export ASI_API_KEY='your-provider-key'
+TRIALS=5 bash integration/omegaclaw/live_trials.sh
+```
+
+An OpenAI-compatible endpoint works too:
+
+```bash
+export OPENAIAPI_API_KEY='your-provider-key'
+PROVIDER=OpenAIAPI OPENAIAPI_URL='https://your-endpoint/v1/' MODEL=minimax/minimax-m3 \
+  TRIALS=1 bash integration/omegaclaw/live_trials.sh
+```
+
+Other settings are `TIMEOUT` (seconds per request), `IMAGE`, `SCENARIOS`, `OUT`, and
+`PY`; the script header lists them all. The output folder holds one report per trial,
+the audit trail, Omega's logs with the token masked, `comparison.md`, and
+`review.csv`. To record a person's review, fill `reviewer_factually_correct` (yes or
+no) and `reviewer_notes` in `review.csv`, save it as `reviewed.csv`, and rebuild the
+comparison:
+
+```bash
+python -m integration.omegaclaw.compare_runs --report <trial report> [--report ...] \
+  --output <folder>/comparison.md --reviewed-csv <folder>/reviewed.csv
 ```
 
 ## Tests

@@ -5,10 +5,14 @@ from datetime import datetime, timezone
 import pytest
 
 from integration.omegaclaw.contracts import (
+    EXCLUSION_REASONS,
+    EXCLUSION_STAGES,
+    AdvisoryConcern,
     ObjectiveWeight,
     RecommendationRequest,
     RiskBudget,
     SkillEvidence,
+    SkillExclusion,
     SubRepDecision,
 )
 
@@ -154,3 +158,68 @@ def test_request_copies_and_freezes_nested_evidence():
         request.task_context["mission"] = {}
     with pytest.raises(TypeError):
         request.admitted_skills[0].objective_deltas["safety"] = -10.0
+
+
+def test_exclusion_rejects_an_unknown_reason_code():
+    with pytest.raises(ValueError, match="reason_code must be one of"):
+        SkillExclusion(skill_id="other", reason_code="REMOVED", reason="Unknown cause.")
+
+
+def test_request_states_the_stage_of_every_exclusion():
+    request = _request(
+        exclusions=(
+            SkillExclusion("operator_pick", "OPERATOR_EXCLUSION", "Operator instruction."),
+            SkillExclusion("failed_gate", "GATE_FAILED", "Failed CDS and PDS."),
+        )
+    )
+
+    exclusions = {item["skill_id"]: item for item in request.to_dict()["exclusions"]}
+
+    assert exclusions["operator_pick"]["stage"] == "OPERATOR"
+    assert "not a certification" in exclusions["operator_pick"]["stage_description"]
+    assert exclusions["failed_gate"]["stage"] == "CERTIFICATION"
+    assert "exclusions.0.stage" in request.valid_evidence_refs()
+
+
+def test_every_stage_except_certification_says_it_is_not_a_certification_failure():
+    for code, reason in EXCLUSION_REASONS.items():
+        assert reason.stage in EXCLUSION_STAGES
+        assert "'" not in reason.description, code
+        if reason.stage == "CERTIFICATION":
+            assert "certif" in reason.description.lower(), code
+        else:
+            assert "not a certification" in reason.description, code
+
+
+def test_evidence_label_and_whole_sections_can_be_cited():
+    # Live answers cited these; they exist in the request, so they are valid references.
+    refs = _request().valid_evidence_refs()
+
+    assert {"evidence_label", "objective_order", "admitted_skills", "subrep_decision"} <= refs
+    assert "objective_order.0" in refs
+
+
+def test_an_empty_section_can_be_cited_in_an_abstention():
+    refs = _request(admitted_skills=()).valid_evidence_refs()
+
+    assert "admitted_skills" in refs
+    assert "subrep_decision.reason_code" in refs
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["explanation_evidence.objective_order", "exclusions[0].stage", "subrep_decision.winner"],
+)
+def test_paths_that_do_not_exist_are_still_rejected(reference):
+    assert reference not in _request().valid_evidence_refs()
+
+
+def test_advisory_evidence_refs_given_as_a_string_are_rejected_as_not_an_array():
+    with pytest.raises(ValueError, match="evidence_refs must be an array"):
+        AdvisoryConcern("SMALL_SCORE_GAP", "The gap is small.", "subrep_decision.score_gap")
+
+
+def test_bracket_indexes_in_advisory_evidence_refs_are_stored_dotted():
+    concern = AdvisoryConcern("SMALL_SCORE_GAP", "The gap is small.", ["exclusions[0].stage", "a[10].b[2]"])
+
+    assert concern.evidence_refs == ("exclusions.0.stage", "a.10.b.2")

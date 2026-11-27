@@ -4,13 +4,17 @@ import json
 from datetime import datetime, timezone
 
 from integration.omegaclaw.adapter import (
+    EXCLUSION_STAGE_RULES,
     OmegaRecommendationAdapter,
     build_correction_prompt,
     build_recommendation_prompt,
 )
 from integration.omegaclaw.audit import JsonlAuditStore
 from integration.omegaclaw.contracts import (
+    AUDIT_SCHEMA_VERSION,
+    EXCLUSION_STAGES,
     INTEGRATION_MODE,
+    MAX_EXPLANATION_CHARS,
     RESPONSE_SCHEMA_VERSION,
     SELECTION_BASIS,
     ObjectiveWeight,
@@ -124,6 +128,32 @@ def _request_with_excluded_skill() -> RecommendationRequest:
     )
 
 
+def _synthetic_request() -> RecommendationRequest:
+    request = _request()
+    skill = request.admitted_skills[0]
+    return RecommendationRequest(
+        request_id=request.request_id,
+        created_at=request.created_at,
+        task_context=request.task_context,
+        objective_weights=request.objective_weights,
+        risk_budget=request.risk_budget,
+        admitted_skills=(
+            SkillEvidence(
+                skill_id=skill.skill_id,
+                score=skill.score,
+                delta_r=skill.delta_r,
+                objective_deltas=skill.objective_deltas,
+                gate_type=skill.gate_type,
+                admission_margin=skill.admission_margin,
+                epsilon=skill.epsilon,
+                weight_region_type=skill.weight_region_type,
+                evidence_label="SYNTHETIC",
+            ),
+        ),
+        evidence_label="SYNTHETIC",
+    )
+
+
 def _response(**changes) -> str:
     payload = {
         "schema_version": RESPONSE_SCHEMA_VERSION,
@@ -152,7 +182,7 @@ def test_accepts_admitted_skill_and_saves_audit(tmp_path):
     assert outcome.status == "accepted"
     assert outcome.selected_skill_id == "safe_skill"
     saved = json.loads(audit_path.read_text(encoding="utf-8"))
-    assert saved["schema_version"] == "subrep.omegaclaw.explanation.audit.v2"
+    assert saved["schema_version"] == AUDIT_SCHEMA_VERSION
     assert saved["request"]["subrep_decision"]["selected_skill_id"] == "safe_skill"
     assert saved["request"]["admitted_skills"]["safe_skill"]["final_selection_score"] == 1.5
     assert saved["outcome"]["status"] == "accepted"
@@ -500,6 +530,8 @@ def test_prompt_contains_all_required_decision_inputs(tmp_path):
             assert "LOW_CERTIFICATE_MARGIN" in prompt
             assert "never return bare code strings" in prompt
             assert "mention selected_skill_id verbatim" in prompt
+            assert "starts with the word send, then a space" in prompt
+            assert "each double quote in this message as _quote_" in prompt
             assert "If that field is null, there is no admitted runner-up" in prompt
             assert "must be described only as excluded, never as runners-up" in prompt
             return _response(request_id=request_id)
@@ -510,6 +542,52 @@ def test_prompt_contains_all_required_decision_inputs(tmp_path):
     )
 
     assert adapter.recommend(_request()).status == "accepted"
+
+
+def _instructions(prompt: str) -> str:
+    return prompt.split("Required response shape: ", 1)[0]
+
+
+def test_every_exclusion_stage_has_a_prompt_rule():
+    assert set(EXCLUSION_STAGE_RULES) == EXCLUSION_STAGES
+
+
+def test_prompt_explains_only_the_exclusion_stages_in_the_request():
+    instructions = _instructions(build_recommendation_prompt(_request_with_excluded_skill()))
+
+    assert "OPERATOR: an operator instruction removed the skill" in instructions
+    assert "Do not say it failed certification" in instructions
+    assert "RISK_BUDGET:" not in instructions
+    assert "CERTIFICATION: the skill failed" not in instructions
+
+
+def test_prompt_says_when_a_request_has_no_exclusions():
+    assert "This request has no exclusions" in build_recommendation_prompt(_request())
+
+
+def test_prompt_requires_disclosure_only_for_synthetic_evidence():
+    observed = _instructions(build_recommendation_prompt(_request()))
+    synthetic = _instructions(build_recommendation_prompt(_synthetic_request()))
+
+    assert "evidence_label is OBSERVED" in observed
+    assert "say in the explanation that the evidence is synthetic" not in observed
+    assert "say in the explanation that the evidence is synthetic" in synthetic
+
+
+def test_prompt_states_how_weights_deltas_and_objective_order_are_described():
+    # Live answers swapped weights, gave one skill's deltas to both skills, and read
+    # objective_order as a priority.
+    instructions = _instructions(build_recommendation_prompt(_request()))
+
+    assert "Give each weight only to its own objective" in instructions
+    assert "each objective delta only to its own skill and objective, with its sign" in instructions
+    assert "priority comes from objective_weights alone" in instructions
+
+
+def test_prompt_instructions_avoid_text_that_omega_rewrites():
+    # Omega replaces apostrophes before its model reads the prompt.
+    for request in (_request(), _request_with_excluded_skill(), _synthetic_request()):
+        assert "'" not in _instructions(build_recommendation_prompt(request))
 
 
 def test_correction_prompt_includes_bounded_validation_hint():
@@ -738,3 +816,36 @@ def test_rejects_selection_when_admitted_set_is_empty(tmp_path):
 
     assert outcome.status == "invalid_response"
     assert "authoritative SubRep decision" in outcome.error
+
+
+def _response_of_length(length: int) -> str:
+    base = "safe_skill was selected by SubRep with a score of 1.5. "
+    return _response(explanation=base + "x" * (length - len(base)))
+
+
+def test_explanation_at_the_length_limit_is_accepted(tmp_path):
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(response=_response_of_length(MAX_EXPLANATION_CHARS)),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+
+    assert adapter.recommend(_request()).status == "accepted"
+
+
+def test_explanation_over_the_length_limit_is_rejected(tmp_path):
+    adapter = OmegaRecommendationAdapter(
+        StaticBackend(response=_response_of_length(MAX_EXPLANATION_CHARS + 1)),
+        JsonlAuditStore(tmp_path / "audit.jsonl"),
+        invalid_response_retries=0,
+    )
+
+    outcome = adapter.recommend(_request())
+
+    assert outcome.status == "invalid_response"
+    assert f"at most {MAX_EXPLANATION_CHARS} characters" in outcome.error
+
+
+def test_prompt_states_the_same_length_limit_as_the_check():
+    assert MAX_EXPLANATION_CHARS == 1500
+    assert f"under {MAX_EXPLANATION_CHARS} characters" in build_recommendation_prompt(_request())

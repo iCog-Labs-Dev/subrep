@@ -11,14 +11,17 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 
-REQUEST_SCHEMA_VERSION = "subrep.omegaclaw.explanation.request.v2"
+REQUEST_SCHEMA_VERSION = "subrep.omegaclaw.explanation.request.v3"
 RESPONSE_SCHEMA_VERSION = "subrep.omegaclaw.explanation.response.v1"
-AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.explanation.audit.v2"
+AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.explanation.audit.v3"
 SELECTION_RULE = "MAX_FINAL_SELECTION_SCORE"
 TIE_BREAKER = "LEXICOGRAPHIC_SKILL_ID"
 INTEGRATION_MODE = "EXPLANATION_ONLY"
 SELECTION_BASIS = "SUBREP_DECISION"
 NO_ADMISSIBLE_SKILLS = "NO_ADMISSIBLE_SKILLS"
+# Room to describe a decision with all five exclusion stages: correct live answers
+# for that case ran from 921 to 1214 characters.
+MAX_EXPLANATION_CHARS = 1500
 VALID_ADVISORY_CONCERN_CODES = {
     "SMALL_SCORE_GAP",
     "NEGATIVE_OBJECTIVE_TRADEOFF",
@@ -35,6 +38,75 @@ VALID_OUTCOME_STATUSES = {
     "invalid_response",
     "backend_error",
 }
+
+CERTIFICATION_STAGE = "CERTIFICATION"
+RUNTIME_ADMISSIBILITY_STAGE = "RUNTIME_ADMISSIBILITY"
+RISK_BUDGET_STAGE = "RISK_BUDGET"
+OPERATOR_STAGE = "OPERATOR"
+OBJECTIVE_COMPATIBILITY_STAGE = "OBJECTIVE_COMPATIBILITY"
+
+
+@dataclass(frozen=True)
+class ExclusionReason:
+    """The SubRep stage that removes a skill for one reason code, and what it means."""
+
+    stage: str
+    description: str
+
+
+# Descriptions avoid apostrophes because Omega rewrites them before its model sees the text.
+EXCLUSION_REASONS: Mapping[str, ExclusionReason] = MappingProxyType(
+    {
+        "GATE_FAILED": ExclusionReason(
+            CERTIFICATION_STAGE,
+            "Failed the SubRep CDS/PDS certification gates, so it holds no certificate.",
+        ),
+        "LIBRARY_REVERIFICATION_FAILED": ExclusionReason(
+            CERTIFICATION_STAGE,
+            "Failed SubRep re-verification of its certificate at the skill library, "
+            "so it holds no valid certificate.",
+        ),
+        "NOT_RUNTIME_ADMISSIBLE": ExclusionReason(
+            RUNTIME_ADMISSIBILITY_STAGE,
+            "Holds a SubRep certificate, but the runtime admissibility check did not "
+            "admit it for the current objective weights. This is not a certification failure.",
+        ),
+        "RISK_BUDGET_EXCEEDED": ExclusionReason(
+            RISK_BUDGET_STAGE,
+            "Holds a SubRep certificate and is runtime admissible, but its certificate "
+            "epsilon exceeds the local risk budget of this request. This is not a "
+            "certification failure.",
+        ),
+        "INSUFFICIENT_ADMISSION_MARGIN": ExclusionReason(
+            RISK_BUDGET_STAGE,
+            "Holds a SubRep certificate and is runtime admissible, but its admission "
+            "margin is below the local minimum of this request. This is not a "
+            "certification failure.",
+        ),
+        "OPERATOR_EXCLUSION": ExclusionReason(
+            OPERATOR_STAGE,
+            "Removed by an explicit operator instruction for this request. This is not a "
+            "certification, runtime admissibility, or risk budget result.",
+        ),
+        "OBJECTIVE_DIMENSION_MISMATCH": ExclusionReason(
+            OBJECTIVE_COMPATIBILITY_STAGE,
+            "Holds a SubRep certificate for a different number of objectives than this "
+            "request, so its evidence cannot be scored here. This is not a certification "
+            "failure.",
+        ),
+    }
+)
+EXCLUSION_STAGES = frozenset(reason.stage for reason in EXCLUSION_REASONS.values())
+
+
+def canonical_evidence_ref(reference: str) -> str:
+    """Write an evidence path in dotted form: "exclusions[0].stage" is "exclusions.0.stage".
+
+    Models often index lists with brackets. Both forms name the same field, so the
+    bracket form is accepted and stored dotted; a path that does not exist is still rejected.
+    """
+
+    return re.sub(r"\[(\d+)\]", r".\1", reference)
 
 
 def _non_empty(value: str, field_name: str) -> str:
@@ -180,12 +252,32 @@ class SkillExclusion:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "skill_id", _non_empty(self.skill_id, "skill_id"))
-        object.__setattr__(self, "reason_code", _non_empty(self.reason_code, "reason_code").upper())
+        reason_code = _non_empty(self.reason_code, "reason_code").upper()
+        if reason_code not in EXCLUSION_REASONS:
+            raise ValueError(
+                f"reason_code must be one of {sorted(EXCLUSION_REASONS)}, got {reason_code!r}"
+            )
+        object.__setattr__(self, "reason_code", reason_code)
         object.__setattr__(self, "reason", _non_empty(self.reason, "reason"))
         label = _non_empty(self.evidence_label, "evidence_label").upper()
         if label not in VALID_EVIDENCE_LABELS:
             raise ValueError(f"evidence_label must be one of {VALID_EVIDENCE_LABELS}")
         object.__setattr__(self, "evidence_label", label)
+
+    @property
+    def stage(self) -> str:
+        return EXCLUSION_REASONS[self.reason_code].stage
+
+    @property
+    def stage_description(self) -> str:
+        return EXCLUSION_REASONS[self.reason_code].description
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **asdict(self),
+            "stage": self.stage,
+            "stage_description": self.stage_description,
+        }
 
 
 @dataclass(frozen=True)
@@ -419,7 +511,7 @@ class RecommendationRequest:
                 for skill in self.admitted_skills
             },
             "risk_budget": asdict(self.risk_budget),
-            "exclusions": [asdict(item) for item in self.exclusions],
+            "exclusions": [item.to_dict() for item in self.exclusions],
             "explanation_evidence": {
                 "objective_weights": {
                     item.objective_id: item.weight for item in self.objective_weights
@@ -448,20 +540,23 @@ class RecommendationRequest:
         }
 
     def valid_evidence_refs(self) -> set[str]:
-        """Return every leaf path OmegaClaw may cite in its explanation."""
+        """Return every path OmegaClaw may cite: each value and each section holding them.
+
+        Sections count too, so an explanation can cite a whole list such as
+        objective_order, or an empty one such as admitted_skills in an abstention.
+        """
 
         payload = self.to_dict()
         references: set[str] = set()
 
         def visit(value: Any, prefix: str) -> None:
+            references.add(prefix)
             if isinstance(value, Mapping):
                 for key, child in value.items():
-                    visit(child, f"{prefix}.{key}" if prefix else str(key))
+                    visit(child, f"{prefix}.{key}")
             elif isinstance(value, (list, tuple)):
                 for index, child in enumerate(value):
                     visit(child, f"{prefix}.{index}")
-            else:
-                references.add(prefix)
 
         for root in (
             "subrep_decision",
@@ -472,6 +567,7 @@ class RecommendationRequest:
             "exclusions",
             "explanation_evidence",
             "audit_only_certificate_evidence",
+            "evidence_label",
         ):
             visit(payload[root], root)
         return references
@@ -493,7 +589,13 @@ class AdvisoryConcern:
             )
         object.__setattr__(self, "code", code)
         object.__setattr__(self, "message", _non_empty(self.message, "advisory concern message"))
-        refs = tuple(_non_empty(item, "advisory evidence reference") for item in self.evidence_refs)
+        # A string would be read one character at a time, giving a misleading error.
+        if not isinstance(self.evidence_refs, (list, tuple)):
+            raise ValueError("advisory concern evidence_refs must be an array")
+        refs = tuple(
+            canonical_evidence_ref(_non_empty(item, "advisory evidence reference"))
+            for item in self.evidence_refs
+        )
         if not refs:
             raise ValueError("advisory concerns require at least one evidence reference")
         if len(refs) != len(set(refs)):
@@ -569,8 +671,8 @@ class OmegaRecommendationResponse:
         if self.mode != INTEGRATION_MODE:
             raise ValueError(f"mode must be {INTEGRATION_MODE!r}")
         explanation = _non_empty(self.explanation, "explanation")
-        if len(explanation) > 1000:
-            raise ValueError("explanation must be at most 1000 characters")
+        if len(explanation) > MAX_EXPLANATION_CHARS:
+            raise ValueError(f"explanation must be at most {MAX_EXPLANATION_CHARS} characters")
         object.__setattr__(self, "explanation", explanation)
 
         if self.abstain:
@@ -583,7 +685,10 @@ class OmegaRecommendationResponse:
                 _non_empty(self.selected_skill_id, "selected_skill_id"),
             )
 
-        refs = tuple(_non_empty(item, "evidence_refs item") for item in self.evidence_refs)
+        refs = tuple(
+            canonical_evidence_ref(_non_empty(item, "evidence_refs item"))
+            for item in self.evidence_refs
+        )
         if not refs:
             raise ValueError("evidence_refs must not be empty")
         if len(refs) != len(set(refs)):
@@ -598,138 +703,31 @@ class OmegaRecommendationResponse:
         return asdict(self)
 
 
-def validate_response_for_request(
-    request: RecommendationRequest,
-    response: OmegaRecommendationResponse,
-) -> None:
-    """Validate identity, eligibility, abstention, and evidence references."""
-
-    if response.request_id != request.request_id:
-        raise ValueError("response request_id does not match the request")
-
-    decision = request.subrep_decision
-    if response.selected_skill_id != decision.selected_skill_id:
-        raise ValueError("selected_skill_id does not echo the authoritative SubRep decision")
-    if response.abstain != decision.abstain:
-        raise ValueError("response abstain does not echo the authoritative SubRep decision")
-
-    valid_refs = request.valid_evidence_refs()
-    unknown_refs = set(response.evidence_refs).difference(valid_refs)
-    if unknown_refs:
-        raise ValueError(f"response contains unknown evidence_refs: {sorted(unknown_refs)}")
-
-    required_ref = (
-        "subrep_decision.reason_code"
-        if decision.abstain
-        else "subrep_decision.selected_score"
-    )
-    if required_ref not in response.evidence_refs:
-        raise ValueError(f"response must cite {required_ref!r}")
-    if decision.runner_up_skill_id is not None and not decision.abstain:
-        if "subrep_decision.runner_up_score" not in response.evidence_refs:
-            raise ValueError("response must cite 'subrep_decision.runner_up_score'")
-
-    explanation_lower = response.explanation.lower()
-    if decision.abstain:
-        if not any(term in explanation_lower for term in ("abstain", "no admissible", "no recommendation")):
-            raise ValueError("abstention explanation must describe the lack of a recommendation")
-    elif decision.selected_skill_id.lower() not in explanation_lower:
-        raise ValueError("explanation must mention the selected skill ID")
-
-    for exclusion in request.exclusions:
-        excluded_id = re.escape(exclusion.skill_id.lower())
-        runner_term = r"(?:runner[- ]up|second[- ]best)"
-        labels_excluded_as_runner = re.search(
-            rf"(?:\b{excluded_id}\b\s+(?:was|is|remains|ranked as|served as)\s+"
-            rf"(?:the\s+)?{runner_term}|{runner_term}\s+(?:was|is)\s+"
-            rf"\b{excluded_id}\b|\b{excluded_id}\b\s*,\s*(?:the\s+)?{runner_term})",
-            explanation_lower,
-        )
-        if labels_excluded_as_runner:
-            raise ValueError(
-                f"explanation must not describe excluded skill {exclusion.skill_id!r} "
-                "as an admitted runner-up"
-            )
-
-    for concern in response.advisory_concerns:
-        unknown_concern_refs = set(concern.evidence_refs).difference(valid_refs)
-        if unknown_concern_refs:
-            raise ValueError(
-                f"advisory concern contains unknown evidence_refs: {sorted(unknown_concern_refs)}"
-            )
-        _validate_advisory_concern(request, concern)
+FORMAT_FINDING = "format"
+FACTUAL_FINDING = "factual"
+VALID_FINDING_CATEGORIES = {FORMAT_FINDING, FACTUAL_FINDING}
 
 
-def _validate_advisory_concern(
-    request: RecommendationRequest,
-    concern: AdvisoryConcern,
-) -> None:
-    """Require each advisory code to cite evidence that is relevant to its claim."""
+@dataclass(frozen=True)
+class Finding:
+    """One reason an Omega response fails the contract or misstates the evidence.
 
-    decision = request.subrep_decision
-    if decision.abstain:
-        raise ValueError("advisory concerns are not allowed for an abstaining decision")
+    ``format`` findings concern the response shape and citations; ``factual``
+    findings concern whether what the response says matches the request.
+    """
 
-    selected = next(
-        skill for skill in request.admitted_skills if skill.skill_id == decision.selected_skill_id
-    )
-    refs = set(concern.evidence_refs)
-    decision_prefix = "subrep_decision"
-    explanation_prefix = f"explanation_evidence.skills.{selected.skill_id}"
-    certificate_prefix = f"audit_only_certificate_evidence.skills.{selected.skill_id}"
+    code: str
+    category: str
+    message: str
 
-    if concern.code == "SMALL_SCORE_GAP":
-        if decision.runner_up_skill_id is None or f"{decision_prefix}.score_gap" not in refs:
-            raise ValueError("SMALL_SCORE_GAP must cite subrep_decision.score_gap")
-        return
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "code", _non_empty(self.code, "finding code").upper())
+        if self.category not in VALID_FINDING_CATEGORIES:
+            raise ValueError(f"finding category must be one of {VALID_FINDING_CATEGORIES}")
+        object.__setattr__(self, "message", _non_empty(self.message, "finding message"))
 
-    if concern.code == "NEGATIVE_OBJECTIVE_TRADEOFF":
-        negative_refs = {
-            f"{explanation_prefix}.objective_deltas.{objective_id}"
-            for objective_id, delta in selected.objective_deltas.items()
-            if delta < 0.0
-        }
-        if not refs.intersection(negative_refs):
-            raise ValueError(
-                "NEGATIVE_OBJECTIVE_TRADEOFF must cite a negative selected-skill objective delta"
-            )
-        return
-
-    if concern.code == "PDS_EPSILON_USED":
-        required = {
-            f"{certificate_prefix}.gate_type",
-            f"{certificate_prefix}.epsilon",
-        }
-        if selected.gate_type != "PDS" or selected.epsilon <= 0.0 or not required.issubset(refs):
-            raise ValueError(
-                "PDS_EPSILON_USED requires a positive PDS epsilon and its gate_type and epsilon refs"
-            )
-        return
-
-    if concern.code == "LOW_CERTIFICATE_MARGIN":
-        required_ref = f"{certificate_prefix}.certificate_admission_margin"
-        if required_ref not in refs:
-            raise ValueError(
-                "LOW_CERTIFICATE_MARGIN must cite the selected skill's certificate margin"
-            )
-        return
-
-    if concern.code == "HIGH_PRIORITY_OBJECTIVE_DECLINE":
-        weights = {item.objective_id: item.weight for item in request.objective_weights}
-        maximum_weight = max(weights.values())
-        supported = any(
-            delta < 0.0
-            and weights[objective_id] == maximum_weight
-            and {
-                f"explanation_evidence.objective_weights.{objective_id}",
-                f"{explanation_prefix}.objective_deltas.{objective_id}",
-            }.issubset(refs)
-            for objective_id, delta in selected.objective_deltas.items()
-        )
-        if not supported:
-            raise ValueError(
-                "HIGH_PRIORITY_OBJECTIVE_DECLINE must cite the weight and negative delta of a highest-weight objective"
-            )
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
