@@ -134,6 +134,7 @@ def test_evaluation_does_not_create_missing_manifest(
         evaluator.main([
             "--split-manifest", str(manifest_path),
             "--output-dir", str(tmp_path / "reports"),
+            "--equal-weights",
         ])
 
     assert not manifest_path.exists()
@@ -155,6 +156,7 @@ def test_evaluation_rejects_changed_dataset(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="Dataset signature"):
         evaluator.main([
             "--split-manifest", str(tmp_path / "manifest.json"),
+            "--equal-weights",
         ])
 
 
@@ -187,6 +189,7 @@ def test_evaluation_rejects_checkpoint_with_wrong_split(
         evaluator.main([
             "--split-manifest", str(tmp_path / "manifest.json"),
             "--model-path", str(tmp_path / "model.pt"),
+            "--equal-weights",
         ])
 
     print("Actual exception:", repr(str(exc_info.value)))

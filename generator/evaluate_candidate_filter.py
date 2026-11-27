@@ -335,7 +335,8 @@ def main(argv=None):
     ])
 
     (out / "results_summary.md").write_text(
-        "\n".join(lines) + "\n"
+        "\n".join(lines) + "\n",
+        encoding="utf-8",
     )
     print("\n".join(lines))
 
