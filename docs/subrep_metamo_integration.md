@@ -251,8 +251,10 @@ should be revisited against real episode outcomes.
 - **Evidence and execution share a seed.** Each decision step certifies the
   candidates and flies the chosen one from the same start. This shows the loop
   is wired correctly, not that a certificate holds on unseen starts.
-- **CVaR is off.** The MDN is untrained, and an untrained MDN makes the CVaR
-  gate admit nearly everything, so the loop certifies with PDS only.
+- **CVaR is off by default.** The loop certifies with PDS unless `--gates`
+  says otherwise. With the trained MDN, CVaR admits every fuel-wasting landing
+  and nearly every timeout, and MetaMo's weights are often outside the MDN's
+  region (see "Trained MDN and CVaR").
 
 ### Payoff and Safety
 
@@ -343,7 +345,11 @@ python demo/run_lunar_lander_metamo.py --steps 10 --candidates ci      # no PPO 
 | `--risk motive\|task` | the risk fed back to MetaMo. `task`: the flown episode's own danger (crash 1.0, landing 0.1, otherwise 0.5), and a `risk` column. `motive`: the worst objective change against the baseline. Default `motive` |
 | `--epsilon-scale off\|on` | `on`: PDS tolerates ε·U with U = 300.9, and candidates that crash are rejected first; adds the `tol` and `fail` columns. Default `off` |
 | `--no-selection noop\|stop` | when nothing is admitted: fly the noop baseline, or fly nothing. Both feed MetaMo a zero-Δ outcome with `admitted=False` |
-| `--cvar`, `--cvar-samples` | also apply the CVaR gate (OR semantics); a `pds` column then shows the PDS-only count |
+| `--governor metamo\|fixed` | `metamo`: MetaMo sets the weights, ε and α every step. `fixed`: they stay constant, by default at MetaMo's starting signal (Safety 0.632, ε 0.1, α 0.1). The fixed governor has no modulators and does not appraise outcomes, so the modulator columns read `n/a` and, with `--risk task`, the recorded feedback is null. Default `metamo` |
+| `--weights S,F`, `--epsilon E`, `--alpha A` | `--governor fixed` only: the constant weights (on the simplex), ε and α |
+| `--gates pds\|cvar\|pds-or-cvar` | which gates decide admission: PDS only, CVaR only, or admitted by either. Default `pds` |
+| `--cvar`, `--cvar-samples` | `--cvar` is the same as `--gates pds-or-cvar`; `--cvar-samples` is the number of Dirichlet draws per CVaR evaluation |
+| `--mdn PATH` | a trained MDN checkpoint, for example `models/lunar_mdn.pth`; default: an untrained, seeded network. With `--mdn` or a CVaR gate, every step also reports PDS and CVaR apart (`pds`, `cvar` columns; per candidate `pds_admitted`, `cvar_admitted`, `cvar_value`), the MDN at the context, and whether MetaMo's weights lie inside the MDN's support region (`in`) |
 | `--verbose` | print every candidate's Δr, Δn, PDS margin and verdict |
 | `--json-out PATH` | save the configuration, every step and the summary as JSON |
 
@@ -538,6 +544,172 @@ earlier behaviour.
 python demo/run_lunar_lander_metamo.py --steps 16 --candidates ppo --risk task
 python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --risk task --verbose
 ```
+
+### How far priorities have to move
+
+In PDS full-simplex mode, the weights never change an admission: the gate reads
+Δr + min Δn, with no w in it. They change only which admitted skill is picked,
+the highest Δr + w·Δn. With w = (s, 1 − s), each admitted skill's score is a
+line in the Safety weight s, so the pick can change only where two lines
+cross. The **switch point** s* is where the top-scoring admitted skill changes.
+`experiments/priorities/` computes every switch point exactly, and checks it
+against a 10,001-point grid.
+
+**Switch points** (seeds 1–40, admission held at ε 0.1 with the ε scale, so the
+admitted set is the same at every s):
+
+| Candidates | Seeds with a switch in (0, 1) | Switch points | s* in 0–0.3 | 0.3–0.6 | 0.6–0.9 | 0.9–1 |
+|---|---|---|---|---|---|---|
+| `ppo` | 12/40 | 12 | 4 | 4 | 2 | 2 |
+| `tradeoff` | 31/40 | 41 | 6 | 7 | 11 | 17 |
+
+- On `ppo`, every switch is between `ppo_deterministic` and `ppo_stochastic`.
+- On `tradeoff`, most switches hand the pick to a fuel-wasting candidate as the
+  Safety weight rises: those candidates land with more Safety shaping and burn
+  more fuel. 17 of the 41 lie above 0.9.
+
+**The weights MetaMo can reach and visits.** Reachable: the Safety weight
+`lunar_lander_weights` gives over every Securing, Threshold and Approach in
+[0, 1], the only modulators the mapping reads. Visited: the demo's live runs,
+seeds 1–16. "Crossed" counts the steps where a switch point lies between the
+starting Safety weight 0.632 and that step's, with admission held at ε 0.1;
+"pick differs" counts the steps where, on the step's own admitted set, the pick
+under MetaMo's weights differs from the pick under the starting weights.
+
+| Run, seeds 1–16 | Visited | Reachable at the run's final goals | Crossed | Pick differs |
+|---|---|---|---|---|
+| `ppo`, motive risk | 0.600–0.722 | 0.209–0.876 | 0/16 | 0/16 |
+| `ppo`, `--risk task` | 0.255–0.632 | 0.205–0.873 | 2/16 | 2/16 |
+| `tradeoff --epsilon-scale on`, motive risk | 0.630–0.747 | 0.209–0.876 | 1/16 | 1/16 |
+| `tradeoff --epsilon-scale on`, `--risk task` | 0.261–0.632 | 0.205–0.873 | 2/16 | 2/16 |
+| `ci`, `--risk task` | 0.632–0.914 | 0.292–0.917 | — | 0/16 |
+
+At the initial goals the reachable range is 0.250–0.899.
+
+- **The mapping can reach every switch point below 0.9,** 24 of the 41 on
+  `tradeoff`.
+- **MetaMo's live movement changes the pick on 0 to 2 of 16 steps.** Under the
+  task risk, caution relaxes after landings and the Safety weight falls toward
+  0.26; on seeds 9 and 11 that crosses the `ppo_deterministic` /
+  `ppo_stochastic` switch (0.401 and 0.415). Most trade-off switches lie above
+  the starting weight, where MetaMo goes only with rising caution: on seed 7,
+  the motive risk takes the Safety weight to 0.724, past the switch at 0.694,
+  and the pick becomes `ppo_waste_main_12`.
+  On `ci`, where caution rises furthest, every candidate crashes, so nothing is
+  admitted to choose between.
+- The two counts agree on every run, and the reported live pick equals the
+  demo's selection on every step.
+- The weight mapping is unchanged.
+
+**The controlled case** (seed 1, `tradeoff` candidates, ε 0.1 with the scale):
+the same 8 skills are admitted at every Safety weight, with switch points at
+0.725, 0.790 and 0.993. At Safety 0.692 the pick is `ppo_deterministic`
+(Δn = (+326.0, −91.0)); at 0.757 it is `ppo_waste_main_12` (Δn = (+338.5,
+−124.0)), which trades 33 units of fuel for 12.5 of Safety. Both are admitted.
+`tests/test_lunar_lander_integration.py::test_safety_and_fuel_priorities_select_different_admitted_skills`
+finds such a case at runtime and asserts it.
+
+**The fixed-priority mode** holds the signal constant, by default at MetaMo's
+starting point, so a run with `--governor fixed` is the same loop with MetaMo
+frozen:
+
+```bash
+python experiments/epsilon_scale/collect.py
+python experiments/priorities/switch_weights.py
+python experiments/priorities/reachable_weights.py
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --governor fixed
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on --governor fixed --weights 0.8,0.2
+```
+
+### Trained MDN and CVaR
+
+`--mdn models/lunar_mdn.pth` runs the loop with the trained LunarLander MDN, and
+`--gates` chooses what decides admission: `pds`, `cvar`, or `pds-or-cvar`
+(`--cvar` is the same as `pds-or-cvar`). With an MDN or a CVaR gate, every step
+also reports PDS and CVaR on their own, OR and AND formed from them, the MDN at
+the start observation, and whether MetaMo's weights lie inside the MDN's
+support region. Only `--gates` decides; the report is computed beside it, and
+the summary counts any candidate where the two differ (0 in every run below).
+The relation between MetaMo's weights and the MDN's region is defined in "MetaMo
+weights and the MDN region" in `bridge/README.md`.
+
+**The trained MDN** (`demo/train_lunar_mdn.py`) was fitted to a fixed schedule,
+Safety 0.8 near the ground or tilted and 0.7 otherwise, not to MetaMo. At the
+start observation of seed 1 it gives concentration (37.1, 14.0), mean (0.726,
+0.274) and support (0.774, 0.325): a narrow region, Safety between 0.675 and
+0.774. The untrained network gives support (0.761, 0.696) and concentrations
+below 1.
+
+**Admission per configuration** (`experiments/mdn_cvar/compare_gates.py`; the
+`tradeoff` candidates on seeds 1–40, 560 records: 75 landings, 132
+fuel-wasting landings, 97 timeouts and 256 crashes; the task-failure guard
+first, so no configuration admits a crash):
+
+| MDN | ε, α | PDS | CVaR | PDS or CVaR | PDS and CVaR | Overturned by CVaR under OR |
+|---|---|---|---|---|---|---|
+| untrained | 0.1, 0.1 | 191 | 186 | 191 | 186 | none |
+| untrained | 0.37, 0.43 | 203 | 201 | 203 | 201 | none |
+| trained | 0.0, 0.05 | 180 | 297 | 297 | 180 | 90 timeouts, 26 fuel-wasting landings, 1 landing |
+| trained | 0.1, 0.1 | 191 | 299 | 299 | 191 | 92 timeouts, 15 fuel-wasting landings, 1 landing |
+| trained | 0.3, 0.3 | 202 | 301 | 301 | 202 | 94 timeouts, 4 fuel-wasting landings, 1 landing |
+| trained | 0.37, 0.43 | 203 | 302 | 302 | 203 | 94 timeouts, 4 fuel-wasting landings, 1 landing |
+
+- **With the trained MDN, CVaR alone admits every fuel-wasting landing, and
+  90–95 of the 97 timeouts, at every α.** Its Dirichlet puts about 0.73 on
+  Safety, where a timeout's Safety gain (+210 median) outweighs its fuel loss
+  (−290 median); PDS judges the timeout by the fuel loss alone (median margin
+  −190) and rejects it at every ε up to 0.3. The lowest CVaR of a fuel-wasting
+  landing is +162 at α 0.05, so CVaR does not tell the fuel-wasting landings
+  apart at any α tested.
+- **Under OR, the trained MDN's CVaR overrules PDS** on 99–117 records,
+  almost all of them timeouts. The landing it overturns is `ppo_stochastic` on
+  seed 8 (PDS margin −188).
+- **The untrained MDN does not admit nearly everything here.** With the guard
+  rejecting crashes first, its CVaR admits slightly fewer than PDS, and OR
+  equals PDS (one exception at ε 0, α 0.05).
+- **α moves CVaR in the intended direction.** On the same samples, CVaR rises
+  with α for every record checked: seed 1's `ppo_deterministic` landing goes
+  from +358 (α 0.05) to +392 (α 0.5) with the trained MDN, and the lowest
+  fuel-wasting landing from +162 to +212.
+
+**The live loop** (seeds 1–16, `tradeoff --epsilon-scale on --mdn
+models/lunar_mdn.pth`):
+
+| Risk | `--gates` | Admitted | Selections | MetaMo's weights inside the MDN's region | α range |
+|---|---|---|---|---|---|
+| motive | `pds` | 76/224 | `ppo_deterministic` 8, `ppo_stochastic` 6, `ppo_waste_main_12` 1, `ppo_waste_side_15` 1 | 9/16 | 0.050–0.100 |
+| motive | `cvar` | 123/224 | the same, step for step | 9/16 | 0.050–0.100 |
+| motive | `pds-or-cvar` | 123/224 | the same, step for step | 9/16 | 0.050–0.100 |
+| task | `pds` | 80/224 | `ppo_deterministic` 9, `ppo_stochastic` 6, `ppo_waste_side_15` 1 | **0/16** | 0.100–0.417 |
+| task | `cvar` | 123/224 | the same, step for step | **0/16** | 0.100–0.417 |
+| task | `pds-or-cvar` | 123/224 | the same, step for step | **0/16** | 0.100–0.417 |
+
+- **CVaR admits 43–47 more candidates per run, and none of them is ever
+  picked:** every run selects the same skill on every step and lands 16/16.
+  The extra admissions are mostly timeouts (40 per run), which score below
+  the PPO pilot under MetaMo's weights.
+- **MetaMo's weights are outside the MDN's region on 7 of 16 steps with the
+  motive risk, and on every step with the task risk.** On seed 1 even
+  MetaMo's starting weights (0.632, 0.368) are outside, because the MDN caps
+  Fuel at 0.325 there (0.25–0.37 across seeds 1–16). Once the task risk relaxes
+  caution, the Safety weight falls toward 0.26, far below the region.
+- **On those outside steps, if PDS decided instead,** the admitted set would
+  change on 6 of the 7 steps (motive risk) and 15 of the 16 (task risk), and
+  the selection on none.
+
+```bash
+python experiments/mdn_cvar/compare_gates.py
+python demo/run_lunar_lander_metamo.py --steps 16 --candidates tradeoff --epsilon-scale on \
+    --mdn models/lunar_mdn.pth --gates cvar --risk task
+```
+
+**CVaR runs through `use_cvar`.** The runtime pipeline accepts only CDS or PDS as
+its gate type, because records and certificates carry those two only, and it
+refuses `gate_type="CVAR"` when its config is created. `--gates cvar` keeps
+`gate_type="PDS"` and sets `use_cvar=True` with `require_cds_or_cvar` off, so
+the CVaR verdict alone decides. The admitted record then carries the gate type
+PDS, and its admission margin is the PDS margin, which is negative when CVaR
+admits a skill PDS would reject.
 
 ---
 
@@ -891,12 +1063,16 @@ gains is not addressed here.
 
 ## 12. Known limitations
 
-1. **OR gate semantics.** The demo runs `use_cvar=True` with
-   `require_cds_or_cvar=True`, which returns `result or cvar_result` — there is
-   no AND mode. With an **untrained** MDN the Dirichlet concentration is
-   arbitrary and the CVaR gate admits nearly everything, overruling PDS
-   rejections. The demo prints a PDS-only column alongside for this reason, and
-   every e2e assertion about ε or abstention runs with `use_cvar=False`.
+1. **OR gate semantics.** `use_cvar=True` with `require_cds_or_cvar=True`
+   returns `result or cvar_result`; the pipeline has no AND mode. With an
+   **untrained** MDN the Dirichlet concentration is arbitrary, and the CVaR
+   gate can admit nearly everything, overruling PDS rejections; every e2e
+   assertion about ε or abstention runs with `use_cvar=False`. On LunarLander, with the task-failure guard rejecting
+   crashes first, the untrained MDN's CVaR admits slightly fewer than PDS, and
+   it is the **trained** MDN whose CVaR overrules PDS: under OR it admits 90–95
+   of 97 timeouts that PDS rejects (seeds 1–40). The demo reports PDS, CVaR,
+   OR and AND apart whenever an MDN is given or CVaR is in use ("Trained MDN
+   and CVaR").
 2. **`w_meta` coefficients are semantically motivated, not fitted** (§5).
 3. **Affinity row sums act as an implicit prior.** Row totals differ (Reputation
    1.50 vs DeadlineSlack 0.90), so an objective's baseline weight depends partly

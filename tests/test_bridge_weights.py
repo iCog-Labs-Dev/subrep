@@ -181,3 +181,28 @@ def test_out_of_range_modulators_are_clamped_not_rejected():
     at_bound[M_SECURING] = 1.0
     assert np.allclose(w_meta(balanced_goals(), wild),
                        w_meta(balanced_goals(), at_bound))
+
+
+# --------------------------------------------------------------------------
+# The MDN's support region
+# --------------------------------------------------------------------------
+
+
+def test_weights_outside_the_mdn_region_are_flagged():
+    from bridge.weights import inside_support_region
+
+    support = (0.85, 0.25)
+    assert inside_support_region((0.8, 0.2), support)
+    assert not inside_support_region((0.5, 0.5), support)
+    assert inside_support_region((0.85, 0.15), support)  # on the edge counts as inside
+
+
+def test_the_region_check_is_dimension_generic_and_validated():
+    from bridge.weights import inside_support_region
+
+    assert inside_support_region(np.full(6, 1.0 / 6.0), np.full(6, 0.2))
+    assert not inside_support_region(np.array([0.5, 0.3, 0.2]), np.array([0.4, 0.4, 0.4]))
+    with pytest.raises(ValueError):
+        inside_support_region((0.5, 0.5), (1.0, 1.0, 1.0))
+    with pytest.raises(ValueError):
+        inside_support_region((np.nan, 1.0), (1.0, 1.0))

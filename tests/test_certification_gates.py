@@ -296,3 +296,19 @@ def test_cvar_gate_uses_dirichlet_distribution():
 
     assert result_0 is True
     assert result_1 is False
+
+
+def test_cvar_tightens_as_the_tail_level_falls():
+    """A smaller tail level averages a deeper tail, so the CVaR cannot rise as it falls."""
+    import torch
+
+    delta_r = 200.0
+    delta_n = np.array([326.0, -137.0], dtype=np.float32)
+    alpha = np.array([37.1, 14.0], dtype=np.float32)
+
+    def cvar(level: float) -> float:
+        torch.manual_seed(0)
+        return CVaRGate(confidence=level, n_samples=1000).get_cvar(delta_r, delta_n, alpha)
+
+    assert cvar(0.05) <= cvar(0.43) <= cvar(0.5)
+    assert cvar(0.05) < cvar(0.5)

@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -368,3 +369,166 @@ def test_the_ppo_candidates_run_and_every_selection_was_admitted(tmp_path):
         if step["selected"] is not None:
             assert step["selected"] in admitted
             assert step["flown_skill_id"] == step["selected"]
+
+
+# ---------------------------------------------------------------------------
+# The fixed-priority mode
+# ---------------------------------------------------------------------------
+
+
+def test_fixed_priorities_mode_runs(tmp_path, noop_run):
+    """By default the fixed governor holds MetaMo's starting signal on every step."""
+    path = tmp_path / "fixed.json"
+    code, output, _ = run_demo(
+        ["--steps", "2", "--seed", str(SEED), "--candidates", "ci",
+         "--governor", "fixed", "--json-out", str(path)]
+    )
+    assert code == 0
+    data = json.loads(path.read_text(encoding="utf-8"))
+    constant = data["config"]["governor"]
+    assert constant["kind"] == "fixed"
+
+    _, metamo, _ = noop_run
+    start = metamo["steps"][0]["signal"]
+    assert constant["weights"] == start["weights"]
+    assert constant["epsilon"] == start["epsilon"]
+    assert constant["alpha"] == start["alpha"]
+    for step in data["steps"]:
+        assert step["signal"] == {
+            "weights": constant["weights"],
+            "epsilon": constant["epsilon"],
+            "alpha": constant["alpha"],
+        }
+        assert step["modulators"] is None
+    assert data["summary"]["securing_range"] is None
+    assert data["summary"]["securing_saturated_at_step"] is None
+    assert "governor: fixed" in output
+
+
+def test_fixed_priorities_mode_runs_with_the_task_risk(tmp_path):
+    """The path that reads the governor's stimulus and modulators, which the fixed governor lacks."""
+    from env.lunar_lander_metamo import LUNAR_LANDER_EPSILON_UNIT
+
+    path = tmp_path / "fixed_task.json"
+    code, _, flown = run_demo(
+        ["--steps", "2", "--seed", str(SEED), "--candidates", "ci",
+         "--governor", "fixed", "--weights", "0.3,0.7", "--epsilon", "0.2", "--alpha", "0.25",
+         "--risk", "task", "--epsilon-scale", "on", "--json-out", str(path)]
+    )
+    assert code == 0
+    assert flown == 2  # the outcomes are still flown and reach the governor
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["config"]["risk"] == "task"
+    for step in data["steps"]:
+        assert step["signal"] == {"weights": [0.3, 0.7], "epsilon": 0.2, "alpha": 0.25}
+        assert step["pds_tolerance"] == pytest.approx(0.2 * LUNAR_LANDER_EPSILON_UNIT)
+        assert step["modulators"] is None
+        assert step["feedback"] is None
+    assert data["summary"]["final_modulators"] is None
+
+
+@pytest.mark.parametrize("weights", ["0.7,0.4", "1.0", "-0.1,1.1"])
+def test_fixed_priorities_reject_weights_off_the_simplex(weights):
+    with pytest.raises(SystemExit) as raised:
+        lunar_demo.main(["--governor", "fixed", "--weights", weights,
+                         "--candidates", "ci", "--steps", "1"])
+    assert raised.value.code == 2
+
+
+@pytest.mark.parametrize("option", [["--weights", "0.7,0.3"], ["--epsilon", "0.2"], ["--alpha", "0.2"]])
+def test_fixed_options_need_the_fixed_governor(option):
+    with pytest.raises(SystemExit) as raised:
+        lunar_demo.main([*option, "--candidates", "ci", "--steps", "1"])
+    assert raised.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# The trained MDN, and PDS and CVaR reported apart
+# ---------------------------------------------------------------------------
+
+TRAINED_MDN = str(Path(lunar_demo.__file__).resolve().parent.parent / "models" / "lunar_mdn.pth")
+CVAR_ARGS = ["--steps", "2", "--seed", str(SEED), "--candidates", "ci"]
+
+
+def run_json(tmp_path, name: str, extra: List[str]) -> Dict[str, Any]:
+    path = tmp_path / f"{name}.json"
+    code, _, _ = run_demo([*CVAR_ARGS, *extra, "--json-out", str(path)])
+    assert code == 0
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_gate_configurations_are_reported_separately(tmp_path):
+    data = run_json(tmp_path, "cvar", ["--gates", "cvar", "--mdn", TRAINED_MDN])
+    assert data["config"]["gates"] == "CVaR"
+    assert data["config"]["mdn"]["checkpoint"] == TRAINED_MDN
+    assert data["config"]["mdn"]["metrics"]  # the checkpoint's stored metrics
+    for step in data["steps"]:
+        mdn = step["mdn"]
+        assert set(mdn) == {"mean", "concentration", "concentration_sum", "support"}
+        assert sum(mdn["mean"]) == pytest.approx(1.0)
+        assert mdn["concentration_sum"] == pytest.approx(sum(mdn["concentration"]))
+        assert isinstance(step["w_t_inside_mdn_region"], bool)
+        assert set(step["gate_counts"]) == {"pds", "cvar", "pds_or_cvar", "pds_and_cvar"}
+        for c in step["candidates"]:
+            assert isinstance(c["pds_admitted"], bool)
+            assert isinstance(c["cvar_admitted"], bool)
+            assert c["cvar_admitted"] == (c["cvar_value"] >= 0.0)
+        assert step["verdict_disagreements"] == 0
+    assert data["summary"]["inside_mdn_region_steps"] == sum(
+        s["w_t_inside_mdn_region"] for s in data["steps"]
+    )
+
+
+def test_a_cvar_run_is_reproducible(tmp_path):
+    extra = ["--gates", "cvar", "--mdn", TRAINED_MDN]
+    assert run_json(tmp_path, "first", extra) == run_json(tmp_path, "second", extra)
+
+
+def test_the_cvar_flag_is_an_alias_for_pds_or_cvar(tmp_path):
+    alias = run_json(tmp_path, "alias", ["--cvar"])
+    spelled_out = run_json(tmp_path, "spelled_out", ["--gates", "pds-or-cvar"])
+    assert alias == spelled_out
+    assert alias["config"]["gates"] == "PDS + CVaR (OR)"
+    assert alias["config"]["mdn"]["checkpoint"] == "untrained"
+
+
+def test_without_mdn_or_cvar_the_json_has_no_mdn_fields(noop_run):
+    _, data, _ = noop_run
+    assert "mdn" not in data["config"]
+    assert not {"gate_admitted_totals", "inside_mdn_region_steps", "verdict_disagreements"} & set(
+        data["summary"]
+    )
+    for step in data["steps"]:
+        assert not {"mdn", "w_t_inside_mdn_region", "gate_counts", "verdict_disagreements"} & set(step)
+        for c in step["candidates"]:
+            assert not {"pds_admitted", "cvar_admitted", "cvar_value"} & set(c)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [["--cvar", "--gates", "cvar"], ["--cvar", "--gates", "pds"], ["--mdn", "models/no_such_mdn.pth"]],
+)
+def test_conflicting_gate_options_are_a_usage_error(extra):
+    with pytest.raises(SystemExit) as raised:
+        lunar_demo.main([*extra, "--candidates", "ci", "--steps", "1"])
+    assert raised.value.code == 2
+
+
+def test_an_unreadable_mdn_checkpoint_is_a_usage_error(tmp_path, capsys):
+    text_file = tmp_path / "not_a_checkpoint.md"
+    text_file.write_text("# not a checkpoint\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as raised:
+        lunar_demo.main(["--mdn", str(text_file), "--candidates", "ci", "--steps", "1"])
+    assert raised.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"--mdn: cannot load {text_file}" in captured.err
+
+
+def test_too_few_cvar_samples_is_a_usage_error(capsys):
+    with pytest.raises(SystemExit) as raised:
+        lunar_demo.main(["--gates", "cvar", "--cvar-samples", "5", "--candidates", "ci", "--steps", "1"])
+    assert raised.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--cvar-samples must be >= 10 when CVaR is used" in captured.err
