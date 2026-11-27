@@ -12,16 +12,27 @@ from typing import Any, Mapping
 
 
 REQUEST_SCHEMA_VERSION = "subrep.omegaclaw.explanation.request.v3"
-RESPONSE_SCHEMA_VERSION = "subrep.omegaclaw.explanation.response.v1"
-AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.explanation.audit.v3"
+# v2: Omega returns structured claims instead of a free-text explanation, and SubRep
+# writes the explanation from the claims it has verified.
+RESPONSE_SCHEMA_VERSION = "subrep.omegaclaw.explanation.response.v2"
+AUDIT_SCHEMA_VERSION = "subrep.omegaclaw.explanation.audit.v4"
 SELECTION_RULE = "MAX_FINAL_SELECTION_SCORE"
 TIE_BREAKER = "LEXICOGRAPHIC_SKILL_ID"
 INTEGRATION_MODE = "EXPLANATION_ONLY"
 SELECTION_BASIS = "SUBREP_DECISION"
 NO_ADMISSIBLE_SKILLS = "NO_ADMISSIBLE_SKILLS"
-# Room to describe a decision with all five exclusion stages: correct live answers
-# for that case ran from 921 to 1214 characters.
-MAX_EXPLANATION_CHARS = 1500
+# A response lists only the facts that explain one decision; this bounds the work.
+MAX_CLAIMS = 40
+# A claimed number matches the request when it is equal up to float rounding. The
+# tolerance is relative, so a small value such as an epsilon of 5e-7 cannot pass as 0.
+# The prompt shows numbers to 12 significant digits, well inside this tolerance.
+CLAIM_RELATIVE_TOLERANCE = 1e-9
+CLAIM_ABSOLUTE_TOLERANCE = 1e-12
+# Advisory thresholds. Defaults to confirm with the product owner: a score gap is
+# small at no more than 10% of the selected score, and a certificate margin is low at
+# no more than 10% above the request's minimum admission margin.
+SMALL_SCORE_GAP_FRACTION = 0.10
+LOW_CERTIFICATE_MARGIN_FRACTION = 0.10
 VALID_ADVISORY_CONCERN_CODES = {
     "SMALL_SCORE_GAP",
     "NEGATIVE_OBJECTIVE_TRADEOFF",
@@ -97,6 +108,40 @@ EXCLUSION_REASONS: Mapping[str, ExclusionReason] = MappingProxyType(
     }
 )
 EXCLUSION_STAGES = frozenset(reason.stage for reason in EXCLUSION_REASONS.values())
+
+# The facts a claim can state, each identified by the shape of its evidence path.
+CLAIM_PATHS: Mapping[str, re.Pattern[str]] = MappingProxyType(
+    {
+        "score": re.compile(
+            r"admitted_skills\.[^.]+\.final_selection_score"
+            r"|subrep_decision\.(?:selected|runner_up)_score"
+        ),
+        "score_gap": re.compile(r"subrep_decision\.score_gap"),
+        "objective_weight": re.compile(r"explanation_evidence\.objective_weights\.[^.]+"),
+        "objective_delta": re.compile(
+            r"explanation_evidence\.skills\.[^.]+\.objective_deltas\.[^.]+"
+        ),
+        "delta_r": re.compile(r"explanation_evidence\.skills\.[^.]+\.delta_r"),
+        "certificate": re.compile(
+            r"audit_only_certificate_evidence\.skills\.[^.]+\."
+            r"(?:gate_type|epsilon|certificate_admission_margin|weight_region_type)"
+        ),
+        "risk_budget": re.compile(
+            r"risk_budget\.(?:max_certificate_epsilon|minimum_admission_margin)"
+        ),
+        "exclusion_stage": re.compile(r"exclusions\.\d+\.stage"),
+    }
+)
+CLAIM_TYPES = frozenset(CLAIM_PATHS)
+
+
+def claim_type_of(reference: str) -> str | None:
+    """The claim type whose facts live at this evidence path, or None if no claim can cite it."""
+
+    for claim_type, pattern in CLAIM_PATHS.items():
+        if pattern.fullmatch(reference):
+            return claim_type
+    return None
 
 
 def canonical_evidence_ref(reference: str) -> str:
@@ -558,37 +603,118 @@ class RecommendationRequest:
                 for index, child in enumerate(value):
                     visit(child, f"{prefix}.{index}")
 
-        for root in (
-            "subrep_decision",
-            "task_context",
-            "objective_order",
-            "risk_budget",
-            "admitted_skills",
-            "exclusions",
-            "explanation_evidence",
-            "audit_only_certificate_evidence",
-            "evidence_label",
-        ):
+        for root in EVIDENCE_ROOTS:
             visit(payload[root], root)
         return references
+
+    def evidence_value(self, reference: str) -> Any:
+        """The value at an evidence path, such as "exclusions.0.stage"; KeyError if absent."""
+
+        if reference.split(".", 1)[0] not in EVIDENCE_ROOTS:
+            raise KeyError(reference)
+        value: Any = self.to_dict()
+        for part in reference.split("."):
+            if isinstance(value, Mapping) and part in value:
+                value = value[part]
+            elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+                value = value[int(part)]
+            else:
+                raise KeyError(reference)
+        return value
+
+    def claimable_facts(self) -> dict[str, tuple[str, Any]]:
+        """Every path a claim may cite, with its claim type and value, in request order."""
+
+        facts = {}
+        for reference in sorted(self.valid_evidence_refs()):
+            claim_type = claim_type_of(reference)
+            if claim_type is not None:
+                facts[reference] = (claim_type, self.evidence_value(reference))
+        return facts
+
+
+# The request sections a response may cite.
+EVIDENCE_ROOTS = (
+    "subrep_decision",
+    "task_context",
+    "objective_order",
+    "risk_budget",
+    "admitted_skills",
+    "exclusions",
+    "explanation_evidence",
+    "audit_only_certificate_evidence",
+    "evidence_label",
+)
+
+
+def _exact_fields(payload: Any, fields: set[str], name: str) -> Mapping[str, Any]:
+    """Require an object with exactly these fields, naming what is missing or extra."""
+
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"{name} items must be objects")
+    missing = fields.difference(payload)
+    unexpected = set(payload).difference(fields)
+    if missing or unexpected:
+        raise ValueError(
+            f"{name} items must have exactly the fields {sorted(fields)}"
+            + (f"; missing {sorted(missing)}" if missing else "")
+            + (f"; unexpected {sorted(unexpected)}" if unexpected else "")
+        )
+    return payload
+
+
+@dataclass(frozen=True)
+class Claim:
+    """One fact Omega states about the request, with the evidence path of that fact.
+
+    SubRep checks the value at the path and writes the explanation from verified claims,
+    so a claim carries no prose of its own.
+    """
+
+    type: str
+    evidence_ref: str
+    value: Any
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "Claim":
+        item = _exact_fields(payload, {"type", "evidence_ref", "value"}, "claims")
+        return cls(item["type"], item["evidence_ref"], item["value"])
+
+    def __post_init__(self) -> None:
+        claim_type = _non_empty(self.type, "claim type").lower()
+        if claim_type not in CLAIM_TYPES:
+            raise ValueError(f"claim type must be one of {sorted(CLAIM_TYPES)}, got {claim_type!r}")
+        object.__setattr__(self, "type", claim_type)
+        reference = _non_empty(self.evidence_ref, "claim evidence_ref")
+        object.__setattr__(self, "evidence_ref", canonical_evidence_ref(reference))
+        if isinstance(self.value, (Mapping, list, tuple)):
+            raise ValueError("claim value must be one value: a number, text, true, false, or null")
+        if isinstance(self.value, float) and not isfinite(self.value):
+            raise ValueError("claim value must be finite")
 
 
 @dataclass(frozen=True)
 class AdvisoryConcern:
-    """A non-binding, evidence-grounded concern about the SubRep decision."""
+    """A non-binding concern about the decision, given as a code and the evidence it rests on.
+
+    SubRep checks that the evidence supports the code and writes the sentence itself.
+    """
 
     code: str
-    message: str
     evidence_refs: tuple[str, ...]
+
+    @classmethod
+    def from_dict(cls, payload: Any) -> "AdvisoryConcern":
+        item = _exact_fields(payload, {"code", "evidence_refs"}, "advisory_concerns")
+        return cls(item["code"], item["evidence_refs"])
 
     def __post_init__(self) -> None:
         code = _non_empty(self.code, "advisory concern code").upper()
         if code not in VALID_ADVISORY_CONCERN_CODES:
             raise ValueError(
-                f"advisory concern code must be one of {VALID_ADVISORY_CONCERN_CODES}"
+                f"advisory concern code must be one of {sorted(VALID_ADVISORY_CONCERN_CODES)}"
             )
         object.__setattr__(self, "code", code)
-        object.__setattr__(self, "message", _non_empty(self.message, "advisory concern message"))
         # A string would be read one character at a time, giving a misleading error.
         if not isinstance(self.evidence_refs, (list, tuple)):
             raise ValueError("advisory concern evidence_refs must be an array")
@@ -605,14 +731,13 @@ class AdvisoryConcern:
 
 @dataclass(frozen=True)
 class OmegaRecommendationResponse:
-    """Structured explanation response expected from OmegaClaw."""
+    """Structured response expected from OmegaClaw: the decision echo and claims, no prose."""
 
     request_id: str
     selected_skill_id: str | None
     abstain: bool
-    explanation: str
     selection_basis: str
-    evidence_refs: tuple[str, ...]
+    claims: tuple[Claim, ...]
     advisory_concerns: tuple[AdvisoryConcern, ...] = ()
     mode: str = INTEGRATION_MODE
     schema_version: str = RESPONSE_SCHEMA_VERSION
@@ -625,8 +750,7 @@ class OmegaRecommendationResponse:
             "selected_skill_id",
             "abstain",
             "selection_basis",
-            "explanation",
-            "evidence_refs",
+            "claims",
             "advisory_concerns",
             "mode",
         }
@@ -636,27 +760,23 @@ class OmegaRecommendationResponse:
         unexpected = set(payload).difference(required)
         if unexpected:
             raise ValueError(f"response contains unexpected fields: {sorted(unexpected)}")
-        refs = payload["evidence_refs"]
-        if not isinstance(refs, (list, tuple)):
-            raise ValueError("evidence_refs must be an array")
-        concerns_payload = payload["advisory_concerns"]
-        if not isinstance(concerns_payload, (list, tuple)):
-            raise ValueError("advisory_concerns must be an array")
-        if not all(isinstance(item, (Mapping, AdvisoryConcern)) for item in concerns_payload):
-            raise ValueError("advisory_concerns items must be objects")
-        concerns = tuple(
-            item if isinstance(item, AdvisoryConcern) else AdvisoryConcern(**item)
-            for item in concerns_payload
-        )
+        for name in ("claims", "advisory_concerns"):
+            if not isinstance(payload[name], (list, tuple)):
+                raise ValueError(f"{name} must be an array")
         return cls(
             schema_version=payload["schema_version"],
             request_id=payload["request_id"],
             selected_skill_id=payload["selected_skill_id"],
             abstain=payload["abstain"],
             selection_basis=payload["selection_basis"],
-            explanation=payload["explanation"],
-            evidence_refs=tuple(refs),
-            advisory_concerns=concerns,
+            claims=tuple(
+                item if isinstance(item, Claim) else Claim.from_dict(item)
+                for item in payload["claims"]
+            ),
+            advisory_concerns=tuple(
+                item if isinstance(item, AdvisoryConcern) else AdvisoryConcern.from_dict(item)
+                for item in payload["advisory_concerns"]
+            ),
             mode=payload["mode"],
         )
 
@@ -670,11 +790,6 @@ class OmegaRecommendationResponse:
             raise ValueError(f"selection_basis must be {SELECTION_BASIS!r}")
         if self.mode != INTEGRATION_MODE:
             raise ValueError(f"mode must be {INTEGRATION_MODE!r}")
-        explanation = _non_empty(self.explanation, "explanation")
-        if len(explanation) > MAX_EXPLANATION_CHARS:
-            raise ValueError(f"explanation must be at most {MAX_EXPLANATION_CHARS} characters")
-        object.__setattr__(self, "explanation", explanation)
-
         if self.abstain:
             if self.selected_skill_id is not None:
                 raise ValueError("selected_skill_id must be null when abstain is true")
@@ -684,16 +799,12 @@ class OmegaRecommendationResponse:
                 "selected_skill_id",
                 _non_empty(self.selected_skill_id, "selected_skill_id"),
             )
-
-        refs = tuple(
-            canonical_evidence_ref(_non_empty(item, "evidence_refs item"))
-            for item in self.evidence_refs
-        )
-        if not refs:
-            raise ValueError("evidence_refs must not be empty")
-        if len(refs) != len(set(refs)):
-            raise ValueError("evidence_refs must not contain duplicates")
-        object.__setattr__(self, "evidence_refs", refs)
+        claims = tuple(self.claims)
+        if not all(isinstance(item, Claim) for item in claims):
+            raise ValueError("claims must contain Claim values")
+        if len(claims) > MAX_CLAIMS:
+            raise ValueError(f"claims must contain at most {MAX_CLAIMS} items")
+        object.__setattr__(self, "claims", claims)
         concerns = tuple(self.advisory_concerns)
         if not all(isinstance(item, AdvisoryConcern) for item in concerns):
             raise ValueError("advisory_concerns must contain AdvisoryConcern values")
@@ -732,7 +843,11 @@ class Finding:
 
 @dataclass(frozen=True)
 class RecommendationOutcome:
-    """Validated adapter outcome; it never represents skill execution."""
+    """Adapter outcome; it never represents skill execution.
+
+    SubRep's decision is always present, whatever happened to the explanation: ``status``
+    says only whether an explanation was accepted, and ``explanation`` is None otherwise.
+    """
 
     request_id: str
     status: str
@@ -742,6 +857,8 @@ class RecommendationOutcome:
     raw_response: str | None = field(default=None, repr=False)
     response: Mapping[str, Any] | None = None
     attempts: tuple[Mapping[str, Any], ...] = ()
+    abstain: bool | None = None
+    subrep_decision: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_id", _non_empty(self.request_id, "request_id"))
@@ -750,6 +867,10 @@ class RecommendationOutcome:
         attempts = tuple(dict(item) for item in self.attempts)
         _json_safe(attempts, "attempts")
         object.__setattr__(self, "attempts", attempts)
+        if self.subrep_decision is not None:
+            decision = dict(self.subrep_decision)
+            _json_safe(decision, "subrep_decision")
+            object.__setattr__(self, "subrep_decision", decision)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

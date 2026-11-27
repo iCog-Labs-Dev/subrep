@@ -1,4 +1,4 @@
-"""Compare OmegaClaw demo runs: response format and factual checks, reported apart."""
+"""Compare OmegaClaw demo runs: response format and claim verification, reported apart."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ REVIEW_COLUMNS = (
     "request_id",
     "attempt",
     "status",
-    "explanation_checked",
+    "claims_checked",
     "format_findings",
     "factual_findings",
     "explanation",
@@ -28,7 +28,7 @@ REVIEW_COLUMNS = (
 )
 CORRECT_VERDICTS = frozenset({"yes", "y", "true", "correct"})
 INCORRECT_VERDICTS = frozenset({"no", "n", "false", "incorrect"})
-NO_ERRORS_DETECTED = "No errors detected by the checks"
+ALL_CLAIMS_VERIFIED = "All claims verified"
 EXPLANATION_CHARS = 500
 
 
@@ -166,10 +166,10 @@ def _attempt_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "request_id": outcome["request_id"],
                         "attempt": attempt["attempt"],
                         "status": attempt["status"],
-                        "explanation_checked": bool(attempt.get("explanation_checked")),
+                        "claims_checked": bool(attempt.get("claims_checked")),
                         "format_findings": _joined(findings, FORMAT_FINDING),
                         "factual_findings": _joined(findings, FACTUAL_FINDING),
-                        "explanation": _explanation(attempt.get("raw_response")),
+                        "explanation": _explanation(attempt),
                     }
                 )
     return rows
@@ -198,10 +198,11 @@ def _render_markdown(
             "## Interpretation",
             "",
             f"- `{FORMAT_FINDING}` findings concern the response shape and citations;",
-            f"  `{FACTUAL_FINDING}` findings concern what the explanation states.",
-            f"- \"{NO_ERRORS_DETECTED}\" means no pattern check found an error. The checks",
-            "  cannot prove that an explanation is accurate; the review by a person can",
-            "  find errors they miss.",
+            f"  `{FACTUAL_FINDING}` findings are claims or decision echoes that differ from",
+            "  the request value at their evidence path.",
+            "- Omega writes no explanation text. SubRep writes each explanation from its own",
+            "  decision, runner-up, and exclusions plus the claims it verified, so the",
+            "  explanation shown for a valid attempt contains only verified facts.",
             "- An invalid or backend-error outcome never replaces SubRep's decision.",
             "- The synthetic baseline does not call a live model and is not a provider",
             "  latency comparison target.",
@@ -260,24 +261,22 @@ def _format_section(runs: list[dict[str, Any]]) -> list[str]:
 
 def _factual_section(runs: list[dict[str, Any]]) -> list[str]:
     lines = [
-        "## Factual checks (automated)",
+        "## Claim verification",
         "",
-        "Pattern checks of what the explanation states: decision, roles, exclusion",
-        "stages, scores and their signs, decision fields pasted into the text, skills",
-        "outside the request, execution claims, and synthetic disclosure. Only attempts",
-        f"with an explanation to check are counted. \"{NO_ERRORS_DETECTED}\" is not",
-        "proof of accuracy.",
+        "Each claim is compared with the request value at its evidence path, and the",
+        "decision echo with SubRep's decision. Only attempts with claims to check are",
+        "counted.",
         "",
-        f"| Run | Checked attempts | {NO_ERRORS_DETECTED} (first attempt) | "
-        f"{NO_ERRORS_DETECTED} (all attempts) | Factual findings |",
+        f"| Run | Checked attempts | {ALL_CLAIMS_VERIFIED} (first attempt) | "
+        f"{ALL_CLAIMS_VERIFIED} (all attempts) | Factual findings |",
         "|---|---:|---:|---:|---|",
     ]
     for run in runs:
         factual = run["summary"].get("factual") or {}
         lines.append(
             f"| {run['run_label']} | {factual.get('checked_attempt_count', 'N/A')} | "
-            f"{_percent(factual.get('first_attempt_no_errors_detected_rate'))} | "
-            f"{_percent(factual.get('no_errors_detected_rate'))} | "
+            f"{_percent(factual.get('first_attempt_all_claims_verified_rate'))} | "
+            f"{_percent(factual.get('all_claims_verified_rate'))} | "
             f"{_counts(factual.get('finding_counts'))} |"
         )
     return [*lines, ""]
@@ -306,7 +305,7 @@ def _review_section(
         *lines,
         f"- Responses with an explanation: {len(reviewable)}; reviewed: {len(reviewed)}.",
         f"- Judged factually correct: {len(reviewed) - len(incorrect)}; incorrect: {len(incorrect)}.",
-        f"- Incorrect, yet no errors detected by the checks: {len(missed)}.",
+        f"- Incorrect, yet every claim verified: {len(missed)}.",
         f"- Flagged by the checks, yet judged correct: {len(false_alarms)}.",
         "",
     ]
@@ -360,7 +359,7 @@ def _remaining_errors_section(
                 f"- Reviewer: {row['run_label']} {row['scenario']} trial {row['trial']} "
                 f"attempt {row['attempt']} is incorrect"
                 + (f": {review['notes']}" if review["notes"] else ".")
-                + ("" if row["factual_findings"] else " The checks detected no error here.")
+                + ("" if row["factual_findings"] else " Every claim in it verified.")
             )
     return [*lines, ""]
 
@@ -387,14 +386,21 @@ def _joined(findings, category: str) -> str:
     return "; ".join(item["code"] for item in findings if item["category"] == category)
 
 
-def _explanation(raw_response: str | None) -> str:
+def _explanation(attempt: dict[str, Any]) -> str:
+    """SubRep's explanation for a valid attempt, else what Omega sent, for a reviewer."""
+
+    if attempt.get("explanation"):
+        return attempt["explanation"]
+    raw_response = attempt.get("raw_response")
     if not raw_response:
         return ""
     try:
-        explanation = parse_structured_response(raw_response).get("explanation")
+        claims = parse_structured_response(raw_response).get("claims")
     except ValueError:
         return raw_response
-    return explanation if isinstance(explanation, str) else raw_response
+    if not isinstance(claims, list):
+        return raw_response
+    return "Claims (not accepted): " + json.dumps(claims, sort_keys=True)
 
 
 def _shorten(text: str) -> str:

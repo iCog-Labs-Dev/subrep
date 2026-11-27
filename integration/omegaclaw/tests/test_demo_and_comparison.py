@@ -35,7 +35,7 @@ def test_synthetic_demo_writes_comparable_report(tmp_path):
     assert report["summary"]["valid_outcome_rate"] == 1.0
     assert report["summary"]["first_pass_valid_rate"] == 1.0
     assert report["summary"]["format"]["first_attempt_format_valid_rate"] == 1.0
-    assert report["summary"]["factual"]["first_attempt_no_errors_detected_rate"] == 1.0
+    assert report["summary"]["factual"]["first_attempt_all_claims_verified_rate"] == 1.0
     assert report["summary"]["factual"]["finding_counts"] == {}
 
 
@@ -122,8 +122,9 @@ def _attempt(status, findings, checked=True):
         "findings": [
             {"code": code, "category": category, "message": code} for code, category in findings
         ],
-        "explanation_checked": checked,
-        "raw_response": json.dumps({"explanation": "text"}),
+        "claims_checked": checked,
+        "explanation": "text" if status == "valid" else None,
+        "raw_response": json.dumps({"claims": []}),
     }
 
 
@@ -141,7 +142,7 @@ def test_summary_reports_format_and_factual_checks_apart():
         _result("a", _attempt("valid", [])),
         _result(
             "b",
-            _attempt("invalid_response", [("WRONG_EXCLUSION_STAGE", "factual")]),
+            _attempt("invalid_response", [("CLAIM_VALUE_MISMATCH", "factual")]),
             _attempt("valid", []),
         ),
         _result(
@@ -158,16 +159,16 @@ def test_summary_reports_format_and_factual_checks_apart():
     assert summary["format"]["first_attempt_format_valid_rate"] == 2 / 3
     assert summary["format"]["finding_counts"] == {"MALFORMED_RESPONSE": 1}
     assert summary["factual"]["checked_attempt_count"] == 3
-    assert summary["factual"]["first_attempt_no_errors_detected_rate"] == 1 / 2
-    assert summary["factual"]["no_errors_detected_rate"] == 2 / 3
-    assert summary["factual"]["finding_counts"] == {"WRONG_EXCLUSION_STAGE": 1}
+    assert summary["factual"]["first_attempt_all_claims_verified_rate"] == 1 / 2
+    assert summary["factual"]["all_claims_verified_rate"] == 2 / 3
+    assert summary["factual"]["finding_counts"] == {"CLAIM_VALUE_MISMATCH": 1}
 
 
 def test_summary_of_only_backend_errors_has_no_rates():
     summary = summarize([_result("a", {"attempt": 1, "status": "backend_error"}, status="backend_error")])
 
     assert summary["format"]["first_attempt_format_valid_rate"] is None
-    assert summary["factual"]["no_errors_detected_rate"] is None
+    assert summary["factual"]["all_claims_verified_rate"] is None
 
 
 def test_demo_repeats_each_scenario(tmp_path):
@@ -236,16 +237,16 @@ def test_comparison_pools_trials_and_writes_a_review_sheet(tmp_path):
     rendered = output.read_text(encoding="utf-8")
     assert exit_code == 0
     assert "| pooled | synthetic | N/A | N/A | omega@sha256:test |" in rendered
-    assert "## Factual checks (automated)" in rendered
-    assert "No errors detected by the checks (first attempt)" in rendered
-    # Only the caveat may say "accuracy"; no measure is labelled as accuracy.
-    assert rendered.lower().count("accuracy") == rendered.count("proof of accuracy")
+    assert "## Claim verification" in rendered
+    assert "All claims verified (first attempt)" in rendered
+    # No measure is labelled as accuracy; a person judges that in the review.
+    assert "accuracy" not in rendered.lower()
     assert rendered.count("| pooled | excluded_skill |") == 2
     assert "Not reviewed yet." in rendered
     rows = review.read_text(encoding="utf-8").splitlines()
     assert rows[0].startswith("run_label,scenario,trial,request_id")
     assert len(rows) == 3
-    assert "skill_efficiency was excluded" in rows[1]
+    assert "skill_efficiency was removed before ranking at the OPERATOR stage" in rows[1]
 
 
 def test_report_marks_a_commit_with_uncommitted_changes(monkeypatch):
@@ -255,7 +256,7 @@ def test_report_marks_a_commit_with_uncommitted_changes(monkeypatch):
     monkeypatch.setattr(demo, "_git", lambda *arguments: answers[arguments])
     assert demo._subrep_commit() == "abc123"
 
-    answers[("status", "--porcelain", "--untracked-files=no")] = " M integration/omegaclaw/claims.py"
+    answers[("status", "--porcelain", "--untracked-files=no")] = " M integration/omegaclaw/facts.py"
     assert demo._subrep_commit() == "abc123 (with uncommitted changes)"
 
 
@@ -347,9 +348,9 @@ def test_reviewed_sheet_is_merged_into_the_report(tmp_path):
     rendered = output.read_text(encoding="utf-8")
     assert "- Responses with an explanation: 2; reviewed: 2." in rendered
     assert "- Judged factually correct: 1; incorrect: 1." in rendered
-    assert "- Incorrect, yet no errors detected by the checks: 1." in rendered
+    assert "- Incorrect, yet every claim verified: 1." in rendered
     assert "incorrect: does not say the operator excluded skill_efficiency" in rendered
-    assert "The checks detected no error here." in rendered
+    assert "Every claim in it verified." in rendered
 
 
 def test_reviewed_sheet_rejects_an_unclear_verdict(tmp_path):

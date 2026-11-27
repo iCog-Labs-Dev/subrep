@@ -18,7 +18,7 @@ class OmegaGatewayError(RuntimeError):
     """Base error for live Omega transport failures."""
 
 
-class OmegaGatewayTimeout(OmegaGatewayError):
+class OmegaGatewayTimeout(OmegaGatewayError, TimeoutError):
     """Raised when Omega does not connect or answer before the deadline."""
 
 
@@ -57,6 +57,8 @@ class OmegaWebSocketGateway:
         self._seq = 0
         self._pending_frame: dict[str, Any] | None = None
         self._seen_client_sequences: deque[str] = deque(maxlen=512)
+        # Request IDs already answered or abandoned, so a late reply to one is ignored.
+        self._earlier_request_ids: deque[str] = deque(maxlen=512)
 
     @property
     def url(self) -> str:
@@ -137,10 +139,14 @@ class OmegaWebSocketGateway:
                         raise OmegaGatewayTimeout(
                             f"Omega did not answer request {request_id!r} before timeout"
                         ) from exc
-                    if _looks_like_structured_response(message, request_id):
+                    if _looks_like_structured_response(
+                        message, request_id, set(self._earlier_request_ids) - {request_id}
+                    ):
                         return message
             finally:
                 self._pending_frame = None
+                if request_id not in self._earlier_request_ids:
+                    self._earlier_request_ids.append(request_id)
 
     def _handle_connection(self, websocket) -> None:
         request = websocket.request
@@ -250,8 +256,15 @@ class OmegaWebSocketGateway:
                 return
 
 
-def _looks_like_structured_response(message: str, request_id: str) -> bool:
-    """Ignore progress chatter while still surfacing malformed response attempts."""
+def _looks_like_structured_response(
+    message: str, request_id: str, earlier_request_ids: set[str] | frozenset[str] = frozenset()
+) -> bool:
+    """Ignore progress chatter and late replies to earlier requests; surface everything else.
+
+    A reply whose request_id matches no request sent so far is most likely this request's
+    answer with a mistyped ID. It is returned, so validation rejects it at once and the
+    correction prompt names the ID, instead of the request waiting for its full timeout.
+    """
 
     text = message.strip()
     if text.startswith("```"):
@@ -268,4 +281,4 @@ def _looks_like_structured_response(message: str, request_id: str) -> bool:
     if not isinstance(payload, dict):
         return True
     response_request_id = payload.get("request_id")
-    return response_request_id is None or response_request_id == request_id
+    return response_request_id not in earlier_request_ids

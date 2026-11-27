@@ -6,15 +6,16 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from .claims import claim_findings, explanation_findings
 from .contracts import (
     FACTUAL_FINDING,
     FORMAT_FINDING,
     AdvisoryConcern,
+    Claim,
     Finding,
     OmegaRecommendationResponse,
     RecommendationRequest,
 )
+from .facts import claim_findings, missing_claim_findings, render_explanation, unsupported_concern
 
 
 class ResponseValidationError(ValueError):
@@ -29,15 +30,17 @@ class ResponseValidationError(ValueError):
 
 @dataclass(frozen=True)
 class ResponseAssessment:
-    """Every finding for one raw response, plus the parsed response when it parses.
+    """Every finding for one raw response, plus what could be built from it.
 
-    ``explanation_checked`` is false when the response had no explanation to check,
-    so the factual checks could not run on it, which is not the same as passing them.
+    ``claims_checked`` is false when no claim could be read, so none was verified, which is
+    not the same as every claim passing. ``explanation`` is SubRep's explanation, written
+    from the verified claims, and is set only for a valid response.
     """
 
     response: OmegaRecommendationResponse | None
     findings: tuple[Finding, ...]
-    explanation_checked: bool = True
+    claims_checked: bool = True
+    explanation: str | None = None
 
     @property
     def valid(self) -> bool:
@@ -48,14 +51,11 @@ class ResponseAssessment:
         return "; ".join(finding.message for finding in self.findings) or None
 
 
-def assess_raw_response(
-    request: RecommendationRequest,
-    raw_response: Any,
-) -> ResponseAssessment:
-    """Run every format and factual check that the raw response allows.
+def assess_raw_response(request: RecommendationRequest, raw_response: Any) -> ResponseAssessment:
+    """Run every check the raw response allows, and write the explanation if it is valid.
 
-    A response that breaks the schema still has its explanation checked, so a
-    report can tell factual errors apart from format errors.
+    A response that breaks the schema still has its readable claims verified, so a report
+    can tell wrong facts apart from format errors.
     """
 
     try:
@@ -64,18 +64,18 @@ def assess_raw_response(
         return ResponseAssessment(
             None,
             (Finding("MALFORMED_RESPONSE", FORMAT_FINDING, str(exc)),),
-            explanation_checked=False,
+            claims_checked=False,
         )
     try:
         response = OmegaRecommendationResponse.from_dict(payload)
     except (ValueError, TypeError) as exc:
         findings = [Finding("SCHEMA_VIOLATION", FORMAT_FINDING, str(exc))]
-        explanation = payload.get("explanation")
-        checked = isinstance(explanation, str) and bool(explanation.strip())
-        if checked:
-            findings.extend(explanation_findings(request, explanation))
-        return ResponseAssessment(None, tuple(findings), explanation_checked=checked)
-    return ResponseAssessment(response, tuple(response_findings(request, response)))
+        claims = _readable_claims(payload.get("claims"))
+        findings.extend(claim_findings(request, claims))
+        return ResponseAssessment(None, tuple(findings), claims_checked=bool(claims))
+    findings = tuple(response_findings(request, response))
+    explanation = None if findings else render_explanation(request, response)
+    return ResponseAssessment(response, findings, claims_checked=True, explanation=explanation)
 
 
 def validate_response_for_request(
@@ -93,7 +93,7 @@ def response_findings(
     request: RecommendationRequest,
     response: OmegaRecommendationResponse,
 ) -> list[Finding]:
-    """Validate identity, decision echo, citations, concerns, and explanation claims."""
+    """Validate identity, the decision echo, every claim, and every advisory concern."""
 
     findings: list[Finding] = []
     if response.request_id != request.request_id:
@@ -123,37 +123,12 @@ def response_findings(
             )
         )
 
-    valid_refs = request.valid_evidence_refs()
-    unknown_refs = set(response.evidence_refs).difference(valid_refs)
-    if unknown_refs:
-        findings.append(
-            Finding(
-                "UNKNOWN_EVIDENCE_REF",
-                FORMAT_FINDING,
-                f"response contains unknown evidence_refs: {sorted(unknown_refs)}",
-            )
-        )
-    required_refs = (
-        ["subrep_decision.reason_code"]
-        if decision.abstain
-        else ["subrep_decision.selected_score"]
-    )
-    if decision.runner_up_skill_id is not None and not decision.abstain:
-        required_refs.append("subrep_decision.runner_up_score")
-    for required_ref in required_refs:
-        if required_ref not in response.evidence_refs:
-            findings.append(
-                Finding(
-                    "MISSING_EVIDENCE_REF",
-                    FORMAT_FINDING,
-                    f"response must cite {required_ref!r}",
-                )
-            )
+    findings.extend(claim_findings(request, response.claims))
+    findings.extend(missing_claim_findings(request, response))
 
+    valid_refs = request.valid_evidence_refs()
     for concern in response.advisory_concerns:
         findings.extend(_advisory_concern_findings(request, concern, valid_refs))
-
-    findings.extend(explanation_findings(request, response.explanation))
     return findings
 
 
@@ -178,6 +153,18 @@ def parse_structured_response(raw_response: Any) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("response must be a JSON object")
     return payload
+
+
+def _readable_claims(payload: Any) -> list[Claim]:
+    if not isinstance(payload, (list, tuple)):
+        return []
+    claims = []
+    for item in payload:
+        try:
+            claims.append(Claim.from_dict(item))
+        except (ValueError, TypeError):
+            continue
+    return claims
 
 
 def _advisory_concern_findings(
@@ -206,74 +193,7 @@ def _advisory_concern_findings(
             )
         )
         return findings
-    problem = _unsupported_concern(request, concern)
+    problem = unsupported_concern(request, concern)
     if problem is not None:
         findings.append(Finding("UNSUPPORTED_ADVISORY_CONCERN", FACTUAL_FINDING, problem))
-    # The message is shown with the explanation, so its claims are checked the same way.
-    findings.extend(
-        Finding(finding.code, finding.category, f"advisory concern {concern.code}: {finding.message}")
-        for finding in claim_findings(request, concern.message)
-    )
     return findings
-
-
-def _unsupported_concern(
-    request: RecommendationRequest,
-    concern: AdvisoryConcern,
-) -> str | None:
-    """Return why a concern is not supported by the evidence it cites, if it is not."""
-
-    decision = request.subrep_decision
-    selected = next(
-        skill for skill in request.admitted_skills if skill.skill_id == decision.selected_skill_id
-    )
-    refs = set(concern.evidence_refs)
-    explanation_prefix = f"explanation_evidence.skills.{selected.skill_id}"
-    certificate_prefix = f"audit_only_certificate_evidence.skills.{selected.skill_id}"
-
-    if concern.code == "SMALL_SCORE_GAP":
-        if decision.runner_up_skill_id is None or "subrep_decision.score_gap" not in refs:
-            return "SMALL_SCORE_GAP must cite subrep_decision.score_gap"
-        return None
-
-    if concern.code == "NEGATIVE_OBJECTIVE_TRADEOFF":
-        negative_refs = {
-            f"{explanation_prefix}.objective_deltas.{objective_id}"
-            for objective_id, delta in selected.objective_deltas.items()
-            if delta < 0.0
-        }
-        if not refs.intersection(negative_refs):
-            return "NEGATIVE_OBJECTIVE_TRADEOFF must cite a negative selected-skill objective delta"
-        return None
-
-    if concern.code == "PDS_EPSILON_USED":
-        required = {f"{certificate_prefix}.gate_type", f"{certificate_prefix}.epsilon"}
-        if selected.gate_type != "PDS" or selected.epsilon <= 0.0 or not required.issubset(refs):
-            return (
-                "PDS_EPSILON_USED requires a positive PDS epsilon and its gate_type and epsilon refs"
-            )
-        return None
-
-    if concern.code == "LOW_CERTIFICATE_MARGIN":
-        if f"{certificate_prefix}.certificate_admission_margin" not in refs:
-            return "LOW_CERTIFICATE_MARGIN must cite the selected skill's certificate margin"
-        return None
-
-    if concern.code == "HIGH_PRIORITY_OBJECTIVE_DECLINE":
-        weights = {item.objective_id: item.weight for item in request.objective_weights}
-        maximum_weight = max(weights.values())
-        supported = any(
-            delta < 0.0
-            and weights[objective_id] == maximum_weight
-            and {
-                f"explanation_evidence.objective_weights.{objective_id}",
-                f"{explanation_prefix}.objective_deltas.{objective_id}",
-            }.issubset(refs)
-            for objective_id, delta in selected.objective_deltas.items()
-        )
-        if not supported:
-            return (
-                "HIGH_PRIORITY_OBJECTIVE_DECLINE must cite the weight and negative delta of a "
-                "highest-weight objective"
-            )
-    return None

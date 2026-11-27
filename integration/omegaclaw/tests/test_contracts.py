@@ -8,12 +8,14 @@ from integration.omegaclaw.contracts import (
     EXCLUSION_REASONS,
     EXCLUSION_STAGES,
     AdvisoryConcern,
+    Claim,
     ObjectiveWeight,
     RecommendationRequest,
     RiskBudget,
     SkillEvidence,
     SkillExclusion,
     SubRepDecision,
+    claim_type_of,
 )
 
 
@@ -216,10 +218,84 @@ def test_paths_that_do_not_exist_are_still_rejected(reference):
 
 def test_advisory_evidence_refs_given_as_a_string_are_rejected_as_not_an_array():
     with pytest.raises(ValueError, match="evidence_refs must be an array"):
-        AdvisoryConcern("SMALL_SCORE_GAP", "The gap is small.", "subrep_decision.score_gap")
+        AdvisoryConcern("SMALL_SCORE_GAP", "subrep_decision.score_gap")
 
 
 def test_bracket_indexes_in_advisory_evidence_refs_are_stored_dotted():
-    concern = AdvisoryConcern("SMALL_SCORE_GAP", "The gap is small.", ["exclusions[0].stage", "a[10].b[2]"])
+    concern = AdvisoryConcern("SMALL_SCORE_GAP", ["exclusions[0].stage", "a[10].b[2]"])
 
     assert concern.evidence_refs == ("exclusions.0.stage", "a.10.b.2")
+
+
+def test_an_advisory_concern_has_exactly_a_code_and_its_evidence():
+    with pytest.raises(ValueError, match=r"unexpected \['message'\]"):
+        AdvisoryConcern.from_dict(
+            {"code": "SMALL_SCORE_GAP", "evidence_refs": ["x"], "message": "text"}
+        )
+
+
+def test_a_claim_is_normalised_and_has_exactly_three_fields():
+    claim = Claim.from_dict(
+        {"type": "Exclusion_Stage", "evidence_ref": "exclusions[0].stage", "value": "OPERATOR"}
+    )
+
+    assert claim == Claim("exclusion_stage", "exclusions.0.stage", "OPERATOR")
+    with pytest.raises(ValueError, match=r"missing \['value'\]"):
+        Claim.from_dict({"type": "score", "evidence_ref": "subrep_decision.selected_score"})
+
+
+@pytest.mark.parametrize(
+    ("claim_type", "value", "message"),
+    [
+        pytest.param("opinion", 1.0, "claim type must be one of", id="unknown-type"),
+        pytest.param("score", [1.5], "one value", id="list-value"),
+        pytest.param("score", {"value": 1.5}, "one value", id="object-value"),
+        pytest.param("score", float("nan"), "finite", id="not-a-number"),
+    ],
+)
+def test_a_claim_states_one_known_kind_of_fact_with_one_value(claim_type, value, message):
+    with pytest.raises(ValueError, match=message):
+        Claim(claim_type, "subrep_decision.selected_score", value)
+
+
+@pytest.mark.parametrize(
+    ("reference", "claim_type"),
+    [
+        ("subrep_decision.selected_score", "score"),
+        ("admitted_skills.safe_skill.final_selection_score", "score"),
+        ("explanation_evidence.objective_weights.safety", "objective_weight"),
+        ("explanation_evidence.skills.safe_skill.objective_deltas.fuel", "objective_delta"),
+        ("explanation_evidence.skills.safe_skill.delta_r", "delta_r"),
+        ("audit_only_certificate_evidence.skills.safe_skill.gate_type", "certificate"),
+        ("risk_budget.max_certificate_epsilon", "risk_budget"),
+        ("exclusions.0.stage", "exclusion_stage"),
+        ("subrep_decision.selected_skill_id", None),
+        ("task_context.task", None),
+        ("exclusions.0.reason", None),
+    ],
+)
+def test_the_evidence_path_decides_which_kind_of_fact_a_claim_states(reference, claim_type):
+    assert claim_type_of(reference) == claim_type
+
+
+def test_evidence_values_are_read_from_the_request_snapshot():
+    request = _request()
+
+    delta_ref = "explanation_evidence.skills.safe_skill.objective_deltas.safety"
+    assert request.evidence_value(delta_ref) == 0.6
+    assert request.evidence_value("risk_budget.max_certificate_epsilon") == 0.0
+    with pytest.raises(KeyError):
+        request.evidence_value("explanation_evidence.skills.ghost.delta_r")
+    with pytest.raises(KeyError):
+        request.evidence_value("schema_version")
+
+
+def test_claimable_facts_list_every_fact_a_claim_can_state_and_nothing_else():
+    facts = _request().claimable_facts()
+
+    assert facts["explanation_evidence.objective_weights.safety"] == ("objective_weight", 0.75)
+    epsilon_ref = "audit_only_certificate_evidence.skills.safe_skill.epsilon"
+    assert facts[epsilon_ref] == ("certificate", 0.0)
+    assert all(claim_type_of(reference) == kind for reference, (kind, _) in facts.items())
+    assert "subrep_decision.selected_skill_id" not in facts
+    assert "task_context.task" not in facts

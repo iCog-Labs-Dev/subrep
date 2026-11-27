@@ -4,6 +4,7 @@ from .adapter import OmegaRecommendationAdapter
 from .audit import JsonlAuditStore
 from .contracts import (
     AdvisoryConcern,
+    Claim,
     ObjectiveWeight,
     RecommendationOutcome,
     RecommendationRequest,
@@ -18,6 +19,7 @@ from .websocket_gateway import OmegaWebSocketGateway
 __all__ = [
     "JsonlAuditStore",
     "AdvisoryConcern",
+    "Claim",
     "ObjectiveWeight",
     "OmegaRecommendationAdapter",
     "RecommendationOutcome",
