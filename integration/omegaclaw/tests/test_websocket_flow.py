@@ -54,7 +54,10 @@ def test_complete_subrep_websocket_validated_response_flow(tmp_path):
 
     assert outcome.status == "accepted"
     assert outcome.selected_skill_id == "skill_safety"
+    assert outcome.explanation.startswith("SubRep selected skill_safety")
     assert not client.is_alive()
+    # Once answered, the request ID counts as earlier, so a late reply to it is ignored.
+    assert "websocket-flow" in gateway._earlier_request_ids
 
 
 def test_connection_timeout_is_recorded_as_backend_error(tmp_path):
@@ -128,6 +131,17 @@ def test_structured_response_detection_ignores_progress_and_stale_responses():
     assert not _looks_like_structured_response(
         json.dumps({"request_id": "stale-request", "selected_skill_id": "skill"}),
         "current-request",
+        {"stale-request"},
+    )
+
+
+def test_a_reply_with_a_mistyped_request_id_is_surfaced_instead_of_waiting_out_the_timeout():
+    # The ID matches no request sent so far, so it is most likely this request's answer;
+    # validation then rejects it at once and the correction prompt names the ID.
+    assert _looks_like_structured_response(
+        json.dumps({"request_id": "SR-TYPO", "selected_skill_id": "skill"}),
+        "SR-REAL",
+        {"SR-EARLIER"},
     )
 
 
@@ -161,6 +175,7 @@ def _simulated_omega_client(url: str, token: str) -> None:
         )
         progress_acknowledgement = json.loads(websocket.recv(timeout=5))
         assert progress_acknowledgement["type"] == "ack"
+        facts = json.loads(prompt.split("CLAIMABLE_FACTS: ", 1)[1].split("\n", 1)[0])
         response = {
             "schema_version": RESPONSE_SCHEMA_VERSION,
             "request_id": request["request_id"],
@@ -168,13 +183,10 @@ def _simulated_omega_client(url: str, token: str) -> None:
             "selected_skill_id": decision["selected_skill_id"],
             "abstain": decision["abstain"],
             "selection_basis": SELECTION_BASIS,
-            "explanation": (
-                f"Using synthetic evidence, {decision['selected_skill_id']} was selected "
-                f"by SubRep with score {decision['selected_score']:.3f}."
-            ),
-            "evidence_refs": [
-                "subrep_decision.selected_score",
-                "subrep_decision.runner_up_score",
+            "claims": [
+                {"type": fact["type"], "evidence_ref": path, "value": fact["value"]}
+                for path, fact in facts.items()
+                if fact["type"] in {"objective_weight", "objective_delta"}
             ],
             "advisory_concerns": [],
         }

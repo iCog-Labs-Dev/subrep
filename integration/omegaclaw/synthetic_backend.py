@@ -12,7 +12,11 @@ from .contracts import (
 
 
 class SyntheticOmegaBackend:
-    """Mimic a grounded Omega reply without calling an LLM or live agent."""
+    """Mimic a grounded Omega reply without calling an LLM or live agent.
+
+    It claims what explains the decision: the objective weights, the deltas of the
+    selected skill and the runner-up, and the stage of every exclusion.
+    """
 
     evidence_label = "SYNTHETIC"
 
@@ -23,66 +27,50 @@ class SyntheticOmegaBackend:
             raise ValueError("prompt request_id does not match backend request_id")
 
         decision = request["subrep_decision"]
-        exclusions = _describe_exclusions(request["exclusions"])
-        if decision["abstain"]:
-            return json.dumps(
-                {
-                    "schema_version": RESPONSE_SCHEMA_VERSION,
-                    "request_id": request_id,
-                    "selected_skill_id": None,
-                    "abstain": True,
-                    "mode": INTEGRATION_MODE,
-                    "selection_basis": SELECTION_BASIS,
-                    "explanation": (
-                        "No recommendation was made because SubRep found no admitted skills "
-                        f"in this synthetic scenario.{exclusions}"
-                    ),
-                    "evidence_refs": ["subrep_decision.reason_code"],
-                    "advisory_concerns": [],
-                },
-                sort_keys=True,
-            )
-
-        selected_id = decision["selected_skill_id"]
-        selected_score = float(decision["selected_score"])
-        runner_id = decision["runner_up_skill_id"]
-        runner_score = decision["runner_up_score"]
-        refs = ["subrep_decision.selected_score"]
-        if runner_id is not None:
-            refs.append("subrep_decision.runner_up_score")
-            explanation = (
-                f"Using synthetic evidence, {selected_id} was selected by SubRep with score "
-                f"{selected_score:.3f}, ahead of {runner_id} at {float(runner_score):.3f}."
-            )
-        else:
-            explanation = (
-                f"Using synthetic evidence, {selected_id} was selected by SubRep as the "
-                f"only admitted skill with score {selected_score:.3f}."
-            )
-        explanation += exclusions
+        claims = [
+            _claim("exclusion_stage", f"exclusions.{index}.stage", item["stage"])
+            for index, item in enumerate(request["exclusions"])
+        ]
+        if not decision["abstain"]:
+            evidence = request["explanation_evidence"]
+            claims = [
+                *(
+                    _claim(
+                        "objective_weight",
+                        f"explanation_evidence.objective_weights.{name}",
+                        weight,
+                    )
+                    for name, weight in evidence["objective_weights"].items()
+                ),
+                *(
+                    _claim(
+                        "objective_delta",
+                        f"explanation_evidence.skills.{skill_id}.objective_deltas.{name}",
+                        delta,
+                    )
+                    for skill_id in (decision["selected_skill_id"], decision["runner_up_skill_id"])
+                    if skill_id is not None
+                    for name, delta in evidence["skills"][skill_id]["objective_deltas"].items()
+                ),
+                *claims,
+            ]
         return json.dumps(
             {
                 "schema_version": RESPONSE_SCHEMA_VERSION,
                 "request_id": request_id,
-                "selected_skill_id": selected_id,
-                "abstain": False,
+                "selected_skill_id": decision["selected_skill_id"],
+                "abstain": decision["abstain"],
                 "mode": INTEGRATION_MODE,
                 "selection_basis": SELECTION_BASIS,
-                "explanation": explanation,
-                "evidence_refs": refs,
+                "claims": claims,
                 "advisory_concerns": [],
             },
             sort_keys=True,
         )
 
 
-def _describe_exclusions(exclusions: list[dict]) -> str:
-    """Restate each exclusion with the first sentence of its SubRep stage description."""
-
-    return "".join(
-        f" {item['skill_id']} was excluded: {item['stage_description'].split('. ')[0].rstrip('.')}."
-        for item in exclusions
-    )
+def _claim(claim_type: str, evidence_ref: str, value) -> dict:
+    return {"type": claim_type, "evidence_ref": evidence_ref, "value": value}
 
 
 def _request_from_prompt(prompt: str) -> dict:

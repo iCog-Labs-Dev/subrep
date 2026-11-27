@@ -255,21 +255,21 @@ def _format_summary(attempts: list[dict], first_attempts: list[dict]) -> dict:
 
 
 def _factual_summary(attempts: list[dict], first_attempts: list[dict]) -> dict:
-    """How often the automated checks found no factual error.
+    """How often every claim and the decision echo matched the request.
 
-    The checks match known error patterns, so "no errors detected by the checks" is
-    not proof that an explanation is accurate; people review the responses for that.
+    Each claim is compared with the value at its evidence path, so a factual finding is
+    a verified error, not a guess from wording.
     """
 
-    checked = [attempt for attempt in attempts if attempt.get("explanation_checked")]
-    first_checked = [attempt for attempt in first_attempts if attempt.get("explanation_checked")]
+    checked = [attempt for attempt in attempts if attempt.get("claims_checked")]
+    first_checked = [attempt for attempt in first_attempts if attempt.get("claims_checked")]
     clean = [attempt for attempt in checked if not _codes(attempt, FACTUAL_FINDING)]
     first_clean = [attempt for attempt in first_checked if not _codes(attempt, FACTUAL_FINDING)]
     return {
         "checked_attempt_count": len(checked),
-        "no_errors_detected_count": len(clean),
-        "no_errors_detected_rate": _rate(len(clean), len(checked)),
-        "first_attempt_no_errors_detected_rate": _rate(len(first_clean), len(first_checked)),
+        "all_claims_verified_count": len(clean),
+        "all_claims_verified_rate": _rate(len(clean), len(checked)),
+        "first_attempt_all_claims_verified_rate": _rate(len(first_clean), len(first_checked)),
         "finding_counts": _finding_counts(checked, FACTUAL_FINDING),
     }
 
