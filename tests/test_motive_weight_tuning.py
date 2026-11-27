@@ -139,3 +139,68 @@ def test_tuning_refuses_validation_without_certifiable_candidates(
             },
             fixed_top_k=1,
         )
+
+def test_main_uses_dataset_rollout_settings_for_baseline(
+    tmp_path,
+    monkeypatch,
+):
+    manifest = {
+        "rollout_provenance": {
+            "gamma": 0.8,
+            "max_steps": 2,
+        },
+        "split_signature": "split-signature",
+        "dataset_signature": "dataset-signature",
+    }
+    captured = {}
+
+    monkeypatch.setattr(tuner, "load_records", lambda data_dir: [])
+    monkeypatch.setattr(
+        tuner,
+        "load_manifest",
+        lambda records, path: manifest,
+    )
+    monkeypatch.setattr(
+        tuner,
+        "partition",
+        lambda records, loaded_manifest: {"val": []},
+    )
+    monkeypatch.setattr(
+        tuner,
+        "group_contexts",
+        lambda records, complete: {},
+    )
+    monkeypatch.setattr(
+        tuner,
+        "load_model",
+        lambda *args, **kwargs: (object(), True),
+    )
+
+    def fake_baseline(**kwargs):
+        captured.update(kwargs)
+        return {
+            "baseline_payoff": 0.0,
+            "baseline_motives": [0.0, 0.0],
+        }
+
+    monkeypatch.setattr(
+        "generator.evaluate_generator_report.compute_idle_baseline_stats",
+        fake_baseline,
+    )
+    monkeypatch.setattr(
+        tuner,
+        "tune_weights",
+        lambda *args, **kwargs: {
+            "motive_weights": {"safety": 0.5, "fuel": 0.5},
+            "validation_metrics": {"recall": 0.0, "precision": 0.0},
+        },
+    )
+
+    tuner.main(["--output", str(tmp_path / "weights.json")])
+
+    assert captured == {
+        "episodes": 20,
+        "seed": 42,
+        "gamma": 0.8,
+        "max_steps": 2,
+    }

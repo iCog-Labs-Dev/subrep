@@ -176,9 +176,13 @@ def main(argv=None):
         compute_idle_baseline_stats,
     )
 
+    rollout_provenance = manifest["rollout_provenance"]
+    max_steps = rollout_provenance["max_steps"]
     baseline_stats = compute_idle_baseline_stats(
         episodes=args.baseline_episodes,
         seed=args.seed,
+        gamma=rollout_provenance["gamma"],
+        max_steps=None if max_steps == -1 else max_steps,
     )
 
     tuned = tune_weights(
