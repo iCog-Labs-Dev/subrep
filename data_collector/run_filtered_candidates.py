@@ -172,7 +172,10 @@ def main(argv=None):
     parser.add_argument(
     "--ranking-config",
     default="reports/multi_policy/motive_weights.json",
-    help="Validation-tuned motive weights shared with offline filtering",)
+    help=(
+        "Optional fixed validation-tuned Safety/Fuel weights; if the file "
+        "is missing, equal weights (0.5, 0.5) are used"
+    ),)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--output", default="reports/multi_policy/live_filter.json")

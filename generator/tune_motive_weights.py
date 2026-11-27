@@ -1,5 +1,5 @@
 
-"""Tune Motive weights on validation contexts at a fixed top-k budget."""
+"""Experimentally tune fixed Safety/Fuel weights on validation contexts at fixed top-k selection budget."""
 
 from __future__ import annotations
 import argparse

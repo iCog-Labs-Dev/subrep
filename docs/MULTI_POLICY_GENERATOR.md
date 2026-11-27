@@ -65,15 +65,15 @@ Loads the trained checkpoints and saved split, then evaluates measured candidate
 The policy-conditioned model standardises payoff, Safety, and Fuel targets using the training split's mean and standard deviation. Training loss is calculated in standardised space, while predictions are converted back to their original units before being returned. This prevents targets with larger numerical scales from dominating the loss. The observation-only baseline retains its existing training procedure. The noop policy's Fuel prediction is explicitly fixed at zero because it does not activate the engine; this is a structural policy constraint, not a certification decision.
 
 
-## 6. Tune motive weights on validation data
+## 6. Optional experiment: tune fixed motive weights
 
 ```bash
 python -m generator.tune_motive_weights --data-dir data/raw_mixed --fixed-top-k 3 --grid-step 0.1
 ```
 
-Loads only the saved validation contexts and the policy-conditioned checkpoint. It searches a predefined Safety/Fuel simplex grid and selects the weights that maximize certification recall while keeping the execution budget fixed at top-3. Ties are broken by validation precision, then weights closest to equal, then lower Safety weight. It does not tune the generator or inspect test outcomes.
+This optional experiment loads only the saved validation contexts and the policy-conditioned checkpoint. It searches a predefined Safety/Fuel simplex grid and selects one fixed pair of weights that maximizes certification recall at a fixed top-3 execution budget. The weights do not vary by context and are not provided by the MDN. Ties are broken by validation precision, then weights closest to equal, then lower Safety weight. It does not tune the generator or inspect test outcomes.
 
-Output: `reports/multi_policy/motive_weights.json`. This file stores all evaluated combinations and the selected weights. It is the frozen ranking configuration shared by offline and live filtering. Run this command before either filtering command. Re-run it when intentionally repeating the validation tuning procedure.
+Output: `reports/multi_policy/motive_weights.json`. This file stores all evaluated combinations and the selected weights. Offline and live filtering use this configuration when it exists; if it is absent, they use equal Safety/Fuel weights (0.5, 0.5). Run this command only when you want to perform the experiment or update its configuration.
 
 ## 6. Evaluate candidate filtering offline
 
@@ -91,7 +91,7 @@ Outputs: `reports/multi_policy/filter_metrics.json` (detailed metrics) and `repo
 python -u -m data_collector.run_filtered_candidates --model-path models/multi_policy_generator.pt --pilot-checkpoint models/pilot_ppo.pt --contexts 20 --top-k 3 --baseline-episodes 20 --ranking-config reports/multi_policy/motive_weights.json
 ```
 
-Loads the same validation-tuned ranking configuration used by offline evaluation, predicts the nine policies at each starting context, executes only the top three candidates, and applies existing CDS or PDS checks to each measured rollout. With ten contexts and top-K of three, this executes **30 selected candidates** instead of 90, plus 20 separate idle-baseline episodes. `--contexts` sets the number of starting contexts; `--top-k` sets candidates executed per context;
+Loads the validation-tuned ranking configuration when available (otherwise uses equal Safety/Fuel weights), predicts the nine policies at each starting context, executes only the top three candidates, and applies existing CDS or PDS checks to each measured rollout. With ten contexts and top-K of three, this executes **30 selected candidates** instead of 90, plus 20 separate idle-baseline episodes. `--contexts` sets the number of starting contexts; `--top-k` sets candidates executed per context. The script reports measured admission outcomes; it does not store certificates in the skill library or implement library-controlled reuse.
 
 Output: `reports/multi_policy/live_filter.json` (override with `--output`). This is an opt-in experimental runtime.
 
