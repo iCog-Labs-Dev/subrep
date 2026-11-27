@@ -22,7 +22,7 @@ class IdlePolicy:
         """Return the deterministic do-nothing action."""
         return self.idle_action
 
-    def run_baseline_episodes(self, num_episodes: int = 20, seed: int = 42, max_steps: int | None = None) -> Dict[str, Any]:
+    def run_baseline_episodes(self, num_episodes: int = 50, seed: int = 42, max_steps: int | None = None) -> Dict[str, Any]:
         """Run baseline episodes and aggregate discounted payoff/motive statistics."""
         if num_episodes <= 0:
             raise ValueError("num_episodes must be positive")
