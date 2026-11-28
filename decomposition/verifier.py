@@ -1,0 +1,386 @@
+"""Certify and rank candidate plans with SubRep's existing admission gates.
+
+Each candidate is looked up in the effect table by the current state: the
+observation and how many frames of the episode have been flown, since a plan
+started late may run out of time. The table answers only where its measurements
+apply, and the one-sided lower confidence bounds of the measured gains (Δr, Δn)
+go through the gates the rest of SubRep uses:
+
+- the CDS gate first, as the stronger guarantee;
+- the PDS gate with the priorities' ε when CDS fails;
+- when the priorities carry an MDN region and a CVaR tail level, the CVaR
+  check must pass as well.
+
+The worst case is taken over the full simplex of weightings, or over the MDN
+region W_x when the priorities carry one. An admitted plan gets a standard
+``Certificate`` inside a ``SkillEntry`` and is scored with
+``library.skill_selector.score_skill_entry`` under the priorities' weights.
+Plans are ranked by score; ties go to the plan with fewer steps, then to the
+option name.
+
+The gates compare discounted rewards, and the discount favours flights that end
+soon. A controller can therefore outscore a plan while reaching the goal less
+often. So a plan for a terminal goal must also reach it: with ``min_goal_rate``
+set, the one-sided lower confidence bound of the measured rate at which flights
+ended in one of the goal's ``success_outcomes`` must reach that rate. The rate is
+over all flights, and its bound treats episodes as the independent units, since
+an episode can give several related flights (``clustered_rate``).
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+import numpy as np
+import torch
+
+from certification.cds_test import CDSGate
+from certification.certificate_schema import Certificate
+from certification.cvar_test import CVaRGate
+from certification.pds_test import PDSGate
+from decomposition.effects import EffectTable, Estimate, Gains
+from decomposition.effects import plan_key
+from decomposition.planner import CandidatePlan, goal_graph
+from library.skill_metadata import FULL_SIMPLEX, MDN_WX, SkillEntry
+from library.skill_selector import score_skill_entry
+
+CERTIFICATE_VERSION = "decomposition-0.1.0"
+CVAR_SAMPLES = 1000
+CVAR_SEED = 0
+NOT_MEASURED = "not measured from states like this one"
+GOAL_TOO_RARE = "reaches its goal too rarely"
+_WILSON_Z = 1.645  # one-sided 95%, the confidence of the measured gains
+_SIMPLEX_TOLERANCE = 1e-6
+
+
+def _finite_array(name: str, values: object, ndim: int = 1) -> np.ndarray:
+    """``values`` as a non-empty float array of ``ndim`` dimensions with no NaN or infinity."""
+    try:
+        array = np.asarray(values, dtype=np.float64)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must contain only numbers, got {values!r}") from error
+    if array.ndim != ndim or array.size == 0:
+        raise ValueError(f"{name} must be a non-empty {ndim}-dimensional array, got {values!r}")
+    if not np.all(np.isfinite(array)):
+        raise ValueError(f"{name} must contain only finite numbers, got {values!r}")
+    return array
+
+
+def _finite_number(name: str, value: object) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a number, got {value!r}") from error
+    if not math.isfinite(number):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    return number
+
+
+@dataclass(frozen=True)
+class MdnRegion:
+    """The MDN weight region W_x = {w in the simplex : w_i <= s_i} with its audit fields.
+
+    Checked as the certificate schema checks an MDN region: every value finite,
+    alpha positive, support values in [0, 1] and summing to at least 1 so the
+    region is not empty, and one square row of directions per objective.
+    """
+
+    context: Tuple[float, ...]
+    alpha: Tuple[float, ...]
+    support_directions: Tuple[Tuple[float, ...], ...]
+    support_values: Tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        _finite_array("context", self.context)
+        alpha = _finite_array("alpha", self.alpha)
+        support = _finite_array("support_values", self.support_values)
+        directions = _finite_array("support_directions", self.support_directions, ndim=2)
+        if alpha.shape != support.shape or directions.shape != (support.size, support.size):
+            raise ValueError("alpha, support_values and support_directions must cover the same objectives")
+        if np.any(alpha <= 0.0):
+            raise ValueError(f"alpha must be positive, got {self.alpha}")
+        if np.any(support < 0.0) or np.any(support > 1.0):
+            raise ValueError(f"support_values must lie in [0, 1], got {self.support_values}")
+        if support.sum() < 1.0 - _SIMPLEX_TOLERANCE:
+            raise ValueError(f"support_values must sum to at least 1 or the region is empty, got {self.support_values}")
+
+
+@dataclass(frozen=True)
+class Priorities:
+    """How much each objective matters and how much risk is allowed."""
+
+    weights: Tuple[float, ...]  # on the simplex over the domain's objectives; used for ranking
+    pds_epsilon: float = 0.0
+    cvar_tail_level: Optional[float] = None
+    region: Optional[MdnRegion] = None
+
+    def __post_init__(self) -> None:
+        weights = _finite_array("weights", self.weights)
+        if np.any(weights < -_SIMPLEX_TOLERANCE) or abs(weights.sum() - 1.0) > _SIMPLEX_TOLERANCE:
+            raise ValueError(f"weights must lie on the simplex, got {self.weights}")
+        if _finite_number("pds_epsilon", self.pds_epsilon) < 0.0:
+            raise ValueError(f"pds_epsilon must be non-negative, got {self.pds_epsilon}")
+        if self.region is not None:
+            support = np.asarray(self.region.support_values, dtype=np.float64)
+            if support.shape != weights.shape:
+                raise ValueError("the MDN region and the weights must cover the same objectives")
+            if np.any(weights > support + _SIMPLEX_TOLERANCE):
+                raise ValueError(f"weights {self.weights} lie outside the MDN region {self.region.support_values}")
+        if self.cvar_tail_level is not None:
+            if not 0.0 < _finite_number("cvar_tail_level", self.cvar_tail_level) <= 1.0:
+                raise ValueError(f"cvar_tail_level must be in (0, 1], got {self.cvar_tail_level}")
+            if self.region is None:
+                raise ValueError("the CVaR check needs an MDN region for its alpha")
+
+
+@dataclass(frozen=True)
+class PlanVerdict:
+    """The outcome of certifying one candidate plan."""
+
+    candidate: CandidatePlan
+    reason: str
+    estimate: Optional[Estimate] = None  # None when the plan was not measured from such a state
+    cds_margin: Optional[float] = None
+    pds_margin: Optional[float] = None
+    cvar: Optional[float] = None
+    goal_rate: Optional[float] = None  # lower bound of how often flights reached a terminal goal
+    entry: Optional[SkillEntry] = None  # the certified library entry; None when rejected
+    score: Optional[float] = None
+
+    @property
+    def admitted(self) -> bool:
+        return self.entry is not None
+
+    def record(self) -> Dict[str, object]:
+        """A JSON-ready record of the plan, its measured effect and the gate results."""
+        candidate = self.candidate
+        return {
+            "skill_id": plan_skill_id(candidate),
+            "goal": candidate.goal,
+            "option": candidate.option,
+            "skills": list(candidate.skills),
+            "methods": list(candidate.methods),
+            "goal_graph": goal_graph(candidate),
+            "admitted": self.admitted,
+            "reason": self.reason,
+            "estimate": None if self.estimate is None else _estimate_record(self.estimate),
+            "gates": {"cds_margin": self.cds_margin, "pds_margin": self.pds_margin, "cvar": self.cvar},
+            "goal_rate": self.goal_rate,
+            "score": self.score,
+            "certificate": None if self.entry is None else self.entry.certificate.to_dict(),
+        }
+
+
+def plan_skill_id(candidate: CandidatePlan) -> str:
+    return f"plan:{candidate.goal}/{candidate.option}/{plan_key(candidate.skills)}"
+
+
+def verify(
+    candidates: Sequence[CandidatePlan],
+    observation: np.ndarray,
+    table: EffectTable,
+    priorities: Priorities,
+    timestamp: Optional[str] = None,
+    min_goal_rate: float = 0.0,
+    *,
+    elapsed: float,
+) -> List[PlanVerdict]:
+    """Certify every candidate from ``observation``, reached after ``elapsed`` frames; admitted plans come first."""
+    timestamp = timestamp or datetime.now(timezone.utc).isoformat()
+    verdicts = []
+    for candidate in candidates:
+        estimate = table.plan(candidate.skills, observation, elapsed)
+        verdicts.append(_verify(candidate, estimate, table, priorities, timestamp, min_goal_rate))
+    return sorted(verdicts, key=_rank)
+
+
+def goal_rate_bound(estimate: Estimate, success_outcomes: Sequence[str]) -> float:
+    """One-sided 95% lower confidence bound of the rate at which flights reached the goal.
+
+    The rate is over all flights, as the estimate's outcome rates are. Its bound is
+    the Wilson bound over the effective number of independent flights that
+    ``clustered_rate`` finds from how the flights of each episode ended.
+    """
+    if estimate.episode_outcomes is None:
+        raise ValueError("a goal rate needs how the flights of each episode ended")
+    return wilson_lower(*goal_rate(estimate.episode_outcomes, success_outcomes))
+
+
+def goal_rate(
+    episode_outcomes: Iterable[Tuple[int, Mapping[str, int]]], success_outcomes: Sequence[str]
+) -> Tuple[float, float]:
+    """The rate at which flights ended in one of ``success_outcomes``, and the effective number of flights behind it.
+
+    ``episode_outcomes`` holds ``(episodes, {outcome: flights})`` for each way the
+    flights of an episode ended, as a table entry records them.
+    """
+    success = set(success_outcomes)
+    return clustered_rate(
+        (episodes, sum(n for outcome, n in counts.items() if outcome in success), sum(counts.values()))
+        for episodes, counts in episode_outcomes
+    )
+
+
+def clustered_rate(episodes: Iterable[Tuple[int, int, int]]) -> Tuple[float, float]:
+    """A rate over flights, and the effective number of independent flights behind it.
+
+    ``episodes`` holds ``(count, successes, flights)``: ``count`` episodes each gave
+    ``flights`` flights, of which ``successes`` succeeded. The rate is all successes
+    over all flights. Flights from one episode are related and episodes give
+    different numbers of them, so the rate's variance takes the episodes as the
+    independent units: the linearised variance of a ratio, the sum over episodes of
+    (successes - rate * flights)^2 over the square of all flights. The effective
+    number of flights is the binomial variance rate * (1 - rate) over that variance,
+    capped at the number of episodes, so related flights never count for more than
+    separate episodes would. With one flight per episode it is the number of
+    episodes, and so it is when every episode gives as many flights and they all
+    succeed or all fail. A large episode whose flights all go one way counts for
+    less, since it moves the rate more than a small one.
+    """
+    rows = [(int(count), int(successes), int(flights)) for count, successes, flights in episodes]
+    if not rows or any(count < 1 or flights < 1 or not 0 <= successes <= flights for count, successes, flights in rows):
+        raise ValueError("every kind of episode needs a count and flights of at least 1, and 0 <= successes <= flights")
+    total_episodes = sum(count for count, _, _ in rows)
+    total_flights = sum(count * flights for count, _, flights in rows)
+    rate = sum(count * successes for count, successes, _ in rows) / total_flights
+    variance = sum(count * (successes - rate * flights) ** 2 for count, successes, flights in rows) / total_flights**2
+    if variance <= 0.0:
+        return rate, float(total_episodes)
+    return rate, min(float(total_episodes), rate * (1.0 - rate) / variance)
+
+
+def wilson_lower(rate: float, trials: float) -> float:
+    """One-sided 95% Wilson lower confidence bound of a rate observed over ``trials`` independent trials."""
+    if trials <= 0:
+        raise ValueError(f"a rate needs a positive number of trials, got {trials}")
+    rate, z = min(max(rate, 0.0), 1.0), _WILSON_Z  # rounded rates can add up to a hair over 1
+    centre = rate + z * z / (2 * trials)
+    margin = z * math.sqrt(rate * (1 - rate) / trials + z * z / (4 * trials * trials))
+    return (centre - margin) / (1 + z * z / trials)
+
+
+def best_plan(verdicts: Sequence[PlanVerdict]) -> Optional[PlanVerdict]:
+    """The highest-ranked admitted plan, or None when no plan was admitted."""
+    return next((verdict for verdict in verdicts if verdict.admitted), None)
+
+
+def _verify(
+    candidate: CandidatePlan,
+    estimate: Optional[Estimate],
+    table: EffectTable,
+    priorities: Priorities,
+    timestamp: str,
+    min_goal_rate: float,
+) -> PlanVerdict:
+    if estimate is None:
+        return PlanVerdict(candidate, reason=NOT_MEASURED)
+
+    delta_r = estimate.lower.delta_r
+    delta_n = np.asarray(estimate.lower.delta_n, dtype=np.float64)
+    support = None if priorities.region is None else np.asarray(priorities.region.support_values, dtype=np.float64)
+    cds, pds = CDSGate(), PDSGate(epsilon=priorities.pds_epsilon)
+    cds_margin = cds.get_admission_margin(delta_r, delta_n, support_values=support)
+    pds_margin = pds.get_admission_margin(delta_r, delta_n, support_values=support)
+    cvar = _cvar(delta_r, delta_n, priorities)
+    goal_rate = goal_rate_bound(estimate, candidate.success_outcomes) if candidate.success_outcomes else None
+    results = {
+        "estimate": estimate,
+        "cds_margin": cds_margin,
+        "pds_margin": pds_margin,
+        "cvar": cvar,
+        "goal_rate": goal_rate,
+    }
+
+    if cds.admit(delta_r, delta_n, support_values=support):
+        gate, margin, epsilon = "CDS", cds_margin, 0.0
+    elif pds.admit(delta_r, delta_n, support_values=support):
+        gate, margin, epsilon = "PDS", pds_margin, priorities.pds_epsilon
+    else:
+        return PlanVerdict(candidate, reason="rejected by the CDS and PDS gates", **results)
+    if cvar is not None and cvar < 0.0:
+        return PlanVerdict(candidate, reason="rejected by the CVaR check", **results)
+    if goal_rate is not None and goal_rate < min_goal_rate:
+        return PlanVerdict(candidate, reason=GOAL_TOO_RARE, **results)
+
+    certificate = _certificate(candidate, estimate, gate, margin, epsilon, table, priorities, timestamp)
+    entry = SkillEntry(
+        skill_id=certificate.skill_id,
+        gate_type=certificate.gate_type,
+        certificate=certificate,
+        weight_region_type=certificate.weight_region_type,
+        certification_context=certificate.certification_context,
+        mdn_alpha=certificate.mdn_alpha,
+        wx_support_directions=certificate.wx_support_directions,
+        wx_support_values=certificate.wx_support_values,
+    )
+    score = score_skill_entry(entry, np.asarray(priorities.weights, dtype=np.float64))
+    return PlanVerdict(candidate, reason=f"admitted by the {gate} gate", entry=entry, score=score, **results)
+
+
+def _cvar(delta_r: float, delta_n: np.ndarray, priorities: Priorities) -> Optional[float]:
+    """CVaR of Δr + w·Δn for w drawn from the MDN's Dirichlet; reproducible and isolated from torch's RNG."""
+    if priorities.cvar_tail_level is None:
+        return None
+    gate = CVaRGate(confidence=priorities.cvar_tail_level, n_samples=CVAR_SAMPLES)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(CVAR_SEED)
+        return gate.get_cvar(delta_r, delta_n, np.asarray(priorities.region.alpha, dtype=np.float64))
+
+
+def _certificate(
+    candidate: CandidatePlan,
+    estimate: Estimate,
+    gate: str,
+    margin: float,
+    epsilon: float,
+    table: EffectTable,
+    priorities: Priorities,
+    timestamp: str,
+) -> Certificate:
+    region = priorities.region
+    return Certificate(
+        skill_id=plan_skill_id(candidate),
+        gate_type=gate,
+        delta_r=estimate.lower.delta_r,
+        delta_n=estimate.lower.delta_n,
+        admission_margin=margin,
+        epsilon=epsilon,
+        timestamp=timestamp,
+        seed=int(table.data["seeds"]["start"]),
+        gamma=float(table.data["gamma"]),
+        baseline_id=str(table.data["baseline_id"]),
+        environment=str(table.data["environment"]),
+        episode_length=max(1, int(round(estimate.mean_frames))),
+        version=CERTIFICATE_VERSION,
+        weight_region_type=FULL_SIMPLEX if region is None else MDN_WX,
+        certification_context=None if region is None else region.context,
+        mdn_alpha=None if region is None else region.alpha,
+        wx_support_directions=None if region is None else region.support_directions,
+        wx_support_values=None if region is None else region.support_values,
+    )
+
+
+def _rank(verdict: PlanVerdict) -> Tuple[int, float, int, str]:
+    score = -verdict.score if verdict.admitted else 0.0
+    return (0 if verdict.admitted else 1, score, len(verdict.candidate.skills), verdict.candidate.option)
+
+
+def _gains_record(gains: Gains) -> Dict[str, object]:
+    return {"delta_r": gains.delta_r, "delta_n": list(gains.delta_n)}
+
+
+def _estimate_record(estimate: Estimate) -> Dict[str, object]:
+    return {
+        "region": estimate.region,
+        "samples": estimate.samples,
+        "episodes": estimate.episodes,
+        "completion_rate": estimate.completion_rate,
+        "mean_frames": estimate.mean_frames,
+        "mean": _gains_record(estimate.mean),
+        "lower": _gains_record(estimate.lower),
+        "interaction": None if estimate.interaction is None else _gains_record(estimate.interaction),
+        "outcomes": None if estimate.outcomes is None else dict(estimate.outcomes),
+    }
