@@ -1,8 +1,9 @@
 """Train the Motive Decomposition Networks that give goal decomposition its priorities.
 
 Each network is fitted to a schedule of weights by situation, a stand-in for
-MetaMo, as the village MDN is. The observations come from flying the planned
-skills on training seeds, and the fit is checked on seeds the training never saw.
+MetaMo until it sends priorities itself. The observations come from flying the
+planned skills on training seeds, and the fit is checked on seeds the training
+never saw.
 
     python -m demo.train_lunar_mdn
     python -m demo.train_lunar_mdn --seeds 20 --epochs 50 --output-dir /tmp/models

@@ -9,8 +9,9 @@ An MDN can give weights outside its own region. Those priorities contradict
 themselves, so they are refused: the source returns None, and the runtime then
 flies nothing under them, as it does when no plan is certified.
 
-The training follows the village MDN: the network is fitted to a schedule of
-weights by situation, a stand-in for MetaMo until it sends priorities itself.
+The network is fitted to a schedule of weights by situation, a stand-in for
+MetaMo until it sends priorities itself. For the schedule's weights w_bar(x),
+the training targets are:
 
     alpha*(x) = CONCENTRATION * w_bar(x)
     s*(x)     = min(1, w_bar(x) + MOTIVE_SHIFT)

@@ -6,6 +6,11 @@ against doing nothing from the same state, and writes the summaries as versioned
 JSON. The seeds are shared out between processes, and the table does not depend
 on how many there are.
 
+The committed tables were built on Windows with Python 3.13. Box2D's arithmetic
+can differ slightly between systems and library versions, so the same seeds
+rebuilt elsewhere give a slightly different table; the tests do not depend on
+the exact numbers.
+
     python -m demo.build_lunar_effect_table
     python -m demo.build_lunar_effect_table --mission
     python -m demo.build_lunar_effect_table --seeds 50 --output demo/artifacts/lunar_effects.json
@@ -14,6 +19,7 @@ on how many there are.
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -43,6 +49,7 @@ from env.lunar_pilots import mission_pilots
 DEFAULT_WORKERS = max(1, (os.cpu_count() or 2) // 2)
 _CHUNK = 20  # seeds handed to a process at a time
 _THREAD_SETTINGS = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+_START_METHOD = "spawn"  # how the measuring processes start; see measure()
 
 
 def landing_book() -> RecipeBook:
@@ -78,7 +85,10 @@ def measure(
     for name in _THREAD_SETTINGS:
         os.environ.setdefault(name, "1")
     jobs = [(list(seeds[start : start + _CHUNK]), beacon) for start in range(0, len(seeds), _CHUNK)]
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    # The processes start fresh on every system, as they do on Windows. A process forked from one that already
+    # runs torch's threads can deadlock, and it keeps the thread pools already made, so the settings above
+    # would not reach it.
+    with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context(_START_METHOD)) as pool:
         return [measurement for chunk in pool.map(_measure, jobs) for measurement in chunk]
 
 
